@@ -57,7 +57,8 @@ def main() -> int:
         smoke_tests.test_bridge_imports_without_runtime_bootstrap()
         smoke_tests.test_deployment_and_protection_documents_are_present()
         smoke_tests.test_automation_conversation_contract_is_public_and_versioned()
-        tests = 4
+        smoke_tests.test_automation_followup_actions_are_context_bound_and_fail_closed()
+        tests = 5
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")

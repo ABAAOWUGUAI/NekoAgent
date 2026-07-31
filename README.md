@@ -29,6 +29,10 @@ server address, user-specific Assistant instance or private PetPack is bundled.
 This project ships no default character identity. After bootstrap, create your
 own Assistant in the console or explicitly apply an optional Starter Pack.
 
+Version `0.1.1` closes the run-now follow-up path: quoted or recent Automation
+context is resolved before execution, unvalidated model-proposed actions fail
+closed, and operational replies retain bounded job references for continuity.
+
 Version `0.1.0` adds object-bound Automation conversations: a referenced,
 confirmed Delivery can resolve one Automation, clarification preserves the
 pending plan, dependent updates run in order, and evidence is presented through

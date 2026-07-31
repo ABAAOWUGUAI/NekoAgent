@@ -14,6 +14,8 @@ NekoAgent 是一个 Owner 优先、可自托管的私人 AI 助手平台。它�
 
 公开源码不包含生产数据库、聊天/媒体正文、Provider Key、QQ 凭据、服务器地址、用户专属 Assistant、关系和私有 PetPack。首次启动后，请自行创建 Assistant，或明确选择安装可选 Starter Pack。
 
+`0.1.1` 收口了“立即触发”的后续动作链：服务端先从引用回执或近期 Automation 上下文绑定对象，再执行已授权动作；未经服务端校验的模型动作会 fail-closed，不能退化成聊天中的虚假执行承诺；操作回执会保留后续引用所需的有限对象标识。
+
 `0.1.0` 增加了对象绑定的 Automation 对话：引用 confirmed Delivery 时解析唯一 Automation，澄清轮继续保留待执行计划，更新与立即运行按依赖顺序执行，Evidence 通过版本化输出契约呈现。目标歧义、配置版本冲突或上游步骤失败都会 fail-closed，不会静默执行错误或过期任务。
 
 ## 产品主链

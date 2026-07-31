@@ -3,7 +3,7 @@
 
 The model may help execute a scheduled agent job later, but it never parses the
 schedule, grants authority, or writes the durable job.  This module owns that
-control-plane boundary and only auto-enables complete, low-risk Owner requests.
+control-plane boundary and auto-enables complete, low-risk Owner requests.
 """
 
 from __future__ import annotations
@@ -958,8 +958,7 @@ def dispatch_automation_action(
     if not current_group_id and resolve_target is not None:
         durable = plan_automation_conversation(
             connect,
-            actor_id=actor_id,
-            message=message,
+            actor_id=actor_id, message=message, history=history,
             inbound_context=inbound_context,
             resolve_target=resolve_target,
         )

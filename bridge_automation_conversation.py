@@ -17,9 +17,20 @@ from bridge_migrations import utc_now
 OPEN_STATUSES = {"waiting_clarification", "ready", "executing"}
 _TASK_HINTS = ("定时任务", "定时计划", "这条任务", "这个任务", "该任务", "这个")
 _UPDATE_HINTS = ("修改", "改成", "改为", "调整", "更新", "改一下", "改一改", "改改", "格式")
-_RUN_HINTS = ("马上触发", "立即触发", "现在触发", "触发一次", "马上执行", "立即执行", "执行一次", "跑一次")
+_RUN_HINTS = (
+    "马上触发", "立即触发", "现在触发", "触发一次", "触发啊", "触发吧",
+    "马上执行", "立即执行", "现在执行", "执行一次", "执行一下",
+    "立即运行", "现在运行", "运行一次", "运行一下", "跑一次", "跑一下",
+)
 _PURPOSE_HINTS = ("中文简介", "中文说明", "用途", "做什么", "是干什么", "功能说明")
 _SCOPE_CURRENT_HINTS = ("只针对这个", "只改这个", "就这个", "当前这个", "这一个")
+_AUTOMATION_RECEIPT_HINTS = (
+    "已修改最近一次匹配的定时任务",
+    "已创建定时任务",
+    "定时任务已",
+    "下一次运行",
+    "automation.schedule.",
+)
 
 
 def _thread_ref(actor_id: str, inbound: Mapping[str, object] | None) -> str:
@@ -51,14 +62,54 @@ def _contract_changes(message: str) -> dict:
     return {}
 
 
-def _initial_plan(message: str) -> dict | None:
+def _recent_automation_context(history: list[dict] | None) -> bool:
+    recent = [item for item in (history or [])[-4:] if isinstance(item, dict)]
+    text = "\n".join(str(item.get("content") or "") for item in recent)
+    return any(hint in text for hint in (*_TASK_HINTS, *_AUTOMATION_RECEIPT_HINTS))
+
+
+def _has_bound_reference(
+    message: str,
+    history: list[dict] | None,
+    inbound_context: Mapping[str, object] | None,
+) -> bool:
     text = str(message or "").strip()
-    if not text or not any(hint in text for hint in _TASK_HINTS):
+    inbound = dict(inbound_context or {})
+    return bool(
+        any(hint in text for hint in _TASK_HINTS)
+        or inbound.get("reply_to_external_message_id")
+        or inbound.get("reply_text_sha256")
+        or _recent_automation_context(history)
+    )
+
+
+def _initial_plan(
+    message: str,
+    history: list[dict] | None = None,
+    inbound_context: Mapping[str, object] | None = None,
+) -> dict | None:
+    text = str(message or "").strip()
+    if not text or not _has_bound_reference(text, history, inbound_context):
         return None
     wants_update = any(hint in text for hint in _UPDATE_HINTS)
     wants_run = any(hint in text for hint in _RUN_HINTS)
-    if not wants_update or not wants_run:
+    if not wants_run:
         return None
+    if not wants_update:
+        return {
+            "schema_version": 1,
+            "scope": "current_automation_job",
+            "status": "ready",
+            "actions": [
+                {
+                    "id": "run_now",
+                    "type": "automation.schedule.run_now",
+                    "depends_on": [],
+                    "status": "ready",
+                },
+            ],
+            "clarification_key": "",
+        }
     changes = _contract_changes(text)
     update_status = "ready" if changes else "waiting_clarification"
     return {
@@ -182,6 +233,7 @@ def plan_automation_conversation(
     *,
     actor_id: str,
     message: str,
+    history: list[dict] | None,
     inbound_context: Mapping[str, object] | None,
     resolve_target: Callable[[str, Mapping[str, object]], dict],
 ) -> dict | None:
@@ -219,7 +271,7 @@ def plan_automation_conversation(
             )
             conn.commit()
             return {"record": saved, "plan": plan, "resumed": True}
-        plan = _initial_plan(message)
+        plan = _initial_plan(message, history, inbound)
         if plan is None:
             return None
         target = dict(resolve_target(actor_id, inbound) or {})

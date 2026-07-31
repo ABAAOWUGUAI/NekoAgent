@@ -105,9 +105,12 @@ def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) ->
     ).strip()
     content = _text(result)
     meme = result.get("meme") if isinstance(result.get("meme"), dict) else None
+    automation_job = result.get("automation_job") if isinstance(result.get("automation_job"), dict) else {}
+    automation_job_id = str(result.get("automation_job_id") or automation_job.get("id") or "").strip()
     delivery_class = (
         "operational"
         if dispatch in {"task", "task_append", "approval_required", "control", "error"}
+        or dispatch.startswith("automation_")
         or not result.get("ok")
         else "social"
     )
@@ -128,6 +131,8 @@ def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) ->
             "selection_id": str((meme or {}).get("selection_id") or ""),
             "response_kind": dispatch,
             "assistant_name": str(result.get("assistant_name") or ""),
+            "automation_job_id": automation_job_id,
+            "automation_action_plan_id": str(result.get("automation_action_plan_id") or ""),
             "social_action": str((decision or {}).get("social_action") or ""),
             # Direct @ / quote turns are genuine replies but not unsolicited
             # participation. Settlement keeps the ambient budget truthful.
