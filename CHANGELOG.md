@@ -6,6 +6,20 @@ semantic version tags after the first public release.
 
 ## Unreleased
 
+## [0.1.1] - 2026-08-01
+
+### Fixed
+
+- Standalone Automation follow-ups such as “run it now” resolve through a
+  quoted operational receipt or recent Automation context before execution.
+- Model-proposed Automation actions that have not passed server-side object,
+  capability and policy validation now fail closed instead of degrading to a
+  conversational execution promise.
+- Automation control replies use the operational Delivery lane and retain the
+  bounded Automation job reference required for later quoted follow-ups.
+- QQ quote identifiers and digests now remain attached to ordinary chat turns,
+  preserving continuity without duplicating quoted private text.
+
 ## [0.1.0] - 2026-08-01
 
 ### Added

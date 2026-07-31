@@ -67,3 +67,30 @@ def test_automation_conversation_contract_is_public_and_versioned() -> None:
         "bridge_automation_reference_runtime.py",
     ):
         assert (ROOT / relative).is_file(), f"missing_automation_contract_module:{relative}"
+
+
+def test_automation_followup_actions_are_context_bound_and_fail_closed() -> None:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    conversation = importlib.import_module("bridge_automation_conversation")
+    action_truth = importlib.import_module("bridge_action_truth")
+    action_gate = importlib.import_module("bridge_interaction_action_gate")
+
+    contextual = conversation._initial_plan(
+        "立即触发一次呢？我要进行检验",
+        [{"role": "assistant", "content": "已修改最近一次匹配的定时任务。"}],
+        {},
+    )
+    unrelated = conversation._initial_plan(
+        "触发啊",
+        [{"role": "assistant", "content": "图片已经准备好了。"}],
+        {},
+    )
+    assert contextual["actions"][0]["type"] == "automation.schedule.run_now"
+    assert unrelated is None
+    assert action_truth.has_ungrounded_action_claim(
+        "好，我现在就触发它跑一次，结果马上单独发给你看。",
+    )
+    assert action_gate.planned_automation_action_types(
+        {"interaction_plan": {"actions": [{"type": "automation.schedule.run_now"}]}},
+    ) == ["automation.schedule.run_now"]

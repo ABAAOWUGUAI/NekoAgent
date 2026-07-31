@@ -159,6 +159,7 @@ from bridge_assistant_chat_context import (
 from bridge_knowledge_http import KnowledgeHttpApi
 from bridge_interaction_contract import assemble_response
 from bridge_interaction_http import InteractionPlanHttpApi
+from bridge_interaction_action_gate import gate_actions
 from bridge_interaction_runtime import (
     InteractionPersistenceRuntime,
     InteractionPlannerRuntime,
@@ -3200,7 +3201,7 @@ def _assistant_chat(
                 display_message,
                 reply,
                 mode_decision,
-                source=request_source,
+                source=request_source, inbound_context=context.get("inbound_context"),
             )
     if policy.get("quality_log_enabled"):
         quality_event = _record_quality_event(
@@ -5097,9 +5098,6 @@ def _assistant_dispatch_impl(
             followup_channel, ASSISTANT_HISTORY_LIMIT,
         )
 
-    # A request such as "再试试刚才那张图" must stay on the media branch.
-    # It is not a fresh work request and must never be allowed to inherit an
-    # older task/context simply because this follow-up carries no attachment.
     settings = _assistant_settings(include_secrets=True)
     visual_context = visual.prepare(inbound_context, "qq_private", user_id, inbound_context.get("_external_message_id") or trace_id, message, settings)
     media_retry = inbound_media_retry_notice(
@@ -5209,11 +5207,10 @@ def _assistant_dispatch_impl(
             )
     except sqlite3.Error:
         mode_decision["skill_plan"] = {"status": "unavailable"}
-    interaction_plan_record = INTERACTION_STORE.persist(
-        user_id,
-        mode_decision,
-        source=source,
-    )
+    interaction_plan_record, action_gate = gate_actions(
+        INTERACTION_STORE, ASSISTANT_LOCK, user_id, message, mode_decision, source, inbound_context)
+    if action_gate is not None:
+        return action_gate
     intent = str(mode_decision.get("intent") or _detect_agent_intent(message))
     criteria = _acceptance_criteria(intent, message, policy, mode_decision)
     light = _try_light_dispatch(
@@ -5238,7 +5235,7 @@ def _assistant_dispatch_impl(
                 "policy": policy,
                 "mode_decision": mode_decision,
                 "mode_session": mode_session,
-                "source": source,
+                "source": source, "inbound_context": inbound_context,
             },
         )
         result["dispatch"] = "chat"

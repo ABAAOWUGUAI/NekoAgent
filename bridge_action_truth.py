@@ -80,6 +80,11 @@ _OPERATION_TERMS = _OPERATION_TERMS + (
     "\u5b9a\u65f6\u4efb\u52a1",
     "\u5b9a\u65f6\u8ba1\u5212",
     "\u4efb\u52a1",
+    "触发",
+    "执行",
+    "运行",
+    "跑一次",
+    "发给你",
 )
 _CLAIM_MARKERS = _CLAIM_MARKERS + (
     "\u67e5\u8fc7\u4e86",
@@ -125,8 +130,8 @@ def enforce_action_truth(
     if not has_ungrounded_action_claim(text, receipts):
         return text, False
     return (
-        "我不能把这项操作说成已经完成：本轮没有产生可验证的动作回执。"
-        "当前只能确认尚未通过 Bridge 执行配置修改、服务重启、日志检查或测试。"
+        "我不能把这项操作说成已经开始或完成：本轮没有产生可验证的动作回执。"
+        "当前只能确认尚未通过 Bridge 执行。"
         "请给出明确操作目标；受支持的操作会走可审计动作，不支持的操作我会直接说明。",
         True,
     )
