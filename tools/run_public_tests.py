@@ -56,7 +56,8 @@ def main() -> int:
         starter_pack_tests.test_xiaofei_pack_dry_run_has_no_runtime_state()
         smoke_tests.test_bridge_imports_without_runtime_bootstrap()
         smoke_tests.test_deployment_and_protection_documents_are_present()
-        tests = 3
+        smoke_tests.test_automation_conversation_contract_is_public_and_versioned()
+        tests = 4
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")

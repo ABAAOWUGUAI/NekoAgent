@@ -87,13 +87,32 @@ class InteractionPersistenceRuntime:
         mode_decision: dict,
         *,
         source: str = "",
+        inbound_context: dict | None = None,
+        exchange_metadata: dict | None = None,
     ) -> None:
         """Atomically record one exchange and bind its exact inbound message."""
 
         plan_record = mode_decision.get("interaction_plan_record") or {}
+        inbound = dict(inbound_context or {})
+        metadata = {
+            key: inbound.get(key)
+            for key in ("reply_text_sha256", "reply_text_length")
+            if inbound.get(key) not in {None, ""}
+        }
+        metadata.update(dict(exchange_metadata or {}))
         with self._connect() as conn:
-            message_id = record_conversation(conn, user_id, "user", message, source=source)
-            record_conversation(conn, user_id, "assistant", reply, source=source)
+            message_id = record_conversation(
+                conn, user_id, "user", message, source=source,
+                external_message_id=str(inbound.get("_external_message_id") or ""),
+                reply_to_external_message_id=str(inbound.get("reply_to_external_message_id") or ""),
+                directed_to_assistant=bool(inbound.get("reply_to_assistant")),
+                message_kind="attachment" if inbound.get("attachments") else "text",
+                metadata=metadata,
+            )
+            record_conversation(
+                conn, user_id, "assistant", reply, source=source,
+                metadata=dict(exchange_metadata or {}),
+            )
             if message_id and plan_record.get("id"):
                 bind_plan_to_message(
                     conn,

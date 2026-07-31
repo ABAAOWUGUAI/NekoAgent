@@ -467,10 +467,11 @@ class ContinuityKernel:
                 conn.execute(
                     """
                     UPDATE continuity_turns
-                    SET delivery_id=?,status=?,updated_at=?,completed_at=''
+                    SET delivery_id=?,status=?,updated_at=?,
+                        completed_at=CASE WHEN ?='waiting_delivery' THEN '' ELSE completed_at END
                     WHERE id=?
                     """,
-                    (delivery_id, next_status, utc_now(), turn_id),
+                    (delivery_id, next_status, utc_now(), next_status, turn_id),
                 )
                 self._event(
                     conn,

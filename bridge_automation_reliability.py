@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from bridge_automation import settle_automation_dispatch
+from bridge_continuity_kernel import ContinuityKernel
+from bridge_continuity_reconciliation import reconcile_continuity_state
 
 
 FINAL_SUCCESS = {"done"}
@@ -56,6 +58,11 @@ def reconcile_automation_tasks(assistant_connect, task_connect, *, limit: int = 
             )
         completed += int(success)
         failed += int(not success)
+    reconcile_continuity_state(
+        ContinuityKernel(assistant_connect),
+        task_connect,
+        limit=max(50, min(int(limit) * 4, 1000)),
+    )
     return {"completed": completed, "failed": failed}
 
 

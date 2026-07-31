@@ -47,3 +47,23 @@ def test_deployment_and_protection_documents_are_present() -> None:
             document = template_root / relative
         assert document.is_file(), f"missing_public_document:{relative}"
         assert document.read_text(encoding="utf-8").strip(), f"empty_public_document:{relative}"
+
+
+def test_automation_conversation_contract_is_public_and_versioned() -> None:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    contracts = importlib.import_module("bridge_automation_contracts")
+    interaction = importlib.import_module("bridge_interaction_contract")
+
+    contract = contracts.normalize_output_contract(contracts.DEFAULT_OUTPUT_CONTRACT)
+    assert contract["schema_version"] == 1
+    assert contract["scope"] == "current_automation_job"
+    assert contract["hide_internal_metadata"] is True
+    assert len(contracts.output_contract_hash(contract)) == 64
+    assert interaction.PLAN_SCHEMA_VERSION == 2
+    for relative in (
+        "bridge_automation_conversation.py",
+        "bridge_automation_conversation_schema.py",
+        "bridge_automation_reference_runtime.py",
+    ):
+        assert (ROOT / relative).is_file(), f"missing_automation_contract_module:{relative}"

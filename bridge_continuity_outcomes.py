@@ -152,8 +152,23 @@ def settle_delivery(kernel, delivery_id: str, outcome: str, error_kind: str = ""
                 status = "blocked"
             elif outcome == "dead_letter":
                 status = "failed"
+            elif outcome == "superseded":
+                status = "cancelled" if previous == "waiting_delivery" else previous
             else:
                 status = previous
+            previous_error = _clip(turn["error_kind"])
+            if error_kind:
+                settled_error = _clip(error_kind)
+            elif outcome == "confirmed" and previous == "waiting_delivery":
+                settled_error = ""
+            elif outcome == "ambiguous":
+                settled_error = "delivery_ambiguous"
+            elif outcome == "dead_letter":
+                settled_error = "delivery_dead_letter"
+            elif outcome == "superseded" and previous == "waiting_delivery":
+                settled_error = "delivery_superseded"
+            else:
+                settled_error = previous_error
             now = utc_now()
             conn.execute(
                 """
@@ -163,7 +178,7 @@ def settle_delivery(kernel, delivery_id: str, outcome: str, error_kind: str = ""
                 """,
                 (
                     status,
-                    _clip(error_kind),
+                    settled_error,
                     now,
                     now if status in {"succeeded", "failed", "blocked", "cancelled"} else "",
                     turn["id"],
