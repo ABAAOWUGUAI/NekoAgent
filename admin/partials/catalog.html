@@ -1,0 +1,405 @@
+        <section id="view-models" class="view hidden catalog-view">
+          <nav class="workspace-tabs" role="tablist" aria-label="模型管理步骤">
+            <button class="active" type="button" role="tab" data-model-workspace="connections" aria-selected="true">连接账户</button>
+            <button type="button" role="tab" data-model-workspace="catalog" aria-selected="false">账户模型</button>
+            <button type="button" role="tab" data-model-workspace="routing" aria-selected="false">场景路由</button>
+            <button type="button" role="tab" data-model-workspace="playground" aria-selected="false">验证台</button>
+            <button type="button" role="tab" data-model-workspace="usage" aria-selected="false">用量</button>
+            <button type="button" role="tab" data-model-workspace="advanced" aria-selected="false">高级</button>
+          </nav>
+          <header class="page-intro">
+            <div>
+              <p class="page-kicker">Model control</p>
+              <h2>连接账户</h2>
+              <p>连接你自己的模型账户。平台只保存连接与路由，不提供写死的第三方模型资产。</p>
+            </div>
+            <div class="page-actions">
+              <button id="reloadModelRegistryBtn" class="secondary hidden" type="button">刷新状态</button>
+              <button id="modelProviderNewBtn" class="primary" type="button">添加连接</button>
+            </div>
+          </header>
+
+          <div id="modelRegistrySummary" class="insight-grid" role="group" aria-label="模型运行摘要" hidden></div>
+
+          <ol class="model-journey" aria-label="模型启用流程">
+            <li data-model-journey="connections"><span>1</span><strong>连接账户</strong><small>登录态、API 或本地服务</small></li>
+            <li data-model-journey="catalog"><span>2</span><strong>登记模型</strong><small>声明名称、能力与限制</small></li>
+            <li data-model-journey="routing"><span>3</span><strong>分配场景</strong><small>聊天、规划与执行各自选择</small></li>
+            <li data-model-journey="playground"><span>4</span><strong>独立验证</strong><small>不写入 QQ 和正式对话</small></li>
+          </ol>
+
+          <section id="modelRoutingWorkspace" class="route-workspace hidden" data-model-pane="routing" aria-labelledby="runtimeRouteTitle">
+            <div class="section-heading">
+              <div>
+                <p class="section-index">Step 03</p>
+                <h2 id="runtimeRouteTitle">场景路由</h2>
+              </div>
+              <p>每个角色显式选择用户连接下的模型；平台不会自动套用固定模型或产生隐式回退。</p>
+            </div>
+            <section id="modelPresetWorkspace" class="gate8-preset-workspace" aria-labelledby="modelPresetTitle">
+              <div class="gate8-preset-heading">
+                <div>
+                  <p class="section-index">QUICK PRESETS</p>
+                  <h3 id="modelPresetTitle">按使用目标生成路由</h3>
+                  <p>预设只从你已经创建的连接和模型中选择，不会新增、恢复或写死任何第三方资产。</p>
+                </div>
+                <span id="modelPresetActive" class="badge">未应用预设</span>
+              </div>
+              <div id="modelPresetGrid" class="gate8-preset-grid">
+                <div class="empty-state">打开“场景路由”后加载可用预设。</div>
+              </div>
+              <div id="modelPresetPreview" class="gate8-preset-preview hidden" role="region" aria-labelledby="modelPresetPreviewTitle">
+                <div class="panel-header">
+                  <div>
+                    <h3 id="modelPresetPreviewTitle">预览变更</h3>
+                    <p class="compact-note">应用前会再次校验指纹；连接或模型变化后，旧预览自动失效。</p>
+                  </div>
+                  <button id="closeModelPresetPreviewBtn" class="secondary" type="button">关闭预览</button>
+                </div>
+                <div id="modelPresetPreviewStatus" class="provider-status" role="status" aria-live="polite">尚未选择预设。</div>
+                <div id="modelPresetMappingList" class="gate8-mapping-list"></div>
+                <div id="modelPresetWarningList" class="gate8-warning-list"></div>
+                <div class="gate8-apply-row">
+                  <label class="checkbox-line"><input id="confirmModelPresetApply" type="checkbox">我已检查模型、连接和警告</label>
+                  <button id="applyModelPresetBtn" class="primary" type="button" disabled>应用这套路由</button>
+                </div>
+              </div>
+            </section>
+            <div id="modelRoleRows" class="route-grid">
+              <div class="empty-state">暂无角色绑定。</div>
+            </div>
+          </section>
+
+          <section id="modelRegistryWorkspace" class="catalog-workspace model-resource-browser" aria-labelledby="modelCatalogTitle">
+            <div class="section-heading">
+              <div>
+                <p class="section-index">Your resources</p>
+                <h2 id="modelCatalogTitle">连接管理</h2>
+              </div>
+              <div class="segmented-control" role="group" aria-label="模型目录视图">
+                <button class="active" type="button" data-model-catalog-view="providers" aria-pressed="true">连接账户</button>
+                <button type="button" data-model-catalog-view="models" aria-pressed="false">账户模型</button>
+              </div>
+            </div>
+
+            <div id="modelProviderCatalog" class="catalog-section" data-model-pane="connections">
+              <div class="connection-explainer" aria-labelledby="connectionExplainerTitle">
+                <div>
+                  <p class="section-index">What is a connection?</p>
+                  <h3 id="connectionExplainerTitle">什么是“连接账户”</h3>
+                  <p>它是一条由你控制的模型访问入口：可以是 Codex 登录态、API 账户，或服务器上的本地模型服务。平台只保存连接配置并负责路由。</p>
+                </div>
+                <ol>
+                  <li><span>1</span><strong>连接账户</strong><small>登录态、Key 或本地端点</small></li>
+                  <li><span>2</span><strong>登记模型</strong><small>填写真实可调用的模型名</small></li>
+                  <li><span>3</span><strong>分配场景</strong><small>决定聊天、规划和执行用谁</small></li>
+                </ol>
+              </div>
+
+              <section class="connection-section" aria-labelledby="configuredConnectionsTitle">
+                <div class="connection-section-heading">
+                  <div>
+                    <span class="entity-type">Configured</span>
+                    <h3 id="configuredConnectionsTitle">已连接账户</h3>
+                  </div>
+                  <p>这里只显示你实际保存的连接；每条都能验证、编辑、停用或删除。</p>
+                </div>
+                <div id="modelProviderRows" class="entity-grid">
+                  <div class="empty-state">还没有连接。点击“添加连接”创建你的第一个账户。</div>
+                </div>
+              </section>
+
+              <details id="modelTemplatePicker" class="connection-template-picker">
+                <summary>
+                  <span><strong>从连接类型添加</strong><small>模板只预填协议和地址，不含账号、Key、模型或路由</small></span>
+                </summary>
+                <div class="connection-template-body">
+                  <p>选择一种类型后仍可修改全部字段；模板不会自动成为你的连接。</p>
+                  <div id="modelTemplateGallery" class="template-gallery" aria-label="可添加的连接类型"></div>
+                </div>
+              </details>
+            </div>
+
+            <div id="modelCatalogSection" class="catalog-section hidden" data-model-pane="catalog">
+              <div class="catalog-toolbar">
+                <p id="modelCatalogContext">先选择一个连接，再维护它的模型。</p>
+                <button id="modelCatalogNewBtn" class="primary" type="button">添加模型</button>
+              </div>
+              <div id="modelCatalogRows" class="entity-grid">
+                <div class="empty-state">暂无模型。</div>
+              </div>
+            </div>
+          </section>
+
+          <aside class="editor-stack" aria-label="模型配置编辑器">
+            <details id="modelProviderEditor" class="editor-panel" data-model-pane="connections">
+              <summary><span>连接编辑器</span><small>模板可改、凭证仅保存在服务端</small></summary>
+              <div class="editor-body form-stack">
+                <label>连接模板<select id="modelProviderTemplate"><option value="">自定义连接</option></select></label>
+                <p id="modelTemplateHint" class="form-hint">可从模板开始，也可以完全自定义。</p>
+                <div class="split-form-row"><label>连接 ID<input id="modelProviderId" type="text" placeholder="my-model-account"></label><label>显示名称<input id="modelProviderName" type="text" placeholder="我的模型账户"></label></div>
+                <label>服务地址（Base URL）<input id="modelProviderBaseUrl" type="url" placeholder="https://api.example.com/v1"></label>
+                <label>API Key<input id="modelProviderApiKey" type="password" autocomplete="new-password" placeholder="留空保留现有 Key"></label>
+                <label id="modelProviderClearKeyLine" class="checkbox-line hidden"><input id="modelProviderClearKey" type="checkbox">清除服务端已保存的 Key</label>
+                <section id="modelExecutorFields" class="executor-profile-editor hidden" aria-labelledby="modelExecutorTitle">
+                  <div>
+                    <p class="entity-type">Executor profile</p>
+                    <h3 id="modelExecutorTitle">Codex 执行器配置</h3>
+                    <p>连接决定使用哪个 Codex Profile；凭证文件、工作目录和沙箱边界由服务器安全策略管理，不能在网页中填写任意路径或命令。</p>
+                  </div>
+                  <label>Codex Profile 名称<input id="modelExecutorProfileName" type="text" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" placeholder="my-codex-provider" aria-describedby="modelExecutorProfileHint"></label>
+                  <p id="modelExecutorProfileHint" class="form-hint">必须与服务器已安装的 Codex Profile 同名。保存配置不会自动创建宿主机 Profile。</p>
+                  <div class="split-form-row"><label>上游 API 连接<select id="modelExecutorUpstreamProvider" required></select></label><label>上游模型<select id="modelExecutorUpstreamModel" required></select></label></div>
+                  <p class="form-hint">执行器复用这里选择的 API 连接、Key、Base URL 与模型；以后更新该连接或模型会自动应用到本地 Proxy，不再维护第二份隐藏配置。</p>
+                  <label>执行凭证<input id="modelExecutorCredentialStatus" type="text" value="受保护的代理凭证" readonly></label>
+                  <label class="checkbox-line"><input id="modelExecutorEnabled" type="checkbox" checked>启用此执行器 Profile</label>
+                  <dl id="modelExecutorRuntimeSummary" class="executor-runtime-summary" aria-live="polite">
+                    <div><dt>配置</dt><dd>待保存</dd></div><div><dt>Profile</dt><dd>待检测</dd></div><div><dt>沙箱</dt><dd>待检测</dd></div><div><dt>工作目录</dt><dd>待检测</dd></div>
+                  </dl>
+                </section>
+                <details class="advanced-fields">
+                  <summary>高级连接设置</summary>
+                  <div class="form-stack">
+                    <label>连接类型<select id="modelProviderKind"><option value="codex">Codex 登录态</option><option value="openai">OpenAI API</option><option value="openai-compatible">OpenAI-compatible API</option><option value="openrouter">OpenRouter</option><option value="anthropic">Anthropic API</option><option value="gemini">Google Gemini API</option><option value="azure-openai">Azure OpenAI</option><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option></select></label>
+                    <div class="split-form-row"><label>协议<select id="modelProviderTransport"><option value="openai_chat_completions">OpenAI Chat Completions</option><option value="azure_openai_chat_completions">Azure OpenAI Chat Completions</option><option value="anthropic_messages">Anthropic Messages</option><option value="google_gemini_generate_content">Gemini generateContent</option><option value="codex_cli_chatgpt">Codex CLI · ChatGPT 登录</option><option value="codex_cli_custom_provider">Codex CLI · 自定义 Provider</option></select></label><label>费用归属<select id="modelProviderBilling"><option value="api_key">我的 API 账户</option><option value="chatgpt_subscription">我的 ChatGPT 订阅</option><option value="local_proxy">本地服务 / 自管上游</option></select></label></div>
+                    <div class="split-form-row"><label>请求超时（秒）<input id="modelProviderTimeout" type="number" min="5" max="600" value="60"></label><label class="checkbox-line"><input id="modelProviderTrusted" type="checkbox">允许承担工具执行</label></div>
+                  </div>
+                </details>
+                <label class="checkbox-line"><input id="modelProviderEnabled" type="checkbox" checked>启用此连接</label>
+                <p id="modelProviderEditorStatus" class="provider-status" role="status" aria-live="polite">尚未保存。</p>
+                <div class="button-row">
+                  <button id="saveModelProviderBtn" class="primary" type="button">保存连接</button>
+                  <button id="cancelModelProviderBtn" class="secondary" type="button">取消编辑</button>
+                  <button id="deleteModelProviderBtn" class="danger hidden" type="button">删除连接</button>
+                </div>
+              </div>
+            </details>
+
+            <details id="modelCatalogEditor" class="editor-panel" data-model-pane="catalog">
+              <summary><span>模型编辑器</span><small>属于连接，可编辑或删除</small></summary>
+              <div class="editor-body form-stack">
+                <div class="split-form-row"><label>所属连接<select id="modelCatalogProvider"></select></label><label>模型 ID<input id="modelCatalogId" type="text" placeholder="deepseek-chat"></label></div>
+                <p id="modelCatalogProviderLockHint" class="compact-note">已有模型不可迁移；请在目标连接新建并重新绑定。</p>
+                <div id="modelCatalogDiscovery"></div>
+                <div class="split-form-row"><label>显示名称<input id="modelCatalogLabel" type="text" placeholder="DeepSeek Chat"></label><label>接口模型名<input id="modelCatalogName" type="text" placeholder="deepseek-chat"></label></div>
+                <div class="split-form-row"><label>上下文窗口<input id="modelContextWindow" type="number" min="0" value="0"></label><label>最大输出 token<input id="modelMaxOutput" type="number" min="0" value="900"></label></div>
+                <div class="policy-switches"><label class="checkbox-line"><input id="modelCatalogEnabled" type="checkbox" checked>启用模型</label><label class="checkbox-line"><input id="modelCapabilityText" type="checkbox" checked>文本</label><label class="checkbox-line"><input id="modelSupportsTools" type="checkbox">工具</label><label class="checkbox-line"><input id="modelCapabilityVision" type="checkbox">视觉</label><label class="checkbox-line"><input id="modelCapabilityEmbedding" type="checkbox">Embedding</label><label class="checkbox-line"><input id="modelCapabilityStructured" type="checkbox">结构化输出</label></div>
+                <label>使用说明<input id="modelCatalogNotes" type="text" placeholder="适用场景、费用或限制"></label>
+                <div class="button-row">
+                  <button id="saveModelCatalogBtn" class="primary" type="button">保存模型</button>
+                  <button id="cancelModelCatalogBtn" class="secondary" type="button">取消编辑</button>
+                  <button id="deleteModelCatalogBtn" class="danger hidden" type="button">删除模型</button>
+                </div>
+              </div>
+            </details>
+            <details id="modelPricingEditor" class="editor-panel" data-model-pane="catalog">
+              <summary><span>价格与计费</span><small>未知价格请留空，不会按 0 计算</small></summary>
+              <div class="editor-body form-stack">
+                <div class="split-form-row"><label>输入价格 / 百万 Token<input id="modelInputPrice" type="number" min="0" step="0.000001" placeholder="未知则留空"></label><label>输出价格 / 百万 Token<input id="modelOutputPrice" type="number" min="0" step="0.000001" placeholder="未知则留空"></label></div>
+                <div class="split-form-row"><label>币种<input id="modelPriceCurrency" type="text" maxlength="12" value="USD"></label><label>价格来源<input id="modelPriceSource" type="url" placeholder="官方价格页，可留空"></label></div>
+                <p class="compact-note">价格会随模型保存；历史调用保留当时估算值。</p>
+              </div>
+            </details>
+          </aside>
+
+          <section id="modelPlaygroundWorkspace" class="catalog-workspace validation-lab hidden" data-model-pane="playground" aria-labelledby="modelPlaygroundTitle">
+            <div class="section-heading"><div><p class="section-index">Isolated validation</p><h2 id="modelPlaygroundTitle" tabindex="-1">模型验证台</h2></div><p>在独立沙箱中验证提示词与参数；不会写入 QQ、长期记忆或正式工作任务。</p></div>
+            <div class="validation-layout">
+              <form id="modelPlaygroundForm" class="validation-controls">
+                <label>验证模型<select id="modelPlaygroundModel" required></select></label>
+                <label>系统指令<textarea id="modelPlaygroundSystem" rows="5" maxlength="8000">你是一个简洁、可靠的验证助手。</textarea></label>
+                <label>用户输入<textarea id="modelPlaygroundPrompt" rows="7" maxlength="12000" required placeholder="输入一条用于验证的消息"></textarea></label>
+                <div class="split-form-row"><label>Temperature<input id="modelPlaygroundTemperature" type="number" min="0" max="2" step="0.1" value="0.7"></label><label>最大输出 Token<input id="modelPlaygroundMaxTokens" type="number" min="1" max="8192" value="900"></label></div>
+                <button id="runModelPlaygroundBtn" class="primary" type="submit">运行验证</button>
+              </form>
+              <section class="validation-result" aria-labelledby="modelPlaygroundResultTitle">
+                <header><div><span class="entity-type">Result</span><h3 id="modelPlaygroundResultTitle">等待运行</h3></div><span id="modelPlaygroundStatus" class="status-chip">未运行</span></header>
+                <pre id="modelPlaygroundReply" tabindex="0">选择模型并输入消息，结果会显示在这里。</pre>
+                <dl id="modelPlaygroundMetrics" class="validation-metrics"><div><dt>连接</dt><dd>-</dd></div><div><dt>模型</dt><dd>-</dd></div><div><dt>耗时</dt><dd>-</dd></div><div><dt>Token</dt><dd>-</dd></div></dl>
+              </section>
+            </div>
+          </section>
+
+          <section id="modelUsageWorkspace" class="catalog-workspace hidden" data-model-pane="usage" aria-labelledby="modelUsageTitle">
+            <div class="section-heading"><div><p class="section-index">Usage</p><h2 id="modelUsageTitle">模型用量</h2></div><div class="page-actions"><label>统计范围<select id="modelUsageDays"><option value="1">24 小时</option><option value="7" selected>7 天</option><option value="30">30 天</option></select></label><button id="reloadModelUsageBtn" class="secondary hidden" type="button">刷新</button></div></div>
+            <div id="modelUsageSummary" class="insight-grid"></div>
+            <div id="modelUsageModels" class="entity-grid"></div>
+            <details class="inventory-panel"><summary>最近调用记录 <span>未上报 Token 的调用会明确标记为未知</span></summary><div id="modelUsageEvents" class="entity-grid compact-entities"></div></details>
+          </section>
+
+          <section id="modelAdvancedWorkspace" class="catalog-workspace hidden" data-model-pane="advanced" aria-labelledby="modelAdvancedTitle">
+            <div class="section-heading"><div><p class="section-index">Ownership</p><h2 id="modelAdvancedTitle">运行边界与执行器</h2></div><p>平台只修改自己的路由；MaiBot 与 AstrBot 保持只读隔离。</p></div>
+            <section id="modelRuntimeWorkspace" aria-labelledby="modelRuntimeTitle">
+              <div class="section-heading compact-heading"><div><h3 id="modelRuntimeTitle">Runtime 配置边界</h3></div></div>
+              <div id="modelRuntimeRows" class="entity-grid"><div class="empty-state">尚未读取 Runtime 清单。</div></div>
+            </section>
+            <section id="codexOperationsWorkspace" aria-labelledby="codexOperationsTitle">
+            <div class="section-heading"><div><p class="section-index">Executor</p><h2 id="codexOperationsTitle">Codex 登录与升级</h2></div><button id="reloadCodexOperationsBtn" class="secondary" type="button">重新检查</button></div>
+            <div id="codexOperationsStatus" class="entity-grid"></div>
+            <div class="operations-columns"><article class="operations-card"><h3>其他管理员如何登录</h3><ol id="codexLoginSteps"></ol></article><article class="operations-card"><h3>版本更新流程</h3><ol id="codexUpgradeSteps"></ol></article></div>
+            <p class="compact-note">控制台只显示状态和步骤，不读取、下载或共享 Codex 认证缓存。</p>
+
+            <div class="section-heading section-heading-spaced"><div><p class="section-index">Proxy</p><h2 id="proxyStatusTitle">第三方执行代理</h2></div><button id="reloadProxyStatusBtn" class="secondary hidden" type="button">刷新状态</button></div>
+            <div id="proxyStatusGrid" class="entity-grid"></div>
+            <div class="operations-columns">
+              <article class="operations-card"><h3>本地检测</h3><p>自动检测代理进程端口可达性和本地健康接口，不访问 DeepSeek，不产生 API 费用。</p><button id="probeProxyLocalBtn" class="secondary" type="button">测试代理连通性（免费）</button></article>
+              <article class="operations-card"><h3>上游探测</h3><p>向 DeepSeek 发送最少请求验证上游连通。会产生少量 API 费用，请确认后执行。</p><button id="probeProxyUpstreamBtn" class="primary" type="button">测试 DeepSeek 上游连接</button></article>
+            </div>
+            <p class="compact-note">DeepSeek 代理为兼容模式（已禁用 thinking），复杂任务效果可能弱于原生 Codex。</p>
+            </section>
+          </section>
+        </section>
+
+        <section id="view-capabilities" class="view hidden catalog-view">
+          <header class="page-intro">
+            <div>
+              <p class="page-kicker">Extension system</p>
+              <h2>能力与插件</h2>
+              <p>从可信来源发现扩展，在安装前看清运行位置、兼容性与权限范围；平台核心能力和执行方法仍保持独立。</p>
+            </div>
+            <div class="page-actions">
+              <button id="reloadCapabilitiesBtn" class="secondary hidden" type="button">刷新当前页</button>
+              <button id="skillNewBtn" class="primary hidden" type="button">新建 Skill</button>
+            </div>
+          </header>
+
+          <nav class="workspace-tabs capability-tabs" role="tablist" aria-label="能力与插件模块">
+            <button class="active" type="button" role="tab" aria-selected="true" aria-controls="pluginMarketWorkspace" data-capability-workspace="market">插件市场</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="installedPluginWorkspace" data-capability-workspace="installed">已安装</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="capabilityContractWorkspace" data-capability-workspace="contracts">能力契约</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="networkPolicyWorkspace" data-capability-workspace="network">网络策略</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="skillCatalogWorkspace" data-capability-workspace="skills">Skills</button>
+          </nav>
+
+          <section id="pluginMarketWorkspace" class="catalog-workspace plugin-market-workspace" data-capability-pane="market" aria-labelledby="pluginMarketTitle">
+            <div class="market-hero">
+              <div>
+                <p class="section-index">Marketplace</p>
+                <h2 id="pluginMarketTitle">管理执行能力</h2>
+                <p>当前接入 AstrBot 官方社区目录。第三方插件在 AstrBot 容器内运行，不会被伪装成平台原生 Capability。</p>
+              </div>
+              <div class="market-source-card" aria-label="插件市场来源">
+                <span>当前来源</span>
+                <strong id="pluginMarketSource">AstrBot 官方市场</strong>
+                <small id="pluginMarketStatus" role="status" aria-live="polite">等待加载</small>
+                <button id="refreshPluginMarketBtn" class="secondary" type="button">同步市场</button>
+              </div>
+            </div>
+            <div id="pluginMarketSummary" class="market-summary" role="group" aria-label="插件市场摘要"></div>
+            <div class="collection-browser" role="search" aria-label="市场插件浏览工具">
+              <label class="collection-search"><span>搜索</span><input id="pluginMarketSearch" type="search" autocomplete="off" placeholder="搜索名称、作者、说明或标签" aria-label="搜索市场插件"></label>
+              <label class="collection-filter"><span>分类</span><select id="pluginMarketCategory" aria-label="市场插件分类"><option value="">全部</option><option value="效率工具">效率工具</option><option value="内容与媒体">内容与媒体</option><option value="娱乐互动">娱乐互动</option><option value="平台集成">平台集成</option><option value="管理运维">管理运维</option><option value="其他">其他</option></select></label>
+              <label class="collection-page-size"><span>每页</span><select id="pluginMarketPageSize" aria-label="市场插件每页数量"><option value="9" selected>9</option><option value="18">18</option><option value="36">36</option></select></label>
+              <div class="collection-pagination"><span id="pluginMarketCount" class="collection-count"></span><button id="pluginMarketPreviousBtn" class="secondary" type="button">上一页</button><span id="pluginMarketPageIndicator" class="collection-page-indicator"></span><button id="pluginMarketNextBtn" class="secondary" type="button">下一页</button></div>
+              <p id="pluginMarketNoResults" class="collection-no-results" hidden>没有匹配的插件，请调整搜索或分类。</p>
+              <span id="pluginMarketAnnouncement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></span>
+            </div>
+            <div id="pluginMarketGrid" class="market-grid">
+              <div class="empty-state">插件市场尚未加载。</div>
+            </div>
+            <aside id="pluginMarketDetail" class="market-detail hidden" aria-labelledby="pluginMarketDetailTitle" tabindex="-1">
+              <div class="section-heading">
+                <div><p class="section-index">Review before install</p><h2 id="pluginMarketDetailTitle">插件详情</h2></div>
+                <button id="closePluginMarketDetailBtn" class="secondary" type="button">关闭详情</button>
+              </div>
+              <div id="pluginMarketDetailBody"></div>
+            </aside>
+            <details class="inventory-panel market-operations-panel">
+              <summary>最近安装活动 <span>安装、更新、卸载和回滚记录</span></summary>
+              <div id="pluginMarketOperations" class="entity-grid compact-entities">
+                <div class="empty-state">暂无安装活动。</div>
+              </div>
+            </details>
+          </section>
+
+          <section id="installedPluginWorkspace" class="catalog-workspace hidden" data-capability-pane="installed" aria-labelledby="installedPluginTitle">
+            <div class="section-heading">
+              <div><p class="section-index">Installed</p><h2 id="installedPluginTitle">已安装插件</h2></div>
+              <div class="page-actions"><p>启停或重载会让 QQ 连接短暂重连。</p><button id="reloadPluginsBtn" class="secondary" type="button">重载 AstrBot 插件</button></div>
+            </div>
+            <div id="capabilityPluginRows" class="entity-grid compact-entities">
+              <div class="empty-state">暂无插件。</div>
+            </div>
+          </section>
+
+          <section id="capabilityContractWorkspace" class="catalog-workspace hidden" data-capability-pane="contracts" aria-labelledby="manifestCatalogTitle">
+            <div id="capabilitySummary" class="insight-grid" role="group" aria-label="能力目录摘要"></div>
+            <div class="section-heading">
+              <div><p class="section-index">Contracts</p><h2 id="manifestCatalogTitle">可执行 Capability</h2></div>
+              <p>权限、风险、副作用、成本与健康状态来自服务端代码定义的 Manifest。</p>
+            </div>
+            <div id="capabilityManifestGrid" class="entity-grid capability-grid">
+              <div class="empty-state">能力目录尚未加载。</div>
+            </div>
+          </section>
+
+          <section id="networkPolicyWorkspace" class="catalog-workspace hidden" data-capability-pane="network" aria-labelledby="networkPolicyTitle">
+            <div class="section-heading">
+              <div>
+                <p class="section-index">Network boundary</p>
+                <h2 id="networkPolicyTitle" tabindex="-1">网络访问策略</h2>
+              </div>
+              <p>管理受控来源与 Owner 任务的限时 Web Search。</p>
+            </div>
+            <div id="networkPolicySummary" class="insight-grid" role="group" aria-label="网络策略摘要"></div>
+            <form id="networkPolicyForm" class="editor-panel form-stack" aria-describedby="networkPolicyHelp">
+              <p id="networkPolicyHelp" class="compact-note">仅启用 Codex 原生搜索；不开放 shell 网络、CAP_NET_ADMIN 或 danger-full-access。</p>
+              <label>
+                固定 Capability 联网
+                <select id="networkBaseMode">
+                  <option value="capability_only">允许受控来源（推荐）</option>
+                  <option value="off">全部关闭</option>
+                </select>
+              </label>
+              <label class="checkbox-line">
+                <input id="ownerWebSearchEnabled" type="checkbox">
+                临时允许 Owner 后台任务使用 Codex Web Search
+              </label>
+              <label>
+                授权有效期
+                <select id="ownerWebSearchTtl">
+                  <option value="60">1 小时</option>
+                  <option value="240" selected>4 小时</option>
+                  <option value="1440">24 小时</option>
+                  <option value="10080">7 天</option>
+                </select>
+              </label>
+              <div class="button-row">
+                <button id="saveNetworkPolicyBtn" class="primary" type="submit">保存网络策略</button>
+                <button id="refreshNetworkPolicyBtn" class="secondary" type="button">刷新状态</button>
+              </div>
+              <p id="networkPolicyStatus" class="compact-note" role="status" aria-live="polite"></p>
+            </form>
+            <section class="inventory-panel" aria-labelledby="networkPolicyEventsTitle">
+              <h3 id="networkPolicyEventsTitle">最近策略变更</h3>
+              <ol id="networkPolicyEvents" class="task-timeline-list">
+                <li class="empty-state">暂无策略变更。</li>
+              </ol>
+            </section>
+          </section>
+
+          <section id="skillCatalogWorkspace" class="catalog-workspace hidden" data-capability-pane="skills" aria-labelledby="skillCatalogTitle">
+            <div class="section-heading">
+              <div><p class="section-index">Methods</p><h2 id="skillCatalogTitle">Skills</h2></div>
+              <p>Skill 描述受控执行方法与约束；Capability 才授予执行权，不自动安装第三方代码。</p>
+            </div>
+            <div id="capabilitySkillRows" class="entity-grid">
+              <div class="empty-state">暂无 Skill。</div>
+            </div>
+            <details id="skillEditor" class="editor-panel">
+              <summary><span>Skill 编辑器</span><small>保存为独立 SKILL.md</small></summary>
+              <div class="editor-body form-stack">
+                <div class="split-form-row"><label>Skill ID<input id="skillId" type="text" placeholder="my-skill"></label><label>显示名称<input id="skillName" type="text" placeholder="技能名称"></label></div>
+                <label>用途说明<input id="skillDescription" type="text" placeholder="这个 Skill 解决什么问题"></label>
+                <div class="split-form-row"><label>适用范围<select id="skillScope"><option value="all">全部工作</option><option value="ops">服务器运维</option><option value="code">代码项目</option><option value="research">资料研究</option><option value="analysis">分析建议</option><option value="memory">记忆</option><option value="chat">聊天</option></select></label><label>触发线索<input id="skillTriggers" type="text" placeholder="用逗号分隔"></label></div>
+                <label>Skill 内容<textarea id="skillInstructions" rows="10" placeholder="# 标题&#10;&#10;写清步骤、边界和输出要求"></textarea></label>
+                <label class="checkbox-line"><input id="skillEnabled" type="checkbox" checked>启用 Skill</label>
+                <div class="button-row">
+                  <button id="saveSkillBtn" class="primary" type="button">保存 Skill</button>
+                  <button id="cancelSkillBtn" class="secondary" type="button">取消编辑</button>
+                </div>
+              </div>
+            </details>
+          </section>
+        </section>
+

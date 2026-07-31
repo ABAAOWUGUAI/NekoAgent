@@ -1,0 +1,8 @@
+name: assistant_platform_bridge
+display_name: Assistant Platform Bridge
+desc: Route AstrBot conversations to the Assistant Platform and reliable result delivery.
+version: 0.2.0
+author: community
+repo: ""
+support_platforms:
+  - aiocqhttp

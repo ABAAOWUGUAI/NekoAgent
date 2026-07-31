@@ -1,0 +1,302 @@
+        <section id="view-qq" class="view hidden">
+          <div id="qqSummary" class="summary-strip"></div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>处理建议</h2>
+              <span id="qqMeta" class="meta">等待诊断</span>
+            </div>
+            <div class="panel-body">
+              <pre id="qqRecommendation">(未加载)</pre>
+            </div>
+          </section>
+
+          <section id="qqAccessPanel" class="panel qq-access-panel" data-progressive="true" aria-label="QQ 身份与访问控制">
+            <div id="qqAccessMount" class="panel-body" aria-busy="true">正在加载 QQ 身份与访问控制组件…</div>
+          </section>
+
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>QQ 登录</h2>
+                <span id=qqAd class="meta">Adapter</span>
+              </div>
+              <div class="panel-body">
+                <div class="settings-list">
+                  <div class="settings-row">
+                    <strong>登录状态</strong>
+                    <p id="qqLoginState">未加载</p>
+                  </div>
+                  <div class="settings-row">
+                    <strong>白名单 QQ</strong>
+                    <p id="qqAllowedIds" class="mono">未加载</p>
+                  </div>
+                  <div class="settings-row">
+                    <strong>扫码入口</strong>
+                    <p id="qqQrHint">只有登录态失效时才需要扫码。</p>
+                  </div>
+                </div>
+                <div class="toolbar" style="justify-content: flex-start; margin-top: 12px;">
+                  <button id="refreshQrcodeBtn" class="secondary" type="button">刷新二维码</button>
+                </div>
+                <div id="qqQrBox" class="qrcode-box hidden">
+                  <img id="qqQrImage" alt="登录二维码">
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h2>链路状态</h2>
+                <span class="meta">OneBot / AstrBot / Bridge</span>
+              </div>
+              <div class="panel-body">
+                <div class="settings-list">
+                  <div class="settings-row">
+                    <strong>OneBot 连接</strong>
+                    <p id="qqOnebotState">未加载</p>
+                  </div>
+                  <div class="settings-row">
+                    <strong>插件加载</strong>
+                    <p id="qqPluginState">未加载</p>
+                  </div>
+                  <div class="settings-row">
+                    <strong>Bridge 连通</strong>
+                    <p id="qqBridgeState">未加载</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>消息审计</h2>
+              <span id="qqAuditMeta" class="meta">最近事件</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>Trace</th>
+                    <th>阶段</th>
+                    <th>动作</th>
+                    <th>状态</th>
+                    <th>任务</th>
+                    <th>内容</th>
+                  </tr>
+                </thead>
+                <tbody id="qqAuditRows">
+                  <tr><td colspan="7" class="empty">暂无审计事件。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>最近私聊</h2>
+                <span class="meta">白名单账号</span>
+              </div>
+              <div class="panel-body">
+                <pre id="qqMessageEvents">(未加载)</pre>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h2>插件与连接事件</h2>
+                <span class="meta">诊断日志</span>
+              </div>
+              <div class="panel-body">
+                <pre id="qqRuntimeEvents">(未加载)</pre>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-logs" class="view hidden">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>运行日志</h2>
+              <div class="filters">
+                <select id="logTarget" aria-label="日志目标">
+                  <option value="bridge">bridge</option>
+                  <option value="astrbot">astrbot</option>
+                  <option value="llbot">llbot</option>
+                  <option value="mihomo">mihomo</option>
+                </select>
+                <input id="logLines" aria-label="日志行数" type="number" min="20" max="300" value="120">
+                <button id="loadLogsBtn" class="secondary" type="button">读取日志</button>
+              </div>
+            </div>
+            <div class="panel-body">
+              <pre id="logOutput" tabindex="0" aria-label="运行日志内容">(未加载)</pre>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-settings" class="view hidden">
+          <section class="panel pet-management-panel">
+            <div class="panel-header">
+              <div><h2>桌面宠物</h2><p class="compact-note">PetPack 可替换；当前预装形象包含待机、移动、挥手、跳跃、失败、等待、工作和审核动画。</p></div>
+              <span class="meta">9-state spritesheet / custom pack</span>
+            </div>
+            <div class="panel-body pet-management-grid">
+              <div class="form-stack">
+                <label class="checkbox-line"><input id="petEnabled" type="checkbox">在控制台显示桌宠</label>
+                <label>当前 PetPack<select id="petPackSelect"></select></label>
+                <label>缩放<div class="range-row"><input id="petScale" type="range" min="0.5" max="1.8" step="0.05"><output id="petScaleValue">1.00</output></div></label>
+                <div class="split-form-row">
+                  <label>停靠位置<select id="petDock"><option value="bottom-right">右下</option><option value="bottom-left">左下</option><option value="free">自由位置</option></select></label>
+                  <label>动画<select id="petMotion"><option value="auto">跟随系统</option><option value="reduced">减弱</option><option value="off">关闭</option></select></label>
+                </div>
+                <p id="petPositionHint" class="compact-note">可拖动桌宠；键盘聚焦后用方向键移动，按 Home 恢复右下。</p>
+                <div class="button-row"><button id="savePetSettingsBtn" class="primary" type="button">保存桌宠设置</button><button id="resetPetPositionBtn" class="secondary" type="button">恢复右下</button></div>
+                <p id="petStatus" class="provider-status" role="status" aria-live="polite">等待加载 PetPack。</p>
+              </div>
+              <div>
+                <h3>已安装 PetPack</h3>
+                <div id="petPackList" class="settings-list"><div class="empty">暂无 PetPack。</div></div>
+                <details class="editor-panel">
+                  <summary><span>导入自定义 PetPack</span><small>PNG / WebP / GIF，最大 5 MB；动画图集可附 manifest</small></summary>
+                  <div class="editor-body form-stack">
+                    <label>显示名称<input id="petImportName" type="text" maxlength="80" placeholder="例如：我的工作搭档"></label>
+                    <div class="split-form-row"><label>作者<input id="petImportAuthor" type="text" maxlength="80"></label><label>授权说明<input id="petImportLicense" type="text" maxlength="160" value="private-use"></label></div>
+                    <label>图片资源<input id="petImportFile" type="file" accept="image/png,image/webp,image/gif"></label>
+                    <label>动画 manifest（可选）<input id="petImportManifest" type="file" accept="application/json,.json" aria-describedby="petManifestHelp"></label>
+                    <p id="petManifestHelp" class="compact-note">普通图片或 GIF 无需 manifest。Spritesheet 使用 schema v2，声明 atlas 尺寸以及 idle、running-right 等状态行、帧数与 FPS。</p>
+                    <button id="importPetPackBtn" class="secondary" type="button">验证并导入</button>
+                  </div>
+                </details>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>对话参与决策</h2>
+                <p class="compact-note">只显示是否回复、原因和命中的场景角色，不显示聊天正文。</p>
+              </div>
+              <span id="qqParticipationMeta" class="meta">未启用</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>时间</th><th>场景</th><th>动作</th><th>原因</th>
+                    <th>模型角色</th><th>政策</th>
+                  </tr>
+                </thead>
+                <tbody id="qqParticipationRows">
+                  <tr><td colspan="6" class="empty">暂无参与决策。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel token-management-panel">
+            <div class="panel-header">
+              <h2>管理访问 Token</h2>
+              <span class="meta" id="fixedTokenMeta">读取状态中</span>
+            </div>
+            <div class="panel-body">
+              <div class="form-stack token-management-form">
+                <p class="compact-note">管理 Token 保存在服务器受保护的固定文件中，由受限 Ops Broker 原子轮换；系统永远不会在页面中显示当前值。</p>
+                <label>
+                  新 Token
+                  <input id="fixedTokenInput" type="password" minlength="8" maxlength="256" autocomplete="new-password" aria-describedby="fixedTokenHelp fixedTokenStatus">
+                </label>
+                <label>
+                  再次输入新 Token
+                  <input id="fixedTokenConfirmInput" type="password" minlength="8" maxlength="256" autocomplete="new-password" aria-describedby="fixedTokenHelp fixedTokenStatus">
+                </label>
+                <p id="fixedTokenHelp" class="compact-note">使用 8–256 位英文字母、数字或 <span class="mono">. _ ~ -</span>。8 位安全性较低。保存后旧管理 Token 和所有网页登录会话立即失效；独立的 QQ 渠道 Token 不会被修改，AstrBot 无需读取管理 Token。</p>
+                <label class="checkbox-line">
+                  <input id="fixedTokenLogoutConfirm" type="checkbox">
+                  我了解保存后当前页面会退出登录
+                </label>
+                <div id="fixedTokenStatus" class="provider-status" role="status" aria-live="polite">尚未读取 Token 状态。</div>
+                <div class="button-row">
+                  <button id="saveFixedTokenBtn" class="danger" type="button">保存固定 Token</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>访问与运行说明</h2>
+              <span class="meta">当前控制台</span>
+            </div>
+            <div class="panel-body">
+              <div class="settings-list">
+                <div class="settings-row">
+                  <strong>访问凭证来源</strong>
+                  <p>登录页的访问凭证来自 Bridge 运行配置指定的 <span class="mono">TOKEN_PATH</span>。实际内容只应在服务器上安全读取，不应出现在截图、群聊、普通日志或公开文档中。</p>
+                </div>
+                <div class="settings-row">
+                  <strong>会话方式</strong>
+                  <p>登录成功后由服务端创建 <span class="mono">HttpOnly</span> 会话 Cookie。浏览器页面不会把 token 保存到 <span class="mono">localStorage</span> 或 <span class="mono">sessionStorage</span>。</p>
+                </div>
+                <div class="settings-row">
+                  <strong>API 兼容</strong>
+                  <p>管理脚本使用 <span class="mono">X-Bridge-Token</span>；AstrBot 使用独立的 <span class="mono">X-Channel-Token</span>，且只能访问 QQ 渠道运行面。</p>
+                </div>
+                <div class="settings-row">
+                  <strong>公网访问</strong>
+                  <p>如果外部电脑或手机打不开页面，优先检查云厂商安全组是否放行 <span class="mono">TCP 18777</span>。</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>界面背景</h2>
+              <span class="meta">本机浏览器显示设置</span>
+            </div>
+            <div class="panel-body">
+              <div class="form-stack">
+                <label class="checkbox-line">
+                  <input id="appearanceBackgroundEnabled" type="checkbox">
+                  启用自定义背景
+                </label>
+                <div class="control-row">
+                  <label>
+                    背景图片 URL
+                    <input id="appearanceBackgroundUrl" type="url" placeholder="https://example.com/background.jpg">
+                  </label>
+                  <button id="useSampleBackgroundBtn" class="secondary" type="button">使用示例壁纸</button>
+                </div>
+                <label>
+                  背景遮罩
+                  <div class="range-row">
+                    <input id="appearanceDimInput" type="range" min="0.00" max="0.96" step="0.01">
+                    <output id="appearanceDimValue">0.12</output>
+                  </div>
+                </label>
+                <label>
+                  面板不透明度
+                  <div class="range-row">
+                    <input id="appearancePanelOpacityInput" type="range" min="0.72" max="1" step="0.01">
+                    <output id="appearancePanelOpacityValue">0.88</output>
+                  </div>
+                </label>
+                <div id="appearancePreview" class="appearance-preview">
+                  <span>背景预览会保持后台文字优先可读。</span>
+                </div>
+                <div id="appearanceStatus" class="provider-status" role="status" aria-live="polite">外观设置未加载。</div>
+                <div class="button-row">
+                  <button id="saveAppearanceBtn" class="primary" type="button">保存外观</button>
+                  <button id="previewAppearanceBtn" class="secondary" type="button">预览</button>
+                  <button id="resetAppearanceBtn" class="secondary" type="button">恢复默认</button>
+                </div>
+                <p class="compact-note">壁纸只用于后台界面展示；实际设置保存在 bridge 的 sqlite settings 表中，不影响 QQ 机器人运行。</p>
+              </div>
+            </div>
+          </section>
+        </section>
+      </div>

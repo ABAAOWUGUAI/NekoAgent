@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="admin-build" content="__ADMIN_ASSET_VERSION__">
+  <title>私人助手控制台</title>
+  <link rel="icon" href="/admin/static/pet-placeholder.svg?v=__ADMIN_ASSET_VERSION__" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin/static/admin.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-components.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-surfaces.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-tasks.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-layout.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-features.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-models.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-workbench.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-pets.css?v=__ADMIN_ASSET_VERSION__">
+  <link rel="stylesheet" href="/admin/static/admin-motion.css?v=__ADMIN_ASSET_VERSION__">
+</head>
+<body>
+  <section id="loginShell" class="login-shell">
+    <div class="login-copy">
+      <div>
+        <h1>你的私人助手，一直在这里</h1>
+        <p>继续上次的对话、工作和记忆。QQ、模型与执行器可以替换，但你与助手共同积累的上下文不会因此消失。</p>
+        <div class="login-metrics" aria-label="后台能力概览">
+          <div>
+            <span>Goals</span>
+            <strong>持续目标</strong>
+          </div>
+          <div>
+            <span>Runs</span>
+            <strong>可追踪运行</strong>
+          </div>
+          <div>
+            <span>Evidence</span>
+            <strong>可验证结果</strong>
+          </div>
+        </div>
+      </div>
+      <div class="token-source">
+        访问凭证来自 Bridge 运行配置中的 <span class="mono">TOKEN_PATH</span>。不要公开该凭证。
+      </div>
+    </div>
+    <div class="login-panel">
+      <h2>安全登录</h2>
+      <p>输入 bridge token 后，服务端会创建 HttpOnly 会话 Cookie。页面不会把 token 写入浏览器本地存储。</p>
+      <label>
+        访问凭证
+        <input id="tokenInput" type="password" autocomplete="current-password" aria-describedby="loginMessage">
+      </label>
+      <button id="loginBtn" class="primary" type="button">登录</button>
+      <div id="loginMessage" class="connection">未登录。</div>
+    </div>
+  </section>
+
+  <section id="appShell" class="app-shell hidden">
+    <aside class="sidebar" aria-label="控制台侧栏">
+      <div class="brand">
+        <strong>私人助手</strong>
+        <span>私人助手工作台 · 连续对话、工作与记忆</span>
+      </div>
+      <nav class="nav" aria-label="管理后台导航">
+        <button class="active" type="button" data-view="overview">日常空间</button>
+        <button type="button" data-nav-group="workspace" data-default-view="tasks">工作</button>
+        <button type="button" data-nav-group="agent" data-default-view="brain">助手</button>
+        <button type="button" data-nav-group="system" data-default-view="proxy">系统与连接</button>
+      </nav>
+      <div class="session-box">
+        <span id="sessionState">会话检查中</span>
+        <button id="logoutBtn" class="secondary" type="button">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="viewTitle" tabindex="-1">日常空间</h1>
+          <nav id="viewTabs" class="view-tabs hidden" aria-label="当前产品域页面"></nav>
+          <div id="connection" class="connection">等待刷新。</div>
+        </div>
+        <div class="toolbar">
+          <button id="refreshBtn" class="secondary" type="button">刷新当前页</button>
+          <button id="quickTaskBtn" class="primary" type="button">新建任务</button>
+        </div>
+      </header>
+
+      <div id="updateBanner" class="update-banner hidden" role="status" aria-live="polite">
+        <span>控制台已有新版本。保存正在编辑的内容后重新载入。</span>
+        <button id="reloadConsoleBtn" class="secondary" type="button">重新载入控制台</button>
+      </div>
+
+      <div id="contentViewport" class="content">
+        __ADMIN_VIEW_PARTIALS__
+    </main>
+    <div id="desktopPet" class="desktop-pet" role="region" aria-label="桌面宠物" hidden>
+      <div id="petBubble" class="pet-bubble" role="status" aria-live="polite" hidden>我在这里，工作需要我时再叫我。</div>
+      <div id="petCharacterSprite" class="pet-visual pet-sprite" role="img" aria-label="助手动态桌面宠物" hidden></div>
+      <img id="petCharacterImage" class="pet-visual pet-image" src="/admin/static/pet-placeholder.svg?v=__ADMIN_ASSET_VERSION__" alt="助手桌面宠物" draggable="false">
+      <button id="petCharacterBtn" class="pet-character" type="button" aria-label="拖动桌面宠物；点击可互动，方向键可微调" aria-describedby="petDragHelp" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home"><span aria-hidden="true">↕</span></button>
+      <button id="petCloseBtn" class="pet-close" type="button" aria-label="关闭桌面宠物">×</button>
+      <span id="petDragHelp" class="visually-hidden">按住桌面宠物顶部的移动手柄可自由拖动。键盘方向键每次移动十像素，按 Home 恢复右下停靠。宠物图像本身不会遮挡页面按钮。</span>
+    </div>
+  </section>
+
+  <script defer src="/admin/static/anime.umd.min.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/motion.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/view-config.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/core.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/ui-shell.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/views-overview.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/views-tasks.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/views-workbench.js?v=__ADMIN_ASSET_VERSION__"></script>
+  <script defer src="/admin/static/runtime.js?v=__ADMIN_ASSET_VERSION__"></script>
+</body>
+</html>

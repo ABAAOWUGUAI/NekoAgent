@@ -1,0 +1,87 @@
+.project-list-tools,
+.project-actions,
+.project-dialog-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.project-list-tools { justify-content: flex-end; }
+.project-management-grid { grid-template-columns: minmax(0, 1fr); }
+.project-actions { min-width: 250px; }
+.project-dialog-heading { justify-content: space-between; }
+
+.project-path {
+  max-width: 34rem;
+  overflow-wrap: anywhere;
+}
+
+.project-task-count {
+  display: grid;
+  gap: 3px;
+}
+
+.project-task-count small { color: var(--muted); }
+.project-table td:first-child strong,
+.project-table td:first-child small { display: block; }
+.project-table td:first-child small { margin-top: 4px; color: var(--muted); }
+
+.project-dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.project-dialog::backdrop { background: rgba(17, 24, 39, .56); }
+.project-dialog form,
+.project-dialog label { display: grid; gap: 10px; }
+.project-dialog form { gap: 18px; }
+.project-dialog .dialog-close { min-height: 32px; padding-inline: 10px; }
+
+.project-task-list {
+  display: grid;
+  gap: 10px;
+  margin-block: 18px;
+}
+
+.project-task-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.project-task-item p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.project-task-item small { color: var(--muted); }
+
+@media (max-width: 720px) {
+  .project-table thead { display: none; }
+  .project-table,
+  .project-table tbody,
+  .project-table tr,
+  .project-table td { display: block; width: 100%; }
+  .project-table tr { padding: 14px; border-bottom: 1px solid var(--line); }
+  .project-table td { padding: 4px 0; border: 0; }
+  .project-actions { min-width: 0; margin-top: 8px; }
+  .project-list-tools { align-items: flex-start; flex-direction: column; }
+  .project-dialog { padding: 18px; }
+  .project-task-item { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-dialog { scroll-behavior: auto; }
+}
+
+@media (forced-colors: active) {
+  .project-dialog,
+  .project-task-item { border: 1px solid CanvasText; }
+}

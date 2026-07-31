@@ -1,0 +1,5 @@
+# Release C6 runtime dependency lock.
+# Supported runtime: CPython 3.10.x on Linux x86_64.
+# AstrBot owns its own dependency environment and is not installed by this file.
+PyYAML==6.0.2 \
+    --hash=sha256:ec031d5d2feb36d1d1a24380e4db6d43695f3748343d99434e6f5f9156aaa2ed

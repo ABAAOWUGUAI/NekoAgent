@@ -1,0 +1,450 @@
+/* Gate 8: relationship, routing presets, and business readiness. */
+.gate8-view {
+  --gate8-accent: #7c3aed;
+  --gate8-soft: #f4f0ff;
+  --gate8-pink: #db2777;
+}
+
+.gate8-intro {
+  border-bottom-color: color-mix(in srgb, var(--gate8-accent) 34%, var(--line));
+}
+
+.gate8-feature-status {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--quiet);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.gate8-feature-status.ready {
+  border-left-color: var(--green);
+  background: var(--soft-green);
+  color: var(--green);
+}
+
+.gate8-feature-status.blocked {
+  border-left-color: var(--amber);
+  background: var(--soft-amber);
+  color: var(--amber);
+}
+
+.gate8-context-panel .panel-header,
+.gate8-domain-card .panel-header,
+.gate8-social-card .panel-header {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--gate8-accent) 10%, transparent), transparent 58%);
+}
+
+.gate8-target-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(190px, 1fr) minmax(240px, 1.2fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.gate8-target-grid label,
+.gate8-social-grid label {
+  min-width: 0;
+}
+
+.gate8-management-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.gate8-purpose-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.gate8-purpose-grid article {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--gate8-accent);
+  background: var(--subtle);
+}
+
+.gate8-purpose-grid strong {
+  display: block;
+  color: var(--ink);
+}
+
+.gate8-purpose-grid p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.gate8-domain-card,
+.gate8-social-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.gate8-domain-card::before,
+.gate8-social-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 86px;
+  height: 3px;
+  background: var(--gate8-accent);
+}
+
+.gate8-social-card::before {
+  background: var(--gate8-pink);
+}
+
+.gate8-choice-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+}
+
+.gate8-choice-fieldset legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.gate8-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.gate8-social-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.gate8-advanced {
+  border: 1px solid var(--line);
+  padding: 12px;
+  background: var(--subtle);
+}
+
+.gate8-advanced summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.gate8-advanced[open] .gate8-social-grid {
+  margin-top: 12px;
+}
+
+.proactive-boundary-card {
+  display: grid;
+  align-content: center;
+  border-left: 4px solid #7c3aed;
+}
+
+.proactive-boundary-card h3 {
+  margin: 6px 0 8px;
+}
+
+.proactive-boundary-card p:not(.section-index) {
+  max-width: 56ch;
+  color: var(--muted);
+}
+
+.gate8-preset-workspace {
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+  background:
+    radial-gradient(circle at 92% 0, rgba(0, 47, 167, .09), transparent 34%),
+    var(--surface);
+}
+
+.gate8-preset-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.gate8-preset-heading h3,
+.gate8-preset-heading p {
+  margin: 0;
+}
+
+.gate8-preset-heading h3 {
+  margin-bottom: 5px;
+  font-size: 18px;
+}
+
+.gate8-preset-heading p:not(.section-index) {
+  max-width: 76ch;
+  color: var(--muted);
+}
+
+.gate8-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gate8-preset-card {
+  min-height: 148px;
+  display: grid;
+  align-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  white-space: normal;
+}
+
+.gate8-preset-card:hover:not(:disabled),
+.gate8-preset-card[aria-pressed="true"] {
+  border-color: var(--blue);
+  background: var(--soft-blue);
+}
+
+.gate8-preset-card strong,
+.gate8-preset-card small {
+  display: block;
+}
+
+.gate8-preset-card strong {
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+
+.gate8-preset-card small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.gate8-preset-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--quiet);
+  font-size: 12px;
+}
+
+.gate8-preset-preview {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.gate8-preset-preview .panel-header {
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.gate8-mapping-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.gate8-mapping-card {
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--subtle);
+}
+
+.gate8-mapping-card strong,
+.gate8-mapping-card span,
+.gate8-mapping-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.gate8-mapping-card span {
+  margin: 8px 0 4px;
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.gate8-mapping-card small {
+  color: var(--muted);
+}
+
+.gate8-warning-list {
+  display: grid;
+  gap: 6px;
+}
+
+.gate8-warning {
+  padding: 9px 12px;
+  border-left: 3px solid var(--amber);
+  background: var(--soft-amber);
+  color: var(--amber);
+}
+
+.gate8-warning.blocker {
+  border-left-color: var(--red);
+  background: var(--soft-red);
+  color: var(--red);
+}
+
+.gate8-apply-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.gate8-health-panel {
+  border-top: 3px solid var(--blue);
+}
+
+.gate8-health-panel .panel-header {
+  min-height: 76px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.gate8-health-panel .panel-header h2 {
+  font-size: 20px;
+}
+
+.gate8-health-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.gate8-health-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--quiet);
+  background: var(--surface);
+}
+
+.gate8-health-card[data-health-status="healthy"] {
+  border-top-color: var(--green);
+  background: linear-gradient(180deg, var(--soft-green), var(--surface) 52%);
+}
+
+.gate8-health-card[data-health-status="unknown"] {
+  border-top-color: var(--quiet);
+  background: linear-gradient(180deg, var(--subtle), var(--surface) 52%);
+}
+
+.gate8-health-card[data-health-status="degraded"] {
+  border-top-color: var(--amber);
+  background: linear-gradient(180deg, var(--soft-amber), var(--surface) 52%);
+}
+
+.gate8-health-card[data-health-status="unavailable"] {
+  border-top-color: var(--red);
+  background: linear-gradient(180deg, var(--soft-red), var(--surface) 52%);
+}
+
+.gate8-health-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gate8-health-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.gate8-health-card p {
+  min-height: 42px;
+  margin: 10px 0 6px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.gate8-health-card small {
+  display: block;
+  color: var(--quiet);
+}
+
+.gate8-health-card .next-action {
+  margin-top: 10px;
+  color: var(--blue);
+  font-weight: 700;
+}
+
+@media (max-width: 1380px) {
+  .gate8-social-grid {
+    grid-template-columns: repeat(3, minmax(140px, 1fr));
+  }
+  .gate8-preset-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .gate8-health-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .gate8-target-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .gate8-management-grid {
+    grid-template-columns: 1fr;
+  }
+  .gate8-purpose-grid {
+    grid-template-columns: 1fr;
+  }
+  .gate8-mapping-list,
+  .gate8-health-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .gate8-target-grid,
+  .gate8-social-grid,
+  .gate8-preset-grid,
+  .gate8-mapping-list,
+  .gate8-health-grid,
+  .gate8-choice-grid {
+    grid-template-columns: 1fr;
+  }
+  .gate8-preset-heading,
+  .gate8-apply-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .gate8-preset-card {
+    min-height: 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .gate8-feature-status,
+  .gate8-purpose-grid article,
+  .gate8-domain-card,
+  .gate8-social-card,
+  .gate8-preset-workspace,
+  .gate8-preset-card,
+  .gate8-health-card {
+    forced-color-adjust: auto;
+    background: Canvas;
+    color: CanvasText;
+  }
+}

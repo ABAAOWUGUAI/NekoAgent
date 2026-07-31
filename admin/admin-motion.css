@@ -1,0 +1,53 @@
+/* Swiss Grid Relay: short, structural, and fully reducible. */
+@keyframes view-enter {
+  from { transform: translateY(8px); }
+  to { transform: translateY(0); }
+}
+
+html:not(.motion-ready) .view:not(.hidden) {
+  animation: view-enter 240ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.panel,
+.catalog-workspace,
+.route-card,
+.entity-card,
+.resource-record,
+.resource-model-row,
+.spine-stage {
+  transition:
+    transform 180ms cubic-bezier(.2, .8, .2, 1),
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+button { transition: transform 180ms cubic-bezier(.2, .8, .2, 1), box-shadow 180ms ease; }
+
+button:not(:disabled):active { transform: scale(.98); }
+.entity-card:hover,
+.route-card:hover,
+.resource-model-row:hover { transform: translateY(-2px); border-color: var(--blue); }
+.resource-record:hover { border-color: var(--line-strong); }
+.status-chip.amber,
+.provider-status.pending { border-inline-start: 3px solid currentColor; }
+
+@media (prefers-reduced-motion: reduce) {
+  .view:not(.hidden) { animation: none; }
+  .panel,
+  .catalog-workspace,
+  .route-card,
+  .entity-card,
+  .resource-record,
+  .resource-model-row,
+  .spine-stage,
+  button { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .entity-card:hover,
+  .route-card:hover,
+  .resource-model-row:hover,
+  button:not(:disabled):active { transform: none; }
+}

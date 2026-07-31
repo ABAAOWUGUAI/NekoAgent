@@ -1,0 +1,165 @@
+        <section id="view-artifacts" class="view hidden artifact-center-view" aria-labelledby="artifactCenterHeading">
+          <header class="artifact-center-header">
+            <div>
+              <p class="artifact-center-context">任务交付</p>
+              <h2 id="artifactCenterHeading">成品中心</h2>
+              <p>查看任务生成的文件与静态网站版本。下载保留原始内容；预览链接在独立来源打开。</p>
+            </div>
+            <div class="artifact-center-summary" aria-label="成品统计">
+              <span>可见成品</span>
+              <strong id="artifactCount">—</strong>
+            </div>
+          </header>
+
+          <div id="artifactCenterStatus" class="artifact-center-status" role="status" aria-live="polite" aria-atomic="true">
+            正在检查成品中心。
+          </div>
+
+          <section id="artifactDisabledState" class="artifact-disabled-state" hidden aria-labelledby="artifactDisabledHeading">
+            <div>
+              <h3 id="artifactDisabledHeading">成品中心尚未启用</h3>
+              <p>现有任务不会因此中断。管理员完成隔离来源、访问保护和存储检查后，成品会出现在这里。</p>
+            </div>
+            <dl id="artifactPrerequisiteList" class="artifact-prerequisite-list"></dl>
+          </section>
+
+          <div id="artifactCenterWorkspace" class="artifact-center-workspace" hidden>
+            <aside class="artifact-library" aria-labelledby="artifactLibraryHeading">
+              <div class="artifact-library-heading">
+                <div>
+                  <h3 id="artifactLibraryHeading">全部成品</h3>
+                  <p id="artifactLibraryMeta">尚未加载。</p>
+                </div>
+                <button id="reloadArtifactsBtn" class="secondary" type="button">刷新</button>
+              </div>
+              <label class="artifact-search">
+                <span>搜索成品</span>
+                <input id="artifactSearchInput" type="search" autocomplete="off" placeholder="按名称或摘要搜索">
+              </label>
+              <ul id="artifactList" class="artifact-list" aria-label="成品列表"></ul>
+              <div id="artifactEmptyState" class="artifact-empty-state" hidden>
+                <h4>还没有成品</h4>
+                <p>任务生成并登记文件、报告、演示文稿或静态网站后，会在这里形成可追踪版本。</p>
+                <button class="primary" type="button" data-artifact-go-tasks>打开任务中心</button>
+              </div>
+              <p id="artifactNoResults" class="artifact-empty-state" hidden>没有匹配的成品，请调整搜索内容。</p>
+            </aside>
+
+            <section class="artifact-detail-panel" aria-labelledby="artifactDetailHeading">
+              <div id="artifactDetailEmpty" class="artifact-detail-empty">
+                <h3 id="artifactDetailHeading">选择一项成品</h3>
+                <p>这里会展示当前版本、发布状态、下载入口和审计事件。</p>
+              </div>
+              <article id="artifactDetail" hidden>
+                <header class="artifact-detail-header">
+                  <div>
+                    <div class="artifact-title-line">
+                      <span id="artifactKindBadge" class="artifact-kind-badge"></span>
+                      <span id="artifactPublicationBadge" class="artifact-publication-badge"></span>
+                    </div>
+                    <h3 id="artifactDetailTitle" tabindex="-1"></h3>
+                    <p id="artifactDetailSummary"></p>
+                  </div>
+                  <div class="artifact-detail-actions">
+                    <button id="reviseArtifactBtn" class="primary" type="button">继续修改</button>
+                    <button id="deleteArtifactBtn" class="danger" type="button">删除成品</button>
+                  </div>
+                </header>
+
+                <dl id="artifactFacts" class="artifact-facts"></dl>
+
+                <section class="artifact-publication" aria-labelledby="artifactPublicationHeading">
+                  <div class="artifact-section-heading">
+                    <div>
+                      <h4 id="artifactPublicationHeading">静态网站预览</h4>
+                      <p id="artifactPublicationHelp">只有静态网站版本会提供受保护的外部预览。</p>
+                    </div>
+                    <div id="artifactPublicationActions" class="artifact-publication-actions"></div>
+                  </div>
+                  <p id="artifactPublicationState" class="artifact-inline-state"></p>
+                </section>
+
+                <div class="artifact-evidence-grid">
+                  <section aria-labelledby="artifactVersionsHeading">
+                    <div class="artifact-section-heading">
+                      <div>
+                        <h4 id="artifactVersionsHeading">版本</h4>
+                        <p>每个版本不可变；修改会创建新的任务与版本。</p>
+                      </div>
+                    </div>
+                    <ol id="artifactVersionList" class="artifact-version-rail"></ol>
+                  </section>
+                  <section aria-labelledby="artifactEventsHeading">
+                    <div class="artifact-section-heading">
+                      <div>
+                        <h4 id="artifactEventsHeading">事件记录</h4>
+                        <p>创建、发布和访问状态变化均由服务端记录。</p>
+                      </div>
+                    </div>
+                    <ol id="artifactEventList" class="artifact-event-list"></ol>
+                  </section>
+                </div>
+              </article>
+            </section>
+          </div>
+
+          <dialog id="artifactReviseDialog" class="artifact-dialog" aria-labelledby="artifactReviseHeading">
+            <form id="artifactReviseForm">
+              <div class="artifact-dialog-heading">
+                <h3 id="artifactReviseHeading">继续修改成品</h3>
+                <button type="button" class="dialog-close" data-close-artifact-dialog aria-label="关闭修改对话框">关闭</button>
+              </div>
+              <p>修改会在隔离工作区创建任务，当前版本不会被覆盖。</p>
+              <label>
+                修改要求
+                <textarea id="artifactRevisionInstruction" required maxlength="8000" rows="6" autofocus></textarea>
+              </label>
+              <label>
+                最长执行时间（秒）
+                <input id="artifactRevisionTimeout" type="number" min="60" max="900" step="30" value="600">
+              </label>
+              <p id="artifactReviseStatus" class="artifact-inline-state" role="status" aria-live="polite"></p>
+              <div class="button-row">
+                <button class="primary" type="submit">创建修改任务</button>
+                <button class="secondary" type="button" data-close-artifact-dialog>取消</button>
+              </div>
+            </form>
+          </dialog>
+
+          <dialog id="artifactActionDialog" class="artifact-dialog" aria-labelledby="artifactActionHeading">
+            <form id="artifactActionForm">
+              <div class="artifact-dialog-heading">
+                <h3 id="artifactActionHeading">确认操作</h3>
+                <button type="button" class="dialog-close" data-close-artifact-dialog aria-label="关闭确认对话框">关闭</button>
+              </div>
+              <p id="artifactActionDescription"></p>
+              <label id="artifactTtlField" hidden>
+                新的可访问时长
+                <select id="artifactTtlInput">
+                  <option value="3600">1 小时</option>
+                  <option value="86400" selected>1 天</option>
+                  <option value="604800">7 天</option>
+                  <option value="2592000">30 天</option>
+                </select>
+              </label>
+              <p id="artifactActionStatus" class="artifact-inline-state" role="status" aria-live="polite"></p>
+              <div class="button-row">
+                <button id="confirmArtifactActionBtn" class="primary" type="submit">确认</button>
+                <button class="secondary" type="button" data-close-artifact-dialog>取消</button>
+              </div>
+            </form>
+          </dialog>
+
+          <dialog id="artifactGrantDialog" class="artifact-dialog" aria-labelledby="artifactGrantHeading">
+            <div class="artifact-dialog-heading">
+              <h3 id="artifactGrantHeading">预览链接已创建</h3>
+              <button type="button" class="dialog-close" data-close-artifact-dialog aria-label="关闭预览链接对话框">关闭</button>
+            </div>
+            <p>链接仅用于一次激活，并会在服务端标注的时间过期。预览在独立来源打开，不嵌入管理后台。</p>
+            <a id="artifactGrantLink" class="artifact-grant-link" target="_blank" rel="noopener noreferrer">打开受保护预览</a>
+            <p id="artifactGrantExpiry" class="artifact-inline-state"></p>
+            <div class="button-row">
+              <button class="secondary" type="button" data-close-artifact-dialog>关闭</button>
+            </div>
+          </dialog>
+        </section>

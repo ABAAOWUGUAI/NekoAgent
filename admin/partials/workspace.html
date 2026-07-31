@@ -1,0 +1,706 @@
+        <section id="view-projects" class="view hidden">
+          <div class="page-intro compact-intro">
+            <div>
+              <span class="eyebrow">WORK CONTEXT</span>
+              <h2>项目空间</h2>
+              <p>项目只负责工作上下文、目录和关联任务，不再与记忆、模型或社交配置混在同一页。</p>
+            </div>
+          </div>
+          <div class="assistant-grid project-overview-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>当前项目</h2>
+                <span id="currentProjectMeta" class="meta">未加载</span>
+              </div>
+              <div class="panel-body">
+                <div class="settings-list">
+                  <div class="settings-row">
+                    <strong>项目名称</strong>
+                    <p id="currentProjectName">未加载</p>
+                  </div>
+                  <div class="settings-row">
+                    <strong>工作目录</strong>
+                    <p id="currentProjectPath" class="mono">未加载</p>
+                  </div>
+                  <div class="settings-row">
+                    <strong>说明</strong>
+                    <p id="currentProjectDescription">未加载</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+          <div class="assistant-grid project-management-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>新建项目</h2>
+                <span class="meta">Codex 工作目录</span>
+              </div>
+              <div class="panel-body">
+                <div class="form-stack">
+                  <label>
+                    项目名称
+                    <input id="projectNameInput" type="text" maxlength="80" placeholder="例如：blog-agent">
+                  </label>
+                  <label>
+                    工作目录
+                    <input id="projectPathInput" type="text" placeholder="留空则自动创建在 /opt/agent-workspace">
+                  </label>
+                  <label>
+                    项目说明
+                    <textarea id="projectDescInput" spellcheck="false" placeholder="这个项目要解决什么问题。"></textarea>
+                  </label>
+                  <button id="createProjectBtn" class="primary" type="button">创建并切换</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h2>项目列表</h2>
+                <div class="project-list-tools">
+                  <label class="checkbox-line"><input id="showArchivedProjects" type="checkbox">显示归档项目</label>
+                  <span id="projectListMeta" class="meta">未加载</span>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="project-table">
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>工作目录</th>
+                      <th>状态</th>
+                      <th>关联任务</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="projectRows">
+                    <tr><td colspan="5" class="empty">暂无项目。</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-assistant" class="view hidden knowledge-workspace">
+          <div id="assistantSummary" class="summary-strip"></div>
+
+          <header class="knowledge-hero">
+            <div>
+              <span class="eyebrow">LIVING KNOWLEDGE</span>
+              <h2>知识与记忆</h2>
+              <p>记忆属于具体的人、群、对话或项目；经过明确审核后，才能成为跨场景复用的助手知识。</p>
+            </div>
+            <button id="loadKnowledgeBtn" class="secondary" type="button">同步知识</button>
+          </header>
+
+          <section class="wiki-health" aria-labelledby="wikiHealthTitle">
+            <div class="wiki-health-heading">
+              <div>
+                <span class="eyebrow">KNOWLEDGE HEALTH</span>
+                <h2 id="wikiHealthTitle">知识生命状态</h2>
+              </div>
+              <p id="knowledgeWorkspaceStatus" role="status" aria-live="polite">正在载入可追溯性与新鲜度摘要。</p>
+            </div>
+            <div id="knowledgeWorkspaceSummary" class="wiki-health-grid" aria-busy="true">
+              <div class="wiki-health-item skeleton-line"></div>
+              <div class="wiki-health-item skeleton-line"></div>
+              <div class="wiki-health-item skeleton-line"></div>
+              <div class="wiki-health-item skeleton-line"></div>
+            </div>
+            <div id="knowledgeLintSummary" class="wiki-lint-summary" hidden></div>
+          </section>
+
+          <div class="knowledge-layout">
+            <section class="panel knowledge-editor" aria-labelledby="sharedKnowledgeTitle">
+              <div class="panel-header">
+                <div>
+                  <h2 id="sharedKnowledgeTitle">知识草稿</h2>
+                  <span class="meta">先整理，再审核发布</span>
+                </div>
+              </div>
+              <div class="panel-body form-stack">
+                <label>标题<input id="knowledgeTitleInput" type="text" maxlength="120" placeholder="例如：项目发布规范"></label>
+                <div class="form-row">
+                  <label>知识类型
+                    <select id="knowledgeKindInput">
+                      <option value="fact">事实</option><option value="preference">偏好</option>
+                      <option value="procedure">流程</option><option value="decision">决策</option>
+                      <option value="lesson">经验</option><option value="current_state">当前状态</option>
+                      <option value="reference">参考资料</option>
+                    </select>
+                  </label>
+                  <label>适用范围
+                    <select id="knowledgeAudienceInput">
+                      <option value="all_channels">所有渠道</option>
+                      <option value="private_all">所有私聊</option>
+                      <option value="group_all">所有群聊</option>
+                    </select>
+                  </label>
+                </div>
+                <label>摘要<input id="knowledgeSummaryInput" type="text" maxlength="500" placeholder="一句话说明何时应使用它"></label>
+                <label>标签<input id="knowledgeTagsInput" type="text" maxlength="300" placeholder="发布, 备份, 项目（逗号分隔）"></label>
+                <label>证据引用（每行一条）<textarea id="knowledgeEvidenceRefsInput" maxlength="4816" rows="4" placeholder="https://example.com/source"></textarea></label>
+                <label>知识内容<textarea id="knowledgeContentInput" maxlength="12000" rows="7" placeholder="输入可复用的事实、规则、流程或经验。"></textarea></label>
+                <div class="button-row">
+                  <button id="createKnowledgeBtn" class="primary" type="button">保存为待审核草稿</button>
+                  <button id="cancelKnowledgeEditBtn" class="secondary hidden" type="button">取消编辑</button>
+                </div>
+                <p class="compact-note">对话不会自动进入共享知识；网络资料填写公开来源，审核发布前不进入上下文。</p>
+              </div>
+            </section>
+
+            <section class="panel knowledge-library" aria-label="Living Wiki 知识库">
+              <div class="panel-header">
+                <div><h2>Living Wiki</h2><span class="meta">可检索、可追溯、可归档</span></div>
+              </div>
+              <div class="panel-body">
+                <div class="knowledge-filters" role="search" aria-label="筛选知识">
+                  <label>搜索<input id="knowledgeSearchInput" type="search" placeholder="搜索标题、摘要、内容或标签"></label>
+                  <label>状态<select id="knowledgeStatusFilter"><option value="">全部</option><option value="draft">草稿</option><option value="published">已发布</option><option value="archived">已归档</option><option value="rejected">已拒绝</option></select></label>
+                  <label>类型<select id="knowledgeKindFilter"><option value="">全部</option><option value="fact">事实</option><option value="preference">偏好</option><option value="procedure">流程</option><option value="decision">决策</option><option value="lesson">经验</option><option value="current_state">当前状态</option><option value="reference">参考资料</option></select></label>
+                </div>
+                <div id="knowledgeStatus" class="provider-status" role="status" aria-live="polite">尚未载入。</div>
+                <div id="knowledgeRows" class="knowledge-card-grid"><p class="empty">暂无共享知识。</p></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel memory-candidate-panel" aria-labelledby="memoryCandidateTitle">
+            <div class="panel-header">
+              <div>
+                <h2 id="memoryCandidateTitle">待确认的记忆候选</h2>
+                <span class="meta">模型只提出候选；确认前不会进入长期记忆</span>
+              </div>
+              <button id="loadMemoryCandidatesBtn" class="secondary" type="button">刷新候选</button>
+            </div>
+            <div id="memoryCandidateRows" class="memory-candidate-grid" aria-live="polite">
+              <p class="empty">暂无待确认的记忆候选。</p>
+            </div>
+          </section>
+
+          <dialog id="knowledgeRevisionDialog" class="wiki-revision-dialog" aria-labelledby="knowledgeRevisionTitle">
+            <form method="dialog" class="wiki-revision-shell">
+              <div class="panel-header">
+                <div>
+                  <span class="eyebrow">PROVENANCE</span>
+                  <h2 id="knowledgeRevisionTitle">知识版本记录</h2>
+                </div>
+                <button class="secondary" type="submit" value="close">关闭</button>
+              </div>
+              <div id="knowledgeRevisionRows" class="wiki-revision-list" aria-live="polite"></div>
+            </form>
+          </dialog>
+
+          <div hidden aria-hidden="true">
+            <section class="panel"><div id="assistantModelRouteSummary"></div><button id="openModelRoutingBtn" type="button"></button><div class="policy-switches"><label><input id="memeEnabled" type="checkbox"></label><label><input id="memeDailyEnabled" type="checkbox"></label><label><input id="memeWorkEnabled" type="checkbox"></label><label><input id="proactiveEnabled" type="checkbox"></label></div><button id="saveAssistantProviderBtn" type="button"></button><div id="chatProviderState"></div></section>
+            <section class="panel"><button id="reloadSocialBtn" type="button"></button><div id="socialStatus"></div><div id="memeAssetList"></div></section>
+          </div>
+
+          <div class="assistant-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>写入记忆</h2>
+                <span class="meta">长期记忆</span>
+              </div>
+              <div class="panel-body">
+                <div class="form-stack">
+                  <div class="form-row">
+                    <label>
+                      使用范围
+                      <select id="memoryScopeInput">
+                        <option value="owner_private">本人私有（QQ 私聊与 Web）</option>
+                        <option value="thread">仅当前 Web 对话</option>
+                        <option value="project">仅当前项目</option>
+                        <option value="assistant_private">仅当前助手</option>
+                        <option value="global_preference">本人全局偏好</option>
+                        <option value="sensitive_private">敏感·仅当前 Web 对话</option>
+                      </select>
+                    </label>
+                    <label>
+                      记忆类型
+                      <select id="memoryKindInput">
+                        <option value="profile">个人信息</option>
+                        <option value="preference">偏好</option>
+                        <option value="project">项目</option>
+                        <option value="fact">事实</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label>
+                    敏感级别
+                    <select id="memorySensitivityInput">
+                      <option value="private">私有</option>
+                      <option value="normal">普通</option>
+                      <option value="sensitive">敏感</option>
+                    </select>
+                  </label>
+                  <label>
+                    记忆内容
+                    <textarea id="memoryContentInput" spellcheck="false" placeholder="例如：我更喜欢中文、直接、可执行的回复。"></textarea>
+                  </label>
+                  <button id="addMemoryBtn" class="primary" type="button">保存记忆</button>
+                  <p class="compact-note">范围由服务端校验；私聊记忆不会进入 QQ 群，敏感记忆不会用于主动消息。</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h2>记忆列表</h2>
+                <div class="filters">
+                  <input id="memorySearchInput" aria-label="记忆搜索" type="search" placeholder="搜索记忆">
+                  <input id="memoryLimitInput" aria-label="记忆数量" type="number" min="1" max="50" value="20">
+                  <button id="loadMemoriesBtn" class="secondary" type="button">查询</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>类型</th>
+                      <th>内容</th>
+                      <th>范围</th>
+                      <th>敏感级别</th>
+                      <th>更新时间</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="memoryRows">
+                    <tr><td colspan="7" class="empty">暂无记忆。</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>最近对话</h2>
+              <div class="filters">
+                <label class="sr-only" for="conversationThreadSelect">对话线程</label>
+                <select id="conversationThreadSelect" aria-label="对话线程">
+                  <option value="">未加载</option>
+                </select>
+                <span id="conversationMeta" class="meta">未加载</span>
+              </div>
+            </div>
+            <div class="panel-body">
+              <pre id="conversationPreview" tabindex="0" aria-label="最近对话预览">(未加载)</pre>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-brain" class="view hidden persona-studio-view">
+          <header class="persona-studio-hero" data-motion-item>
+            <div>
+              <h2>身份与表达</h2>
+              <p>在一个版本化入口维护助手的稳定身份、表达边界和场景语气。关系与表达学习仍按具体用户或群作用域管理。</p>
+            </div>
+            <div id="personaRuntimeBadge" class="persona-runtime-badge pending" role="status" aria-live="polite">正在读取运行版本</div>
+          </header>
+
+          <div id="brainSummary" class="summary-strip persona-summary-strip" aria-live="polite">
+            <div class="summary-item persona-summary-placeholder"><span>Persona Version</span><strong>读取中</strong></div>
+            <div class="summary-item persona-summary-placeholder"><span>运行时版本</span><strong>读取中</strong></div>
+            <div class="summary-item persona-summary-placeholder"><span>配置来源</span><strong>读取中</strong></div>
+            <div class="summary-item persona-summary-placeholder"><span>最后保存</span><strong>读取中</strong></div>
+          </div>
+
+          <section id="personaWorkspacePanel" class="panel persona-studio-panel" aria-labelledby="personaWorkspaceTitle" aria-busy="true" data-motion-item>
+            <div class="panel-header">
+              <div>
+                <h2 id="personaWorkspaceTitle">当前生效的人格版本</h2>
+                <span class="meta">保存会创建新 Persona Version，不会原地覆盖旧版本</span>
+              </div>
+              <button id="reloadPersonaWorkspaceBtn" class="secondary" type="button">重新载入</button>
+            </div>
+            <div class="panel-body">
+              <p id="assistantRoleStatus" class="provider-status pending" role="status" aria-live="polite">正在载入身份与表达配置。</p>
+
+              <div id="personaWorkspaceSkeleton" class="persona-skeleton" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span><span></span>
+              </div>
+
+              <form id="personaWorkspaceForm" class="persona-workspace-form hidden" novalidate>
+                <section class="persona-version-rail" aria-labelledby="personaVersionStatusTitle">
+                  <div>
+                    <h3 id="personaVersionStatusTitle">版本与运行状态</h3>
+                    <p id="personaVersionStatus">尚未载入。</p>
+                  </div>
+                  <dl class="persona-version-facts">
+                    <div><dt>当前版本</dt><dd id="personaVersionValue">—</dd></div>
+                    <div><dt>运行版本</dt><dd id="personaRuntimeVersionValue">—</dd></div>
+                    <div><dt>配置来源</dt><dd id="personaConfigSourceValue">—</dd></div>
+                    <div><dt>最后保存</dt><dd id="personaUpdatedAtValue">—</dd></div>
+                  </dl>
+                </section>
+
+                <fieldset class="persona-field-group persona-template-group">
+                  <legend>从产品模板开始</legend>
+                  <p class="compact-note">模板只填草稿；保存后才创建新版本。</p>
+                  <div class="persona-template-actions" role="group" aria-label="人格草稿模板">
+                    <button class="secondary" type="button" data-persona-template="natural_companion">自然陪伴</button>
+                    <button class="secondary" type="button" data-persona-template="owner_character_reference">当前助手角色参考（非官方）</button>
+                    <button class="secondary" type="button" data-persona-template="reliable_partner">可靠搭档</button>
+                    <button class="secondary" type="button" data-persona-template="relaxed_group_friend">轻松群友</button>
+                    <button class="secondary" type="button" data-persona-template="restrained_professional">克制专业</button>
+                  </div>
+                </fieldset>
+
+                <fieldset class="persona-field-group">
+                  <legend>基础身份</legend>
+                  <div class="persona-form-grid two-column">
+                    <label for="assistantDisplayName">昵称
+                      <input id="assistantDisplayName" name="display_name" type="text" maxlength="40" autocomplete="off" required>
+                    </label>
+                    <label for="assistantRelationship">关系基线
+                      <input id="assistantRelationship" name="relationship" type="text" maxlength="80" autocomplete="off" placeholder="例如：长期搭档">
+                    </label>
+                  </div>
+                  <label for="assistantPersona">稳定人格
+                    <textarea id="assistantPersona" name="persona" maxlength="4000" rows="5" spellcheck="false"></textarea>
+                  </label>
+                  <label for="assistantStyle">表达基线
+                    <textarea id="assistantStyle" name="style" maxlength="4000" rows="4" spellcheck="false"></textarea>
+                  </label>
+                  <div class="persona-form-grid two-column">
+                    <label for="personaIdentityCore">身份核心
+                      <textarea id="personaIdentityCore" name="identity_core" maxlength="1200" rows="4"></textarea>
+                    </label>
+                    <label for="personaRelationshipStance">关系立场
+                      <textarea id="personaRelationshipStance" name="relationship_stance" maxlength="800" rows="4"></textarea>
+                    </label>
+                  </div>
+                </fieldset>
+
+                <fieldset class="persona-field-group">
+                  <legend>表达调音台</legend>
+                  <div class="persona-form-grid control-grid">
+                    <label for="personaWarmth">温度
+                      <select id="personaWarmth" name="warmth"><option value="calm">冷静</option><option value="balanced">平衡</option><option value="warm">温暖</option><option value="expressive">鲜明</option></select>
+                    </label>
+                    <label for="personaDirectness">直接程度
+                      <select id="personaDirectness" name="directness"><option value="gentle">委婉</option><option value="balanced">平衡</option><option value="direct">直接</option></select>
+                    </label>
+                    <label for="personaInitiative">主动程度
+                      <select id="personaInitiative" name="initiative"><option value="restrained">克制</option><option value="responsive">按需响应</option><option value="proactive">适度主动</option></select>
+                    </label>
+                    <label for="personaHumor">幽默
+                      <select id="personaHumor" name="humor"><option value="none">不使用</option><option value="light">轻微</option><option value="playful">活泼</option><option value="dry">冷幽默</option></select>
+                    </label>
+                    <label for="personaRhythm">节奏
+                      <select id="personaRhythm" name="rhythm"><option value="concise">简洁</option><option value="natural">自然</option><option value="varied">有变化</option><option value="structured">结构化</option></select>
+                    </label>
+                    <label for="personaQuestionPolicy">追问策略
+                      <select id="personaQuestionPolicy" name="question_policy"><option value="minimal">尽量少问</option><option value="contextual">按语境</option><option value="clarify_when_needed">缺信息时澄清</option><option value="engaged">积极互动</option></select>
+                    </label>
+                    <label for="personaAddressPolicy">称呼策略
+                      <select id="personaAddressPolicy" name="address_policy"><option value="natural">自然使用</option><option value="preferred">优先首选称呼</option><option value="avoid_repetition">避免反复称呼</option></select>
+                    </label>
+                    <label for="personaMemePolicy">表情策略
+                      <select id="personaMemePolicy" name="meme_policy"><option value="never">不使用</option><option value="contextual">按语境</option><option value="frequent">较频繁</option></select>
+                    </label>
+                  </div>
+                </fieldset>
+
+                <fieldset class="persona-field-group">
+                  <legend>场景长度与工作连续性</legend>
+                  <div class="persona-form-grid control-grid">
+                    <label for="personaPrivateLength">私聊长度
+                      <select id="personaPrivateLength" name="private_length"><option value="short">短</option><option value="balanced">适中</option><option value="detailed">详细</option></select>
+                    </label>
+                    <label for="personaGroupLength">群聊长度
+                      <select id="personaGroupLength" name="group_length"><option value="brief">极简</option><option value="short">短</option><option value="balanced">适中</option></select>
+                    </label>
+                    <label for="personaWorkLength">工作长度
+                      <select id="personaWorkLength" name="work_length"><option value="compact">紧凑</option><option value="structured_compact">结构化紧凑</option><option value="detailed">详细</option></select>
+                    </label>
+                  </div>
+                  <label for="personaWorkContinuity">工作连续性
+                    <textarea id="personaWorkContinuity" name="work_continuity" maxlength="800" rows="4"></textarea>
+                  </label>
+                </fieldset>
+
+                <fieldset class="persona-field-group">
+                  <legend>价值、用词与边界</legend>
+                  <div class="persona-form-grid two-column">
+                    <label for="personaValues">核心价值（每行一项，最多 12 项）
+                      <textarea id="personaValues" name="values" maxlength="1932" rows="5"></textarea>
+                    </label>
+                    <label for="personaBoundaries">行为边界（每行一项，最多 12 项）
+                      <textarea id="personaBoundaries" name="boundaries" maxlength="2892" rows="5"></textarea>
+                    </label>
+                    <label for="personaPreferredPhrases">偏好用词（每行一项，最多 16 项）
+                      <textarea id="personaPreferredPhrases" name="preferred_phrases" maxlength="1936" rows="5"></textarea>
+                    </label>
+                    <label for="personaAvoidPhrases">避免用词（每行一项，最多 16 项）
+                      <textarea id="personaAvoidPhrases" name="avoid_phrases" maxlength="1936" rows="5"></textarea>
+                    </label>
+                  </div>
+                  <label for="personaProhibitedPatterns">禁止表达套路（每行一项，最多 16 项）
+                    <textarea id="personaProhibitedPatterns" name="prohibited_patterns" maxlength="3216" rows="5"></textarea>
+                  </label>
+                </fieldset>
+
+                <fieldset class="persona-field-group">
+                  <legend>表达示例</legend>
+                  <p class="compact-note">示例只约束表达方式，不应包含私聊原文、密钥、系统 Prompt 或虚构的共同经历。最多 6 组。</p>
+                  <div id="personaExampleList" class="persona-example-list"></div>
+                  <button id="addPersonaExampleBtn" class="secondary" type="button">添加表达示例</button>
+                </fieldset>
+
+                <fieldset class="persona-field-group persona-preview-group">
+                  <legend>场景编译预览</legend>
+                  <div class="button-row">
+                    <button id="previewPersonaBtn" class="secondary" type="button">更新预览</button>
+                    <span id="personaPreviewStatus" class="meta" role="status" aria-live="polite">预览不会保存配置。</span>
+                  </div>
+                  <div id="personaPreviewCards" class="persona-preview-grid" aria-live="polite">
+                    <article><h4>私聊</h4><p>载入配置后显示编译结果。</p></article>
+                    <article><h4>群聊</h4><p>载入配置后显示编译结果。</p></article>
+                    <article><h4>工作</h4><p>载入配置后显示编译结果。</p></article>
+                  </div>
+                </fieldset>
+
+                <section class="persona-scope-section" aria-labelledby="personaScopeTitle">
+                  <div>
+                    <h3 id="personaScopeTitle">关系与表达作用域</h3>
+                    <p>这里只显示摘要。具体用户、QQ群的关系和表达学习在各自页面维护，不会覆盖全局 Persona。</p>
+                  </div>
+                  <div id="personaScopeSummary" class="persona-scope-summary"><p>尚未载入作用域摘要。</p></div>
+                  <div class="button-row">
+                    <button class="secondary" type="button" data-jump="relationship">管理关系作用域</button>
+                    <button class="secondary" type="button" data-jump="social">查看表达学习</button>
+                  </div>
+                </section>
+
+                <section class="persona-precedence" aria-labelledby="personaPrecedenceTitle">
+                  <h3 id="personaPrecedenceTitle">运行时优先级</h3>
+                  <ol>
+                    <li><strong>平台事实与安全规则</strong><span>不可被人格改写</span></li>
+                    <li><strong>动作、结果与状态事实</strong><span>失败、进行中和完成必须如实表达</span></li>
+                    <li><strong>当前 Persona Version</strong><span>本页维护的稳定身份与 Voice Contract</span></li>
+                    <li><strong>当前主体关系</strong><span>只作用于命中的用户或群</span></li>
+                    <li><strong>当前主体表达习惯</strong><span>只作用于命中的表达作用域</span></li>
+                    <li><strong>本轮表达计划</strong><span>只调整允许的自然语言部分</span></li>
+                  </ol>
+                </section>
+
+                <div class="persona-save-bar">
+                  <div>
+                    <strong id="personaDraftState">当前表单与已保存版本一致</strong>
+                    <span>保存前可预览；发生版本冲突时不会覆盖其他页面的修改。</span>
+                  </div>
+                  <button id="saveAssistantSettingsBtn" class="primary" type="submit">保存为新版本</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <details class="panel disclosure">
+            <summary class="panel-header">
+              <h2>助手行为策略</h2>
+            </summary>
+            <div class="panel-body">
+              <div id="agentPolicySummary" class="summary-strip compact-summary"></div>
+              <div class="form-stack">
+                <div class="policy-grid">
+                  <label>
+                    默认语言
+                    <select id="agentLanguage">
+                      <option value="zh-CN">简体中文</option>
+                      <option value="auto">跟随用户</option>
+                    </select>
+                  </label>
+                  <label>
+                    回复详细度
+                    <select id="agentDetailLevel">
+                      <option value="brief">简洁</option>
+                      <option value="standard">标准</option>
+                      <option value="detailed">详细</option>
+                    </select>
+                  </label>
+                  <label>
+                    角色化强度
+                    <select id="agentPersonaLevel">
+                      <option value="off">关闭</option>
+                      <option value="light">轻度</option>
+                      <option value="full">明显</option>
+                    </select>
+                  </label>
+                  <label>
+                    技术场景风格
+                    <select id="agentTechnicalMode">
+                      <option value="professional">专业准确优先</option>
+                      <option value="balanced">专业与亲切平衡</option>
+                      <option value="friendly">友好解释优先</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="policy-switches">
+                  <label class="checkbox-line">
+                    <input id="agentSummarizeTools" type="checkbox">
+                    工具结果必须整理
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="agentDiscloseFallback" type="checkbox">
+                    降级/缓存必须说明
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="agentSelfCheck" type="checkbox">
+                    回答前自检
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="agentClarifyWhenUncertain" type="checkbox">
+                    关键信息缺失时反问
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="agentConfirmRiskyOps" type="checkbox">
+                    高风险操作需确认
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="agentQualityLogEnabled" type="checkbox">
+                    记录质量事件
+                  </label>
+                </div>
+                <h3 class="section-kicker">模式判断与退出</h3>
+                <div class="policy-grid">
+                  <label>
+                    默认模式
+                    <select id="agentDefaultMode">
+                      <option value="auto">自动判断</option>
+                      <option value="work">固定工作</option>
+                      <option value="daily">固定日常</option>
+                    </select>
+                  </label>
+                  <label>
+                    低置信度处理
+                    <select id="agentLowConfidenceBehavior">
+                      <option value="previous">沿用上一模式</option>
+                      <option value="work">偏向工作</option>
+                      <option value="daily">偏向日常</option>
+                      <option value="ask">先轻问一句</option>
+                    </select>
+                  </label>
+                  <label>
+                    工作结束策略
+                    <select id="agentWorkExitPolicy">
+                      <option value="auto">模型判断 + 自动降温</option>
+                      <option value="explicit">只按明确结束</option>
+                      <option value="ttl">按会话过期</option>
+                    </select>
+                  </label>
+                  <label>
+                    工作有效分钟
+                    <input id="agentWorkTtlMinutes" type="number" min="5" max="240" step="5">
+                  </label>
+                  <label>
+                    最大工作轮次
+                    <input id="agentWorkMaxTurns" type="number" min="1" max="30" step="1">
+                  </label>
+                  <label>
+                    日常表达强度
+                    <select id="agentDailyExpressionLevel">
+                      <option value="off">克制</option>
+                      <option value="light">轻度人格感</option>
+                      <option value="rich">更活泼</option>
+                    </select>
+                  </label>
+                  <label>
+                    日常表情策略
+                    <select id="agentDailyEmojiMode">
+                      <option value="off">禁用</option>
+                      <option value="manual">仅用户要求时</option>
+                      <option value="auto">允许自动触发</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="policy-switches">
+                  <label class="checkbox-line">
+                    <input id="agentModeAutodetect" type="checkbox">
+                    启用模型自动判断模式
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="agentMixedModeEnabled" type="checkbox">
+                    启用混合模式
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="agentWorkEmojiEnabled" type="checkbox">
+                    工作模式允许表情
+                  </label>
+                </div>
+                <div class="button-row">
+                  <button id="saveAgentPolicyBtn" class="primary" type="button">保存助手策略</button>
+                  <button id="loadQualityBtn" class="secondary" type="button">刷新质量观察</button>
+                </div>
+                <p class="compact-note">模式由模型先判断，再由会话状态兜底。工作模式可通过用户明确结束、模型判断完成、会话过期或最大工作轮次自然结束。</p>
+              </div>
+            </div>
+          </details>
+
+          <details class="panel disclosure">
+            <summary class="panel-header">
+              <h2>最近模式会话</h2>
+            </summary>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>用户</th>
+                    <th>模式</th>
+                    <th>意图</th>
+                    <th>置信度</th>
+                    <th>生命周期</th>
+                    <th>结束原因</th>
+                    <th>更新时间</th>
+                    <th>判断理由</th>
+                  </tr>
+                </thead>
+                <tbody id="modeSessionRows">
+                  <tr><td colspan="8" class="empty">暂无模式会话。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+
+          <details class="panel disclosure">
+            <summary class="panel-header">
+              <h2>质量观察</h2>
+            </summary>
+            <div class="panel-body">
+              <div class="filters">
+                <input id="qualityUserIdInput" aria-label="质量主体筛选" type="text" placeholder="可选：输入主体标识">
+                <select id="qualityStatusFilter" aria-label="质量状态筛选">
+                  <option value="">全部</option>
+                  <option value="passed">通过</option>
+                  <option value="warn">需关注</option>
+                  <option value="failed">失败</option>
+                </select>
+                <input id="qualityLimitInput" aria-label="质量数量" type="number" min="1" max="100" value="20">
+              </div>
+              <div class="table-wrap">
+                <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>时间</th>
+                    <th>模式</th>
+                    <th>意图</th>
+                    <th>状态</th>
+                    <th>问题标签</th>
+                    <th>用户请求</th>
+                    <th>回复摘要</th>
+                  </tr>
+                </thead>
+                <tbody id="qualityRows">
+                  <tr><td colspan="8" class="empty">暂无质量事件。</td></tr>
+                </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+        </section>
+

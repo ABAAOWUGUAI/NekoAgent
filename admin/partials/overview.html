@@ -1,0 +1,102 @@
+        <section id="view-overview" class="view assistant-home">
+          <section class="assistant-home-hero" aria-labelledby="assistantHomeTitle">
+            <header class="assistant-home-heading">
+              <div>
+                <p class="section-index">你的私人助手</p>
+                <h2 id="assistantHomeTitle"><span id="homeAssistantName">当前助手</span>在这里</h2>
+                <p id="homeAssistantIntro">可以先聊两句，也可以直接交代一件要完成的事。</p>
+              </div>
+              <button class="home-health-button" type="button" data-jump="services" aria-describedby="homeHealthSummary">
+                <span id="homeHealthDot" class="home-health-dot" aria-hidden="true"></span>
+                <span id="homeHealthSummary">正在确认日常链路</span>
+              </button>
+            </header>
+
+            <form id="homeDispatchForm" class="home-composer">
+              <label for="homeDispatchPrompt">和 <span id="homeComposerAssistantName">当前助手</span> 说点什么</label>
+              <textarea id="homeDispatchPrompt" rows="5" maxlength="12000" required placeholder="例如：我今天有点累；顺便帮我看下项目测试为什么失败。"></textarea>
+              <div class="home-composer-footer">
+                <p id="homeDispatchHint">系统会按当前能力判断是直接回答还是建立可追踪任务。</p>
+                <details class="home-composer-advanced">
+                  <summary>高级处理方式</summary>
+                  <label for="homeDispatchMode">处理方式</label>
+                  <select id="homeDispatchMode">
+                    <option value="auto" selected>自动判断</option>
+                    <option value="chat">只做即时回答</option>
+                    <option value="task">建立可追踪任务</option>
+                  </select>
+                </details>
+                <button id="homeDispatchBtn" class="primary" type="submit">发送</button>
+              </div>
+            </form>
+
+            <section id="homeDispatchResult" class="home-result" aria-labelledby="homeDispatchResultTitle" hidden>
+              <header>
+                <div>
+                  <span class="entity-type">本次回应</span>
+                  <h3 id="homeDispatchResultTitle">处理结果</h3>
+                </div>
+                <span id="homeDispatchStatus" class="status-chip">等待</span>
+              </header>
+              <div id="homeDispatchReply" class="home-result-copy" tabindex="0"></div>
+              <div class="button-row">
+                <button id="homeDispatchOpenTaskBtn" class="secondary hidden" type="button">查看任务</button>
+                <button id="homeDispatchAgainBtn" class="link" type="button">继续说</button>
+              </div>
+            </section>
+          </section>
+
+          <section class="assistant-home-section home-attention-section" aria-labelledby="homeAttentionTitle">
+            <div class="assistant-home-section-heading">
+              <div>
+                <p class="section-index">需要你处理</p>
+                <h2 id="homeAttentionTitle">别让重要的事卡在这里</h2>
+              </div>
+              <span id="homeAttentionCount" class="home-count-badge" aria-live="polite">读取中</span>
+            </div>
+            <div id="homeAttentionItems" class="home-attention-list">
+              <div class="home-empty-state">正在整理等待你处理的事项。</div>
+            </div>
+          </section>
+
+          <div class="assistant-home-grid">
+            <section class="assistant-home-section" aria-labelledby="homeActiveTasksTitle">
+              <div class="assistant-home-section-heading">
+                <div>
+                  <p class="section-index">正在进行</p>
+                  <h2 id="homeActiveTasksTitle">助手现在在做什么</h2>
+                </div>
+                <button class="link" type="button" data-jump="tasks">查看全部任务</button>
+              </div>
+              <div id="homeActiveTasks" class="home-card-list">
+                <div class="home-empty-state">正在读取任务状态。</div>
+              </div>
+            </section>
+
+            <section class="assistant-home-section" aria-labelledby="homeRecentConversationsTitle">
+              <div class="assistant-home-section-heading">
+                <div>
+                  <p class="section-index">最近对话</p>
+                  <h2 id="homeRecentConversationsTitle">从上次聊到的地方继续</h2>
+                </div>
+                <button class="link" type="button" data-jump="brain">管理记忆</button>
+              </div>
+              <div id="homeRecentConversations" class="home-card-list">
+                <div class="home-empty-state">正在读取最近对话。</div>
+              </div>
+            </section>
+          </div>
+
+          <section class="assistant-home-section home-artifacts-section" aria-labelledby="homeArtifactsTitle">
+            <div class="assistant-home-section-heading">
+              <div>
+                <p class="section-index">最近成品</p>
+                <h2 id="homeArtifactsTitle">文件、报告和网站会集中出现在这里</h2>
+              </div>
+            </div>
+            <div id="homeRecentArtifacts" class="home-artifact-empty">
+              <strong>正在读取最近成品</strong>
+              <p>这里只展示成品元数据，不展示任务 Prompt、日志或私有存储路径。</p>
+            </div>
+          </section>
+        </section>

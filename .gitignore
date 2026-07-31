@@ -1,0 +1,34 @@
+# Runtime state is owned by each deployment and must never be committed.
+data/
+var/
+workspace/
+assets/
+logs/
+backups/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-journal
+*.log
+
+# Secrets and local configuration.
+.env
+.env.*
+!*.example
+secrets/
+*.pem
+*.key
+*.p12
+
+# Tooling and generated output.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.codegraph/
+node_modules/
+dist/
+reports/

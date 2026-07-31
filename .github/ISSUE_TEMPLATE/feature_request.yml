@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a focused product improvement.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem and scenario
+      description: Describe who needs it and what currently fails.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Security, approval, network or Delivery implications
+      description: State "none known" if no boundary is affected.
+    validations:
+      required: true

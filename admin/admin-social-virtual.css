@@ -1,0 +1,329 @@
+.social-protocol-panel,
+.virtual-life-panel {
+  margin-top: 18px;
+}
+
+.social-cutover-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--line, #d9d9d9);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface, #fff) 92%, #6d5dfc 8%);
+}
+
+.advanced-social-panel {
+  margin-top: 16px;
+  border: 1px solid var(--line, #d9d9d9);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+
+.advanced-social-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.advanced-social-panel > summary::-webkit-details-marker { display: none; }
+.advanced-social-panel > summary strong { display: block; }
+.advanced-social-panel > .panel-body,
+.advanced-social-panel > .compact-note,
+.advanced-social-panel > .social-cutover-form { margin: 0 14px 14px; }
+.advanced-social-panel > .social-cutover-form { margin-top: 12px; }
+
+/* Native summaries are the only entry to collapsed audit/configuration areas.
+   Keep their focus visible without expanding content or moving focus.
+   WCAG 2.2 - 2.4.7 Focus Visible, 2.4.11 Focus Not Obscured. */
+.advanced-social-panel > summary:focus-visible,
+.social-history > summary:focus-visible,
+.social-audit-details > summary:focus-visible {
+  outline: 3px solid var(--focus, #174ea6);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.social-cutover-form .provider-status {
+  grid-column: 1 / -1;
+}
+
+.social-ledger,
+.virtual-list {
+  display: grid;
+  gap: 10px;
+}
+
+.social-ledger-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.social-ledger-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: end;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line, #d9d9d9);
+}
+
+.social-ledger-section-head h3 {
+  margin: 0;
+}
+
+.social-history {
+  display: grid;
+  gap: 10px;
+}
+
+.social-history > summary {
+  cursor: pointer;
+  color: var(--link, #174ea6);
+  font-weight: 700;
+}
+
+.social-history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.social-ledger-card,
+.virtual-list-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line, #d9d9d9);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+
+.social-ledger-head,
+.virtual-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.social-decision-banner {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border-left: 4px solid var(--line, #d9d9d9);
+  background: color-mix(in srgb, var(--surface, #fff) 92%, #64748b 8%);
+}
+
+.social-decision-banner.muted {
+  border-left-color: #b45309;
+  background: color-mix(in srgb, var(--surface, #fff) 90%, #f59e0b 10%);
+}
+
+.social-decision-banner.positive {
+  border-left-color: #16803c;
+  background: color-mix(in srgb, var(--surface, #fff) 90%, #22c55e 10%);
+}
+
+.social-decision-banner.pending {
+  border-left-color: #2563eb;
+  background: color-mix(in srgb, var(--surface, #fff) 90%, #3b82f6 10%);
+}
+
+.social-decision-banner span {
+  color: var(--muted, #667085);
+}
+
+.social-ledger-card dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.social-ledger-card dt {
+  color: var(--muted, #667085);
+}
+
+.social-ledger-card dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.social-audit-details {
+  border-top: 1px solid var(--line, #d9d9d9);
+  padding-top: 8px;
+}
+
+.social-audit-details > summary {
+  cursor: pointer;
+  color: var(--link, #174ea6);
+  font-weight: 700;
+}
+
+.social-audit-details > dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 10px 0 0;
+}
+
+.social-audit-details dt { color: var(--muted, #667085); }
+.social-audit-details dd { margin: 0; overflow-wrap: anywhere; }
+
+.virtual-boundary-note {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-left: 4px solid #6d5dfc;
+  border-radius: 8px;
+  background: color-mix(in srgb, #6d5dfc 9%, var(--surface, #fff));
+}
+
+.virtual-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.virtual-profile-grid label:not(.checkbox-line) {
+  display: grid;
+  gap: 6px;
+}
+
+.virtual-profile-grid .checkbox-line {
+  align-self: end;
+  min-height: 42px;
+}
+
+.virtual-template-editor {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--line, #d9d9d9);
+  border-radius: 12px;
+}
+
+.virtual-template-editor > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.virtual-template-editor[open] > summary {
+  margin-bottom: 14px;
+}
+
+.virtual-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.virtual-weekdays label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.virtual-life-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin: 18px 0;
+}
+
+.virtual-life-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+}
+
+.virtual-life-columns h3 {
+  margin: 0 0 10px;
+}
+
+.virtual-list-card p,
+.virtual-list-card small {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.virtual-fact-badge {
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px 8px;
+  border: 1px solid #6d5dfc;
+  border-radius: 999px;
+  color: #5142d8;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.virtual-event-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .virtual-profile-grid,
+  .virtual-life-columns {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .virtual-life-columns > section {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .social-cutover-form,
+  .virtual-profile-grid,
+  .virtual-life-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .social-ledger-card dl {
+    grid-template-columns: 1fr;
+  }
+
+  .social-ledger-card dd {
+    margin-bottom: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .social-protocol-panel *,
+  .virtual-life-panel * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .social-cutover-form,
+  .social-ledger-card,
+  .virtual-list-card,
+  .virtual-template-editor,
+  .virtual-boundary-note {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .virtual-fact-badge {
+    border-color: LinkText;
+    color: LinkText;
+  }
+}

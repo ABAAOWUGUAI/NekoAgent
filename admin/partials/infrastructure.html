@@ -1,0 +1,184 @@
+        <section id="view-proxy" class="view hidden">
+          <section class="panel proxy-workspace">
+            <div class="panel-header">
+              <h2>代理订阅与节点</h2>
+              <span id="proxyMeta" class="meta">订阅是唯一配置来源</span>
+            </div>
+            <div class="panel-body">
+              <div class="proxy-shell">
+                <div id="proxySummary" class="summary-strip"></div>
+                <div class="proxy-management-grid">
+                  <aside class="proxy-subscription-pane" aria-labelledby="proxySubscriptionTitle">
+                    <div class="section-heading compact-heading">
+                      <div><p class="section-index">Subscriptions</p><h3 id="proxySubscriptionTitle">我的订阅</h3></div>
+                      <button id="proxySubNewBtn" class="primary" type="button">新增订阅</button>
+                    </div>
+                    <div id="proxySubStatus" class="provider-status" role="status" aria-live="polite">正在读取订阅。</div>
+                    <div id="proxySubscriptions" class="proxy-subscription-list"></div>
+                    <form id="proxySubscriptionEditor" class="form-stack proxy-subscription-editor" hidden>
+                      <input id="proxySubKeyInput" type="hidden">
+                      <label>订阅名称<input id="proxySubNameInput" required placeholder="例如 我的机场"></label>
+                      <label>订阅 URL<input id="proxySubUrlInput" type="password" autocomplete="off" placeholder="编辑时留空表示保留原地址"></label>
+                      <p class="compact-note">第一个有效订阅通过配置测试后，会原子替换旧内联节点；失败时保持当前网络并回滚。</p>
+                      <div class="button-row">
+                        <button id="proxySubCreateBtn" class="primary" type="submit">保存订阅</button>
+                        <button id="proxySubCancelBtn" class="secondary" type="button">取消</button>
+                      </div>
+                    </form>
+                  </aside>
+                  <section class="proxy-node-pane" aria-labelledby="proxyNodeTitle">
+                    <div class="section-heading compact-heading">
+                      <div><p class="section-index">Active profile</p><h3 id="proxyNodeTitle">当前订阅节点</h3></div>
+                      <div class="button-row"><button id="proxyReloadBtn" class="secondary" type="button">刷新状态</button><button id="proxyIpBtn" class="secondary" type="button">出口 IP</button></div>
+                    </div>
+                    <div class="proxy-toolbar">
+                      <label>过滤节点<input id="proxySearchInput" type="search" placeholder="例如 JP / 美国 / IEPL"></label>
+                      <label>排序<select id="proxySortSelect"><option value="default">默认顺序</option><option value="delay">延迟升序</option><option value="name">名称</option><option value="ai">AI 可用优先</option></select></label>
+                      <label>代理方式<select id="proxyModeSelect"><option value="rule">规则 rule</option><option value="global">全局 global</option><option value="direct">直连 direct</option></select></label>
+                      <label>检测数量<input id="proxyLimitInput" type="number" min="1" max="80" value="24"></label>
+                      <button id="proxyModeSaveBtn" class="secondary" type="button">应用方式</button>
+                      <button id="proxyDelayBtn" class="secondary" type="button">延迟测试</button>
+                      <button id="proxyAiCheckBtn" class="secondary" type="button">只读体检</button>
+                      <button id="proxyAiSwitchBtn" class="primary" type="button">检测并切换</button>
+                    </div>
+                    <div id="proxyStatus" class="provider-status" role="status" aria-live="polite">未加载当前订阅节点。</div>
+                    <div id="proxyIpStatus" class="provider-status" role="status" aria-live="polite">未检测出口 IP。</div>
+                    <div id="proxyAlpha" class="proxy-alpha"></div>
+                    <div id="proxyCards" class="proxy-grid"><div class="empty">请先新增并启用一个订阅。</div></div>
+                  </section>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-services" class="view hidden">
+          <section class="panel gate8-health-panel" aria-labelledby="businessHealthTitle">
+            <div class="panel-header">
+              <div>
+                <p class="section-index">BUSINESS READINESS</p>
+                <h2 id="businessHealthTitle">助手业务健康</h2>
+                <p class="compact-note">未知状态不会显示为健康；服务或容器正在运行，也不代表 QQ、Codex、送达和预览真实可用。</p>
+              </div>
+              <button id="runBusinessHealthBtn" class="primary" type="button">运行完整诊断</button>
+            </div>
+            <div class="panel-body">
+              <div id="businessHealthSummary" class="summary-strip" aria-label="业务健康摘要"></div>
+              <div id="businessHealthStatus" class="provider-status" role="status" aria-live="polite">正在读取被动业务证据。</div>
+              <div id="businessHealthGrid" class="gate8-health-grid">
+                <div class="empty-state">尚未加载业务检查。</div>
+              </div>
+            </div>
+          </section>
+
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>服务状态</h2>
+                <span class="meta">systemd / docker inspect</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>类型</th>
+                      <th>目标</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody id="serviceRows">
+                    <tr><td colspan="4" class="empty">暂无数据。</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h2>容器状态</h2>
+                <span class="meta">docker ps</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>镜像</th>
+                      <th>状态</th>
+                      <th>端口</th>
+                    </tr>
+                  </thead>
+                  <tbody id="containerRows">
+                    <tr><td colspan="4" class="empty">暂无数据。</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <div class="ops-dashboard">
+            <div class="ops-main-stack">
+              <section class="panel">
+                <div class="panel-header">
+                  <h2>系统体检</h2>
+                  <button id="systemAuditBtn" class="link" type="button">重新体检</button>
+                </div>
+                <div class="panel-body ops-panel-body">
+                  <div id="systemAuditSummary" class="summary-strip"></div>
+                  <div id="systemAuditStatus" class="provider-status">等待体检。</div>
+                  <div class="table-wrap" role="region" aria-label="系统体检结果" tabindex="0">
+                    <table>
+                      <thead>
+                        <tr><th>级别</th><th>区域</th><th>问题</th><th>建议</th></tr>
+                      </thead>
+                      <tbody id="systemAuditRows">
+                        <tr><td colspan="4" class="empty">暂无体检结果。</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-header">
+                  <h2>系统框架</h2>
+                  <button id="systemFrameworkBtn" class="link" type="button">读取架构</button>
+                </div>
+                <div class="panel-body ops-panel-body">
+                  <span id="systemFrameworkMeta" class="meta">即时聊天 / 工作任务 / 渠道回推</span>
+                  <div id="systemFrameworkLoops" class="summary-strip"></div>
+                  <div id="systemFrameworkDimensions" class="settings-list"></div>
+                </div>
+              </section>
+            </div>
+
+            <div class="ops-side-stack">
+              <section class="panel">
+                <div class="panel-header">
+                  <h2>服务器状态</h2>
+                  <span id="statusStamp" class="meta">未刷新</span>
+                </div>
+                <div class="panel-body">
+                  <pre id="serverStatus">(未加载)</pre>
+                  <div id="healthSummary" class="summary-strip" role="group" aria-label="服务摘要"></div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-header">
+                  <h2>代码图谱</h2>
+                  <span id="codegraphMeta" class="meta">CodeGraph</span>
+                </div>
+                <div class="panel-body ops-panel-body">
+                  <div id="codegraphSummary" class="summary-strip"></div>
+                  <pre id="codegraphRoot">(未加载)</pre>
+                  <div class="toolbar">
+                    <button id="codegraphEnsureBtn" class="secondary" type="button">立即同步</button>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+

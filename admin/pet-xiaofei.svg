@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 240" role="img" aria-labelledby="title desc">
+  <title id="title">当前助手非官方私有桌宠重绘</title>
+  <desc id="desc">依据公开形象特征原创重绘的粉发、金棕眼、护目镜与黑金服饰当前助手桌面宠物</desc>
+  <defs>
+    <linearGradient id="hair" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ffd0da"/>
+      <stop offset=".5" stop-color="#ee9fb5"/>
+      <stop offset="1" stop-color="#c86f92"/>
+    </linearGradient>
+    <linearGradient id="hairShade" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#dd829f"/>
+      <stop offset="1" stop-color="#a64e75"/>
+    </linearGradient>
+    <linearGradient id="cloth" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#30303b"/>
+      <stop offset="1" stop-color="#151720"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="40%" cy="30%" r="70%">
+      <stop stop-color="#ffd47d"/>
+      <stop offset=".55" stop-color="#b96f2f"/>
+      <stop offset="1" stop-color="#5a2f20"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-20%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="7" stdDeviation="6" flood-color="#06111d" flood-opacity=".42"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)" stroke-linejoin="round" stroke-linecap="round">
+    <ellipse cx="90" cy="228" rx="56" ry="8" fill="#07111b" opacity=".34" stroke="none"/>
+
+    <!-- hair silhouette -->
+    <path d="M42 91c0-38 19-62 49-62 31 0 50 25 49 63l-5 82-90 1z" fill="url(#hairShade)" stroke="#8b4566" stroke-width="3"/>
+    <path d="M42 92c-9 23-8 56 0 77l18-15-1-61zM139 92c9 23 8 56 0 77l-18-15 1-61z" fill="#df89a6" stroke="#8b4566" stroke-width="3"/>
+
+    <!-- brass goggles -->
+    <path d="M58 45c19-13 45-15 66-1" fill="none" stroke="#49382d" stroke-width="7"/>
+    <g fill="#c9903e" stroke="#6f4b24" stroke-width="3">
+      <circle cx="70" cy="42" r="16"/>
+      <circle cx="113" cy="42" r="16"/>
+      <path d="M86 41h11v7H86z"/>
+    </g>
+    <g fill="#7ed9dc" stroke="#e9ffff" stroke-width="2" opacity=".9">
+      <circle cx="70" cy="42" r="10"/>
+      <circle cx="113" cy="42" r="10"/>
+    </g>
+    <path d="M64 36l7-3M107 36l7-3" stroke="#fff" stroke-width="2" opacity=".8"/>
+
+    <!-- face and fringe -->
+    <path d="M55 83c0-27 14-43 36-43 23 0 37 16 37 43v36c0 25-15 42-37 42-22 0-36-17-36-42z" fill="#fff0e8" stroke="#8d4b61" stroke-width="3"/>
+    <path d="M53 89c2-32 17-50 39-50 23 0 37 18 38 49-15-4-27-14-36-29-7 15-21 25-41 30z" fill="url(#hair)" stroke="#9b506e" stroke-width="3"/>
+    <path d="M75 48c-1 16 3 27 12 34M99 46c2 17 8 27 18 34" fill="none" stroke="#bd6b8a" stroke-width="3"/>
+
+    <!-- amber eyes -->
+    <g stroke="#4d2a28" stroke-width="2.5">
+      <ellipse cx="73" cy="113" rx="9" ry="11" fill="url(#eye)"/>
+      <ellipse cx="109" cy="113" rx="9" ry="11" fill="url(#eye)"/>
+    </g>
+    <g fill="#fff">
+      <circle cx="70" cy="109" r="3"/><circle cx="106" cy="109" r="3"/>
+      <circle cx="76" cy="117" r="1.5"/><circle cx="112" cy="117" r="1.5"/>
+    </g>
+    <path d="M84 137c5 4 10 4 15 0" fill="none" stroke="#b44f69" stroke-width="2.5"/>
+    <circle cx="59" cy="132" r="8" fill="#ff91aa" opacity=".24" stroke="none"/>
+    <circle cx="123" cy="132" r="8" fill="#ff91aa" opacity=".24" stroke="none"/>
+
+    <!-- puff sleeves -->
+    <path d="M47 160c-16 2-24 14-21 31 2 11 10 18 21 19l13-39z" fill="#fff7ed" stroke="#9f7452" stroke-width="3"/>
+    <path d="M135 160c16 2 24 14 21 31-2 11-10 18-21 19l-13-39z" fill="#fff7ed" stroke="#9f7452" stroke-width="3"/>
+    <path d="M34 171c7 4 13 5 20 3M148 171c-7 4-13 5-20 3" fill="none" stroke="#d5b596" stroke-width="2"/>
+
+    <!-- black and gold mechanical outfit -->
+    <path d="M53 153c12-8 24-11 38-11 15 0 28 4 39 12l10 73H42z" fill="url(#cloth)" stroke="#0a0d13" stroke-width="3"/>
+    <path d="M63 151l28 23 29-23-7 76H69z" fill="#f8eee4" stroke="#a37952" stroke-width="3"/>
+    <path d="M56 153l23 24-12 50H43l8-65zM127 153l-24 24 12 50h25l-8-65z" fill="#252832" stroke="#be8a38" stroke-width="3"/>
+    <path d="M47 206h88M55 218h72" stroke="#d6a64e" stroke-width="3"/>
+    <path d="M91 169c-12-12-23-10-27 1 5 11 16 12 27 4 11 8 22 7 27-4-4-11-15-13-27-1z" fill="#9e4052" stroke="#53232e" stroke-width="3"/>
+
+    <!-- gear brooch -->
+    <g transform="translate(91 174)" fill="#e4b653" stroke="#6c4a20" stroke-width="2">
+      <path d="M-3-12h6l2 5 5-2 3 5-4 4 4 4-3 5-5-2-2 5h-6l-2-5-5 2-3-5 4-4-4-4 3-5 5 2z"/>
+      <circle r="5" fill="#78d4d7"/>
+    </g>
+
+    <!-- small hands and boots -->
+    <path d="M30 193c-3 8 2 14 10 13 6-1 9-5 8-11" fill="#fff0e8" stroke="#9f7452" stroke-width="3"/>
+    <path d="M152 193c3 8-2 14-10 13-6-1-9-5-8-11" fill="#fff0e8" stroke="#9f7452" stroke-width="3"/>
+    <path d="M58 225h28v7H53c0-4 2-6 5-7zM96 225h28c3 1 5 3 5 7H96z" fill="#171921" stroke="#b47c31" stroke-width="3"/>
+
+    <!-- mechanical hair ornaments -->
+    <g fill="#d7a84f" stroke="#6d4922" stroke-width="2">
+      <circle cx="43" cy="91" r="8"/><circle cx="139" cy="91" r="8"/>
+      <path d="M43 78v26M30 91h26M139 78v26M126 91h26"/>
+    </g>
+  </g>
+</svg>

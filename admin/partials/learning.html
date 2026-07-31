@@ -1,0 +1,26 @@
+<section id="view-growth" class="view hidden" aria-labelledby="growthHeading">
+  <div class="panel">
+    <div class="panel-head">
+      <div><h2 id="growthHeading">学习</h2></div>
+      <span id="learningFeatureBadge" class="badge">Shadow</span>
+    </div>
+    <div class="panel-body">
+      <p class="compact-note">这里显示助手从对话、反馈和工作结果中形成的结构化学习。低风险表达偏好可以自动试用；事实、群体共享、敏感内容和能力变更不会自动生效。</p>
+      <div id="learningMetrics" class="overview-metrics" aria-live="polite"></div>
+      <form id="learningPolicyForm" class="button-row" aria-label="成长策略">
+        <label class="checkbox-line"><input id="learningEnabled" type="checkbox">记录学习信号</label>
+        <label class="checkbox-line"><input id="lowRiskLearningEnabled" type="checkbox">自动试用低风险表达偏好</label>
+        <button class="secondary" type="submit">保存策略</button>
+        <span id="learningPolicyStatus" class="provider-status" role="status"></span>
+      </form>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><div><h2>待确认的学习</h2></div><span class="meta">可撤销</span></div>
+    <div id="learningCandidateList" class="panel-body" aria-live="polite"><p class="empty-state">暂无候选。</p></div>
+  </div>
+  <details class="panel">
+    <summary class="panel-head"><span>最近的应用依据</span><span id="learningTraceMeta" class="meta">最近 8 条</span></summary>
+    <div id="learningTraceList" class="panel-body" aria-live="polite"><p class="empty-state">暂无应用记录。</p></div>
+  </details>
+</section>

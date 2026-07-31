@@ -1,0 +1,228 @@
+        <section id="view-tasks" class="view hidden execution-view">
+          <header class="page-intro">
+            <div>
+              <p class="page-kicker">任务与确认</p>
+              <h2>事情交给助手，重要操作由你决定</h2>
+              <p>任务会持续保留进度；涉及写入、重启等风险操作时，助手会暂停并等待你审阅确切动作。</p>
+            </div>
+            <div class="page-actions">
+              <button id="newGoalBtn" class="primary" type="button">新建任务</button>
+            </div>
+          </header>
+
+          <div id="executionSummary" class="insight-grid" role="group" aria-label="任务摘要"></div>
+
+          <section class="approval-workspace" aria-labelledby="formalApprovalsTitle">
+            <div class="section-heading">
+              <div>
+                <p class="section-index">REVIEW</p>
+                <h2 id="formalApprovalsTitle">需要你确认</h2>
+              </div>
+              <p>批准只覆盖卡片中展示的确切动作。动作、参数或环境发生变化后，原批准会自动失效。</p>
+            </div>
+            <div id="formalApprovalStatus" class="visually-hidden" role="status" aria-live="polite"></div>
+            <div id="formalApprovalList" class="approval-list" aria-live="polite">
+              <div class="empty-state">目前没有等待确认的操作。</div>
+            </div>
+          </section>
+
+          <section class="route-workspace" aria-labelledby="activeRunsTitle">
+            <div class="section-heading">
+              <div>
+                <p class="section-index">PROGRESS</p>
+                <h2 id="activeRunsTitle">任务进度</h2>
+              </div>
+              <p>默认展示用户能理解的当前状态和更新时间；内部编号与执行参数留在技术详情。</p>
+            </div>
+            <div id="goalRunGrid" class="run-grid"><div class="empty-state">暂无任务。</div></div>
+          </section>
+
+          <section id="taskTimelinePanel" class="panel task-timeline-panel hidden" aria-labelledby="taskTimelineTitle">
+            <div class="panel-header">
+              <div>
+                <h2 id="taskTimelineTitle">任务时间线</h2>
+                <p class="compact-note">按实际发生顺序展示，不包含提示词、工作目录或凭据。</p>
+              </div>
+              <button id="closeTaskTimelineBtn" class="secondary" type="button">关闭</button>
+            </div>
+            <ol id="taskTimelineList" class="task-timeline-list"></ol>
+          </section>
+
+          <div class="task-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>新建任务</h2>
+                <span class="meta">助手会在风险操作前暂停</span>
+              </div>
+              <div class="panel-body">
+                <div class="form-stack">
+                  <label>
+                    任务内容
+                    <textarea id="promptInput" spellcheck="false" placeholder="例如：检查服务器当前资源使用情况，并给出风险提示。"></textarea>
+                  </label>
+                  <div class="form-row">
+                    <label>
+                      执行权限
+                      <select id="sandboxInput">
+                        <option value="read-only">只读检查</option>
+                        <option value="workspace-write">允许在工作区写入</option>
+                      </select>
+                    </label>
+                    <label>
+                      网络访问
+                      <select id="taskNetworkMode">
+                        <option value="controlled">仅受控 Capability</option>
+                        <option value="search">本次使用 Codex Web Search</option>
+                      </select>
+                    </label>
+                    <label>
+                      超时秒数
+                      <input id="timeoutInput" type="number" min="30" max="900" value="180">
+                    </label>
+                  </div>
+                  <button id="createTaskBtn" class="primary" type="button">交给助手</button>
+                </div>
+              </div>
+            </section>
+
+            <details class="panel technical-detail-panel">
+              <summary>技术详情</summary>
+              <div class="panel-header">
+                <h2 class="visually-hidden">技术详情</h2>
+                <span id="detailTitle" class="meta">未选择任务</span>
+              </div>
+              <div class="panel-body">
+                <pre id="taskDetail">(空)</pre>
+              </div>
+            </details>
+          </div>
+
+          <details class="panel technical-index-panel">
+            <summary>技术任务索引</summary>
+            <div class="panel-header">
+              <h2 class="visually-hidden">技术任务索引</h2>
+              <div class="filters">
+                <select id="statusFilter" aria-label="任务状态筛选">
+                  <option value="">全部</option>
+                  <option value="queued">排队中</option>
+                  <option value="running">运行中</option>
+                  <option value="waiting_approval">等待确认</option>
+                  <option value="done">已完成</option>
+                  <option value="failed">失败</option>
+                  <option value="timeout">超时</option>
+                  <option value="cancelled">已取消</option>
+                </select>
+                <input id="limitInput" aria-label="任务数量" type="number" min="1" max="50" value="10">
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>状态</th>
+                    <th>来源</th>
+                    <th>沙箱</th>
+                    <th>推送</th>
+                    <th>耗时</th>
+                    <th>摘要</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="taskRows">
+                  <tr><td colspan="8" class="empty">暂无任务。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <section id="view-automations" class="view hidden">
+          <div id="automationSummary" class="summary-strip"></div>
+
+          <section class="panel automation-rail-panel" aria-labelledby="automationRailTitle">
+            <div class="panel-header">
+              <div>
+                <h2 id="automationRailTitle">接下来</h2>
+                <p class="compact-note">这里只管理定时执行；主动联系和互动边界请前往“助手 → 关系与主动”。</p>
+              </div>
+              <button id="reloadAutomationBtn" class="secondary hidden" type="button">刷新自动化</button>
+            </div>
+            <div class="panel-body">
+              <div id="automationStatus" class="provider-status" role="status" aria-live="polite">未加载自动化状态。</div>
+              <ol id="automationRail" class="automation-rail"></ol>
+            </div>
+          </section>
+
+          <div class="automation-editor-grid">
+            <details class="panel automation-editor" id="automationJobEditor">
+              <summary>新建定时任务</summary>
+              <div class="panel-body">
+                <form id="automationJobForm" class="form-stack">
+                  <div class="split-form-row">
+                    <label>任务名称<input id="automationTitleInput" type="text" maxlength="120" required placeholder="例如：每周项目健康检查"></label>
+                    <label>接收用户<input id="automationUserIdInput" type="text" maxlength="80" required placeholder="QQ 用户号"></label>
+                  </div>
+                  <fieldset>
+                    <legend>执行方式</legend>
+                    <div class="choice-grid">
+                      <label class="choice-card"><input name="automationActionType" type="radio" value="reminder" checked><span><strong>发送提醒</strong><small>原样投递，不调用模型</small></span></label>
+                      <label class="choice-card"><input name="automationActionType" type="radio" value="agent"><span><strong>执行助手工作</strong><small>进入可追踪任务并记录每次尝试</small></span></label>
+                    </div>
+                  </fieldset>
+                  <label>内容或目标<textarea id="automationInstructionInput" maxlength="4000" required spellcheck="false" placeholder="提醒内容，或需要助手完成的目标"></textarea></label>
+                  <div class="split-form-row">
+                    <label>计划类型
+                      <select id="automationScheduleType">
+                        <option value="once">一次</option>
+                        <option value="daily">每天</option>
+                        <option value="weekly">每周</option>
+                        <option value="interval">固定间隔</option>
+                      </select>
+                    </label>
+                    <label>时区<input id="automationTimezoneInput" type="text" value="Asia/Shanghai"></label>
+                  </div>
+                  <div id="automationOnceFields">
+                    <label>执行时间<input id="automationRunAtInput" type="datetime-local"></label>
+                  </div>
+                  <div id="automationCalendarFields" class="split-form-row hidden">
+                    <label>每天的时间<input id="automationTimeOfDayInput" type="time" value="09:00"></label>
+                    <label id="automationWeekdayField" class="hidden">星期
+                      <select id="automationWeekdayInput" multiple size="4" aria-describedby="automationWeekdayHelp">
+                        <option value="0" selected>星期一</option><option value="1">星期二</option><option value="2">星期三</option>
+                        <option value="3">星期四</option><option value="4">星期五</option><option value="5">星期六</option><option value="6">星期日</option>
+                      </select>
+                      <small id="automationWeekdayHelp">可按 Ctrl 或 Command 选择多个星期。</small>
+                    </label>
+                  </div>
+                  <div id="automationIntervalFields" class="hidden">
+                    <label>间隔分钟<input id="automationIntervalInput" type="number" min="15" max="525600" step="15" value="1440"></label>
+                  </div>
+                  <label class="checkbox-line"><input id="automationEnabledInput" type="checkbox">保存后立即启用</label>
+                  <button id="saveAutomationJobBtn" class="primary" type="submit">保存定时任务</button>
+                </form>
+              </div>
+            </details>
+
+            <section class="panel automation-editor proactive-boundary-card" aria-labelledby="proactiveBoundaryTitle">
+              <div class="panel-body">
+                <p class="section-index">BOUNDARY</p>
+                <h3 id="proactiveBoundaryTitle">主动对话不属于定时任务</h3>
+                <p>这里继续展示执行计划和历史；社交主动、互动关系与任务通知已拆到独立页面，避免关闭陪伴消息时误关重要通知。</p>
+                <button class="secondary" type="button" data-jump="relationship">管理关系与主动</button>
+              </div>
+            </section>
+          </div>
+
+          <div class="automation-ledger-grid">
+            <section class="panel" aria-labelledby="automationPlansTitle">
+              <div class="panel-header"><h2 id="automationPlansTitle">计划</h2><span class="meta">按下一次触发排序</span></div>
+              <div id="automationPlanList" class="timeline-list"></div>
+            </section>
+            <section class="panel" aria-labelledby="automationActivityTitle">
+              <div class="panel-header"><h2 id="automationActivityTitle">活动记录</h2><span class="meta">最近定时任务运行</span></div>
+              <div id="automationActivityList" class="timeline-list"></div>
+            </section>
+          </div>
+        </section>
+

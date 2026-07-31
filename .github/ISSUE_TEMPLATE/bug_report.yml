@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible NekoAgent defect without private data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include tokens, cookies, QQ IDs, private messages, media, SQLite
+        files, server addresses or full production logs. Use synthetic input.
+  - type: input
+    id: version
+    attributes:
+      label: NekoAgent version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python version
+      placeholder: Windows 11, Python 3.10
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproducible steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: sanitized_logs
+    attributes:
+      label: Sanitized diagnostics (optional)
+      description: Remove secrets and personal data before pasting.

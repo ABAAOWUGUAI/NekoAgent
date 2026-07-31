@@ -1,0 +1,151 @@
+        <section id="view-social" class="view hidden">
+          <div id="socialExperienceSummary" class="summary-strip"></div>
+
+          <nav class="workspace-tabs" aria-label="社交策略工作区">
+            <button class="active" type="button" data-social-workspace="groups" aria-pressed="true">群聊</button>
+            <button type="button" data-social-workspace="expressions" aria-pressed="false">表达习惯</button>
+            <button type="button" data-social-workspace="memes" aria-pressed="false">表情库</button>
+          </nav>
+
+          <details class="panel panel-disclosure social-master-panel social-master-disclosure" data-progressive="true">
+            <summary><span>渠道表达开关</span><span class="summary-action">配置</span></summary>
+            <div class="panel-body">
+              <div id="socialMasterControls" class="policy-switches"></div>
+              <div id="socialMasterActions" class="button-row"></div>
+            </div>
+          </details>
+
+          <div data-social-pane="groups">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>群聊策略</h2>
+              <button id="reloadSocialExperienceBtn" class="secondary hidden" type="button">刷新</button>
+            </div>
+            <div class="panel-body">
+              <div class="form-stack">
+                <div class="policy-grid">
+                  <label>群号<input id="groupPolicyId" type="text"></label>
+                  <label>群名称<input id="groupPolicyName" type="text"></label>
+                    <label>主动参与强度（不是逐条回复概率）<input id="groupReplyProbability" type="number" min="0" max="1" step="0.05" value="0.2"></label>
+                  <label>主动回复冷却秒数<input id="groupCooldownSeconds" type="number" min="15" max="86400" value="180"></label>
+                  <label>群上下文消息数<input id="groupMaxContext" type="number" min="4" max="80" value="40"></label>
+                  <label>安静时段开始<input id="groupQuietStart" type="time" value="23:30"></label>
+                  <label>安静时段结束<input id="groupQuietEnd" type="time" value="08:30"></label>
+                  <label>时区<input id="groupTimezone" type="text" value="Asia/Shanghai"></label>
+                  <label>工作发起人 QQ<input id="groupWorkSenders" type="text"></label>
+                </div>
+                <fieldset id="groupNaturalGuardFields" class="policy-grid"><legend>自然参与与自动续聊 Gate</legend><label>突发窗口（秒）<input id="groupBurstWindowSeconds" type="number" value="12"></label><label>窗口消息上限<input id="groupBurstMaxMessages" type="number" value="6"></label><label>每日主动上限<input id="groupDailyReplyBudget" type="number" value="20"></label><label>安静间隔（秒）<input id="groupQuietGapSeconds" type="number" value="8"></label><label>无 @ 续聊窗口（秒）<input id="groupContinuationWindowSeconds" type="number" value="120" aria-describedby="groupContinuationHelp"></label><label>无 @ 接话上限<input id="groupMaxAutoContinuations" type="number" value="2" aria-describedby="groupContinuationHelp"></label><span id="groupContinuationHelp" class="compact-note">普通群聊、无 @ 续聊都先过这里；@ 与引用优先。</span><label class="checkbox-line"><input id="groupNaturalGuardEnabled" type="checkbox">启用自然参与</label><button class="secondary" type="button" data-group-natural-cutover>应用总开关</button></fieldset>
+                <p id="groupContextHelp" class="compact-note">仅 Delivery confirmed ACK 计入回复、上下文与节奏预算。</p>
+                <label>群聊参与模式<select id="groupParticipationMode"><option value="disabled">关闭</option><option value="mentions_only" selected>仅明确 @</option><option value="directed_context">@、回复助手或续接</option><option value="natural_participation">允许自然参与</option></select></label>
+                <div class="policy-switches">
+                  <label class="checkbox-line"><input id="groupAllowWork" type="checkbox">允许授权成员发起工作</label>
+                  <label class="checkbox-line"><input id="groupMemeEnabled" type="checkbox">允许群内表情包</label>
+                </div>
+                <div class="button-row">
+                  <button id="saveGroupPolicyBtn" class="primary" type="button">保存群策略</button>
+                  <button id="clearGroupPolicyBtn" class="secondary" type="button">清空表单</button>
+                  <button id="openQqAccessFromGroupBtn" class="secondary" type="button">打开 QQ 群准入配置</button>
+                </div>
+                <p id="groupPolicyAccessStatus" class="provider-status" role="status" aria-live="polite">正在读取 QQ 群准入状态。</p>
+                <p class="compact-note">这里仅设置已准入群的回复行为，不会开放 QQ 群权限；总开关和白名单在“连接 → QQ → 身份与访问控制”。</p>
+              </div>
+            </div>
+            <div class="table-wrap group-policy-table">
+              <table>
+                <thead><tr><th>群</th><th>渠道准入</th><th>回复策略</th><th>参与方式</th><th>冷却</th><th>工作权限</th><th>消息/回复</th><th>最近回复</th><th>操作</th></tr></thead>
+                <tbody id="groupPolicyRows"><tr><td colspan="9" class="empty">暂无群记录。</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          </div>
+
+          <div class="hidden" data-social-pane="expressions">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>表达习惯</h2>
+            </div>
+            <div class="panel-body">
+              <div class="form-stack">
+                <div class="split-form-row">
+                  <label>情境<input id="expressionSituation" type="text"></label>
+                  <label>触发线索<input id="expressionCues" type="text"></label>
+                </div>
+                <label>表达方式<textarea id="expressionStyle" rows="3"></textarea></label>
+                <div class="split-form-row">
+                  <label>范围<select id="expressionScope"><option value="daily">私聊日常</option><option value="group">群聊</option><option value="all">全部</option></select></label>
+                  <label>优先级<input id="expressionPriority" type="number" min="1" max="20" value="5"></label>
+                </div>
+                <div class="split-form-row">
+                  <label>作用对象<select id="expressionSubjectType"><option value="global">全局默认</option><option value="private_user">指定私聊用户</option><option value="qq_group">指定 QQ 群</option></select></label>
+                  <label>对象标识<input id="expressionSubjectId" type="text" maxlength="160"></label>
+                </div>
+                <label class="checkbox-line"><input id="expressionEnabled" type="checkbox" checked>启用该习惯</label>
+                <button id="saveExpressionBtn" class="primary" type="button">保存表达习惯</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>情境</th><th>线索</th><th>表达方式</th><th>场景</th><th>作用对象</th><th>来源</th><th>优先级</th><th>使用次数</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="expressionRows"><tr><td colspan="10" class="empty">暂无表达习惯。</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          </div>
+
+          <div class="hidden" data-social-pane="memes">
+          <section class="panel meme-discovery-panel">
+            <div class="panel-header">
+              <div>
+                <h2>发现表情</h2>
+              </div>
+            </div>
+            <div class="panel-body">
+              <form id="memeDiscoveryForm" class="meme-discovery-form">
+                <label class="meme-query-field">搜索内容<input id="memeDiscoveryQuery" type="search" minlength="2" maxlength="120"></label>
+                <label>来源<select id="memeDiscoveryProvider"><option value="auto">自动选择</option><option value="fan_reference">二创候选（私用审核）</option><option value="openverse">Openverse 开放媒体</option><option value="sample_official">外部角色官方公开动态（仅参考）</option></select></label>
+                <label>候选数量<select id="memeDiscoveryLimit"><option value="4">4</option><option value="8" selected>8</option><option value="12">12</option></select></label>
+                <button id="memeDiscoverySubmitBtn" class="primary" type="submit">查找候选</button>
+              </form>
+              <p id="memeDiscoveryStatus" class="inline-status" role="status" aria-live="polite">候选不会直接进入发送策略。</p>
+              <div id="memeDiscoverySummary" class="summary-strip compact-summary"></div>
+            </div>
+            <div id="memeCandidateGrid" class="panel-body meme-candidate-grid" aria-busy="false">
+              <div class="empty">尚未查找表情候选。</div>
+            </div>
+            <details class="panel-disclosure">
+              <summary>最近发现记录</summary>
+              <div id="memeDiscoveryJobs" class="discovery-job-list"><div class="empty">暂无发现记录。</div></div>
+            </details>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>表情包资产</h2>
+            </div>
+            <div class="panel-body">
+              <div id="memePoolHealthSummary" class="summary-strip compact-summary"></div>
+              <p id="memePoolHealthReason" class="inline-status"></p>
+              <div class="form-stack">
+                <div class="policy-grid">
+                  <label>图片<input id="memeUploadFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp"></label>
+                  <label>名称<input id="memeUploadName" type="text"></label>
+                  <label>情绪<select id="memeUploadEmotion"><option value="daily">日常</option><option value="happy">开心</option><option value="comfort">安慰</option><option value="playful">玩笑</option><option value="curious">好奇</option><option value="work">工作</option></select></label>
+                  <label>分组<input id="memeUploadPack" type="text" value="custom"></label>
+                  <label>标签<input id="memeUploadTags" type="text"></label>
+                  <label>冷却分钟<input id="memeCooldownMinutes" type="number" min="0" max="10080" value="60"></label>
+                  <label>每日最多发送<input id="memeMaxDaily" type="number" min="1" max="100" value="3"></label>
+                  <label>来源<input id="memeUploadSource" type="text" value="admin-upload"></label>
+                </div>
+                <label>授权说明<input id="memeLicenseNote" type="text"></label>
+                <label class="checkbox-line"><input id="memeUploadEnabled" type="checkbox" checked>审核通过后立即启用</label>
+                <div class="button-row">
+                  <button id="uploadMemeBtn" class="primary" type="button">上传并入库</button>
+                  <span id="memeUploadStatus" class="compact-note" role="status" aria-live="polite">单张图片不超过 3MB。</span>
+                </div>
+              </div>
+            </div>
+            <div id="socialMemeGrid" class="panel-body asset-grid"><div class="empty">暂无表情资产。</div></div>
+          </section>
+          </div>
+        </section>
+

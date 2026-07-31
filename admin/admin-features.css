@@ -1,0 +1,546 @@
+    /* Swiss control-plane consolidation.
+       The data surface stays neutral and grid-led; the optional personal image
+       is confined to a decorative rail so it cannot compete with operational
+       status, labels, or focus. */
+    html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+    body,
+    body.has-custom-background {
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 56px 56px;
+      background-position: top left;
+    }
+    body::before,
+    body::after,
+    body.has-custom-background::before,
+    body.has-custom-background::after { display: none; }
+    .app-shell,
+    .main,
+    .content,
+    .view,
+    .panel,
+    .table-wrap { min-width: 0; max-width: 100%; }
+    .app-shell { background: var(--surface); }
+    .sidebar {
+      position: relative;
+      overflow: hidden;
+      border-right: 1px solid var(--line);
+      background: var(--surface);
+    }
+    /* Custom imagery stays in the settings preview. Operational navigation,
+       status and evidence surfaces remain visually neutral. */
+    body.has-custom-background .sidebar::after { display: none; }
+    .brand,
+    .session-box { position: relative; z-index: 1; background: var(--surface); }
+    .main { background: var(--surface); }
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      box-shadow: none;
+    }
+    .content {
+      padding: clamp(16px, 2vw, 24px);
+      background: var(--subtle);
+    }
+    .view { gap: 14px; }
+    .section-index {
+      display: none;
+    }
+    .disclosure > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+    .disclosure > summary::-webkit-details-marker { display: none; }
+    .disclosure > summary::after {
+      content: '+';
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1;
+    }
+    .disclosure[open] > summary::after { content: '−'; }
+    .update-banner {
+      min-height: 48px;
+      padding: 8px 28px;
+      border-bottom: 1px solid var(--blue);
+      background: var(--soft-blue);
+      color: var(--blue-strong);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .update-banner button { flex: 0 0 auto; }
+    .panel,
+    .catalog-workspace,
+    .model-resource-browser,
+    .route-workspace,
+    .approval-workspace,
+    .entity-card,
+    .operations-card,
+    .progressive-panel,
+    .calm-home .execution-overview,
+    .calm-home .ops-hero {
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: var(--surface);
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+    .progressive-panel[open] > .panel > .panel-body {
+      max-height: none;
+      overflow: visible;
+    }
+    .calm-home .ops-hero { padding: 0; }
+    .calm-home .ops-hero-main {
+      min-height: 220px;
+      padding: clamp(28px, 5vw, 64px);
+      background: var(--surface);
+    }
+    .calm-home .ops-hero h2 {
+      max-width: 840px;
+      font-size: clamp(42px, 6vw, 76px);
+      line-height: .95;
+      letter-spacing: -.05em;
+    }
+    .calm-home .execution-spine,
+    .insight-grid { gap: 1px; background: var(--line); }
+    .spine-stage,
+    .insight-card { border: 0; border-radius: 0; background: var(--surface); box-shadow: none; }
+    .workspace-tabs,
+    .view-tabs {
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: var(--surface);
+      box-shadow: none;
+    }
+    .workspace-tabs button,
+    .view-tabs button,
+    .nav button { border-radius: 2px; box-shadow: none; }
+    .workspace-tabs button.active,
+    .view-tabs button.active,
+    .nav button.active {
+      background: var(--blue);
+      color: var(--surface);
+      box-shadow: none;
+    }
+    .view-tabs .tab-disclosure-items button {
+      background: var(--subtle);
+    }
+    .view-tabs .tab-disclosure-items button.active {
+      background: var(--blue);
+      color: var(--surface);
+    }
+    .status-chip,
+    .tag,
+    .badge { border-radius: 2px; }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      overscroll-behavior: contain;
+    }
+    table { min-width: 640px; }
+    .connection { min-height: 20px; }
+
+    /* High-growth resources share one compact browsing pattern. Search and
+       paging keep the page finite while preserving each domain's native card
+       or table representation. */
+    .collection-browser {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto auto;
+      gap: 8px 12px;
+      align-items: end;
+      margin: 0 0 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--blue);
+      border-radius: 2px;
+      background: var(--surface);
+    }
+    .collection-browser label {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .collection-browser input,
+    .collection-browser select { min-height: 40px; }
+    .collection-pagination {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 0;
+    }
+    .collection-count { margin-right: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .collection-page-indicator { min-width: 68px; text-align: center; font-variant-numeric: tabular-nums; }
+    .collection-pagination button { min-height: 40px; }
+    .collection-no-results {
+      grid-column: 1 / -1;
+      margin: 0;
+      padding: 14px;
+      border: 1px dashed var(--line);
+      color: var(--muted);
+      text-align: center;
+    }
+    .collection-managed > [hidden] { display: none !important; }
+
+    /* Meme discovery follows the same bounded collection model as the rest of
+       the control plane. Candidate review stays visually separate from assets
+       that are already eligible for delivery. */
+    .meme-discovery-form {
+      display: grid;
+      grid-template-columns: minmax(240px, 1.8fr) minmax(210px, 1fr) 120px auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .meme-discovery-form button { min-height: 40px; }
+    .inline-status {
+      min-height: 42px;
+      margin: 14px 0 0;
+      padding: 11px 12px;
+      border-left: 3px solid var(--blue);
+      background: var(--soft-blue);
+      color: var(--blue-strong);
+      line-height: 1.5;
+    }
+    .compact-summary { margin-top: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .compact-summary .summary-item { min-height: 72px; padding: 12px; }
+    .compact-summary .summary-item strong { margin-top: 6px; font-size: 19px; }
+    .meme-candidate-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+      gap: 12px;
+    }
+    .meme-candidate-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--blue);
+      background: var(--surface);
+      display: grid;
+      align-content: start;
+    }
+    .meme-candidate-card[data-collection-status="failed"] { border-top-color: var(--red); }
+    .meme-candidate-card[data-collection-status="duplicate"],
+    .meme-candidate-card[data-collection-status="rejected"] { border-top-color: var(--amber); }
+    .meme-candidate-card[data-collection-status="approved"] { border-top-color: var(--green); }
+    .meme-candidate-preview {
+      width: 100%;
+      height: 180px;
+      object-fit: contain;
+      border-bottom: 1px solid var(--line);
+      background: var(--subtle);
+    }
+    .meme-candidate-card.no-preview .meme-candidate-preview {
+      height: 72px;
+      padding: 12px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .meme-candidate-copy { display: grid; gap: 10px; padding: 14px; }
+    .meme-candidate-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .meme-candidate-heading h3 { margin: 0; font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
+    .meme-candidate-description { margin: 0; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+    .meme-candidate-facts { margin: 0; border-top: 1px solid var(--line); }
+    .meme-candidate-facts > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+    .meme-candidate-facts dt { color: var(--muted); }
+    .meme-candidate-facts dd { margin: 0; overflow-wrap: anywhere; }
+    .meme-source-link { display: inline-flex; min-height: 40px; align-items: center; color: var(--blue); font-weight: 700; }
+    .candidate-review-editor { border-top: 1px solid var(--line); }
+    .candidate-review-editor > summary,
+    .panel-disclosure > summary {
+      min-height: 44px;
+      padding: 11px 14px;
+      cursor: pointer;
+      color: var(--blue-strong);
+      font-weight: 700;
+    }
+    .candidate-review-editor > summary:focus-visible,
+    .panel-disclosure > summary:focus-visible { outline: 3px solid var(--blue); outline-offset: -3px; }
+    .candidate-review-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 14px 14px; }
+    .candidate-review-form .wide-field,
+    .candidate-review-form .candidate-review-actions { grid-column: 1 / -1; }
+    .candidate-review-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .panel-disclosure { border-top: 1px solid var(--line); }
+    .social-master-disclosure { margin: 10px 0 12px; }
+    .social-master-disclosure > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .social-master-disclosure > summary > span:first-child { display: grid; gap: 3px; }
+    .social-master-disclosure > summary small { color: var(--muted); font-weight: 500; }
+    .social-master-disclosure > summary .summary-action { color: var(--blue); font-size: 12px; }
+    .social-master-disclosure[open] > summary { border-bottom: 1px solid var(--line); }
+    .discovery-job-list { display: grid; gap: 1px; padding: 0 14px 14px; background: var(--line); }
+    .discovery-job-item { min-width: 0; padding: 10px 12px; background: var(--surface); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+    .discovery-job-item span { color: var(--muted); overflow-wrap: anywhere; }
+    .discovery-job-item .job-facts { grid-column: 1 / -1; font-size: 12px; }
+
+    /* Plugin marketplace: a restrained catalogue, not another settings list.
+       Runtime, source and permission review stay visible at decision time. */
+    .capability-tabs { position: sticky; top: 0; z-index: 3; }
+    .plugin-market-workspace { gap: 24px; }
+    .market-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(240px, .6fr);
+      gap: 28px;
+      align-items: end;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    .market-hero h2 {
+      max-width: 720px;
+      margin: 5px 0 10px;
+      font-size: clamp(34px, 4vw, 58px);
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+    .market-hero p { max-width: 720px; margin: 0; color: var(--muted); line-height: 1.65; }
+    .market-source-card {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--blue);
+      display: grid;
+      gap: 7px;
+      background: var(--subtle);
+    }
+    .market-source-card > span,
+    .market-source-card > small { color: var(--muted); }
+    .market-source-card button { margin-top: 5px; }
+    .market-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+    .market-summary > div { min-height: 82px; padding: 14px; display: grid; gap: 8px; background: var(--surface); }
+    .market-summary span { color: var(--muted); font-size: 12px; }
+    .market-summary strong { font-size: 22px; overflow-wrap: anywhere; }
+    .market-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .market-card {
+      min-width: 0;
+      min-height: 300px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--blue);
+      background: var(--surface);
+      display: grid;
+      align-content: space-between;
+      gap: 15px;
+    }
+    .market-card:hover { border-color: var(--line-strong); }
+    .market-card > header,
+    .market-card > footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .market-card h3 { margin: 5px 0 0; font-size: 19px; line-height: 1.25; overflow-wrap: anywhere; }
+    .market-card > p {
+      min-height: 4.8em;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .market-card dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
+    .market-card dl > div { padding-top: 10px; min-width: 0; }
+    .market-card dt { color: var(--muted); font-size: 11px; }
+    .market-card dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+    .market-card footer { padding-top: 12px; border-top: 1px solid var(--line); align-items: center; }
+    .market-runtime {
+      display: inline-flex;
+      min-height: 24px;
+      padding: 3px 7px;
+      border: 1px solid var(--blue);
+      color: var(--blue);
+      background: var(--soft-blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .market-risk { color: var(--amber); font-size: 12px; font-weight: 700; }
+    .market-detail {
+      padding: clamp(18px, 3vw, 30px);
+      border: 1px solid var(--line-strong);
+      border-left: 6px solid var(--blue);
+      background: var(--surface);
+      outline: 0;
+    }
+    .market-detail:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+    .market-detail-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); gap: 26px; }
+    .market-detail-description { margin: 0 0 18px; color: var(--muted); line-height: 1.7; }
+    .market-consent { padding: 18px; border: 1px solid var(--line); background: var(--subtle); display: grid; align-content: start; gap: 12px; }
+    .market-consent h3 { margin: 2px 0 0; }
+    .market-consent ul { margin: 0; padding-left: 22px; line-height: 1.7; }
+    .market-consent p { margin: 0; color: var(--muted); line-height: 1.6; }
+    .text-link { display: inline-flex; min-height: 44px; align-items: center; color: var(--blue); font-weight: 700; }
+    .market-operations-panel { margin-top: 4px; }
+
+    @media (max-width: 760px) {
+      .app-shell,
+      .sidebar,
+      .main,
+      .topbar,
+      .content,
+      .view { width: 100%; max-width: 100%; min-width: 0; }
+      .sidebar { overflow: hidden; }
+      body.has-custom-background .sidebar::after { display: none; }
+      .nav { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+      .topbar { grid-template-columns: minmax(0, 1fr); }
+      .toolbar { min-width: 0; }
+      .toolbar button { min-width: 0; }
+      .content { overflow-x: clip; }
+      .update-banner { padding: 10px 12px; align-items: stretch; flex-direction: column; }
+      .progressive-panel[open] > .panel > .panel-body { max-height: none; }
+      .collection-browser { grid-template-columns: minmax(0, 1fr) auto; }
+      .collection-search { grid-column: 1 / -1; }
+      .collection-pagination { align-items: stretch; flex-wrap: wrap; justify-content: stretch; }
+      .collection-count { width: 100%; margin: 0; }
+      .collection-pagination button { flex: 1 1 96px; }
+      .calm-home .ops-hero-main { padding: 28px 20px; }
+      .calm-home .ops-hero h2 { font-size: clamp(38px, 13vw, 54px); }
+      .workspace-tabs,
+      .view-tabs { max-width: 100%; overflow-x: auto; }
+      .market-hero,
+      .market-detail-grid { grid-template-columns: 1fr; }
+      .market-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .market-grid { grid-template-columns: 1fr; }
+      .meme-discovery-form { grid-template-columns: 1fr; }
+      .meme-discovery-form button { width: 100%; }
+      .compact-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .meme-candidate-grid { grid-template-columns: 1fr; }
+      .candidate-review-form { grid-template-columns: 1fr; }
+      .candidate-review-form .wide-field,
+      .candidate-review-form .candidate-review-actions { grid-column: auto; }
+      .candidate-review-actions button { flex: 1 1 140px; }
+      .panel-header,
+      .section-heading,
+      .page-intro { min-width: 0; max-width: 100%; }
+      table { min-width: 620px; }
+    }
+    @media (min-width: 761px) and (max-width: 1120px) {
+      .market-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (forced-colors: active) {
+      .market-card,
+      .market-source-card,
+      .market-detail,
+      .market-runtime { border-color: CanvasText; }
+    }
+    @media (min-width: 761px) {
+      html, body { height: 100%; overflow: hidden; }
+      .app-shell { height: 100dvh; min-height: 0; overflow: hidden; }
+      .sidebar { height: 100dvh; position: relative; }
+      .main {
+        height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+        grid-template-rows: auto auto minmax(0, 1fr);
+      }
+      .content {
+        min-height: 0;
+        overflow: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+      }
+    }
+
+    .desktop-pet {
+      --pet-scale: 1;
+      position: fixed;
+      right: 24px;
+      bottom: 10px;
+      z-index: 40;
+      width: calc(192px * var(--pet-scale));
+      height: calc(208px * var(--pet-scale));
+      pointer-events: none;
+      transform-origin: bottom center;
+    }
+    .desktop-pet.dock-left { right: auto; left: 238px; }
+    .pet-character {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      pointer-events: auto;
+      filter: drop-shadow(0 12px 18px rgba(0, 0, 0, .35));
+    }
+    .pet-character:hover { transform: translateY(-4px); }
+    .pet-character img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .pet-close {
+      position: absolute;
+      right: -4px;
+      top: 52px;
+      width: 32px;
+      height: 32px;
+      min-height: 32px;
+      padding: 0;
+      border-radius: 50%;
+      border-color: #46637b;
+      background: #0c1825;
+      color: var(--muted);
+      pointer-events: auto;
+    }
+    .pet-bubble {
+      position: absolute;
+      right: 80%;
+      top: 22px;
+      width: 210px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: var(--shadow);
+      pointer-events: none;
+    }
+    .desktop-pet.bubble-right .pet-bubble { right: auto; left: 80%; }
+    .pet-management-grid { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 20px; }
+    .pet-pack-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    }
+    @media (max-width: 760px) {
+      .desktop-pet { right: 8px; bottom: 4px; --pet-scale: .45 !important; }
+      .desktop-pet.dock-left { left: 8px; right: auto; }
+      .pet-close { top: 40px; width: 28px; height: 28px; min-height: 28px; }
+      body:has(.content :focus-visible) .desktop-pet {
+        opacity: 0;
+        pointer-events: none;
+      }
+      body:has(.content :focus-visible) .desktop-pet * { pointer-events: none; }
+      .pet-bubble { right: 68%; width: min(190px, 55vw); }
+      .desktop-pet.bubble-right .pet-bubble { right: auto; left: 68%; }
+      .pet-management-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 480px) {
+      .desktop-pet { --pet-scale: .32 !important; }
+      .pet-bubble { display: none; }
+      body:has(.view:not([hidden]) form) .desktop-pet { display: none; }
+    }
+    @media (forced-colors: active) {
+      .topbar::after { background: Highlight; }
+      .desktop-pet, .pet-bubble, .pet-close { forced-color-adjust: auto; }
+    }

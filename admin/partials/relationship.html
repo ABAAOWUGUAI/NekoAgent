@@ -1,0 +1,223 @@
+        <section id="view-relationship" class="view hidden gate8-view">
+          <header class="page-intro gate8-intro">
+            <div>
+              <p class="page-kicker">Assistant boundaries</p>
+              <h2>关系与主动</h2>
+              <p>管理当前助手与指定用户的互动边界。任务、安全通知和社交主动分别保存，关闭陪伴消息不会关闭重要任务通知。</p>
+            </div>
+            <div class="page-actions">
+              <button id="reloadRelationshipBtn" class="secondary" type="button">刷新当前用户</button>
+            </div>
+          </header>
+
+          <div id="relationshipFeatureStatus" class="gate8-feature-status" role="status" aria-live="polite">
+            正在检查 Gate 8 状态。
+          </div>
+
+          <section class="panel gate8-purpose-panel" aria-labelledby="relationshipPurposeTitle">
+            <div class="panel-header">
+              <div>
+                <h2 id="relationshipPurposeTitle">这个页面控制什么</h2>
+                <p class="compact-note">下面三类设置彼此独立。只想调整助手怎么和你说话时，只需修改第一项。</p>
+              </div>
+            </div>
+            <div class="panel-body gate8-purpose-grid">
+              <article>
+                <strong>1. 怎么和你相处</strong>
+                <p>设置称呼、交流风格，以及助手可以或不可以主动提起的话题。</p>
+              </article>
+              <article>
+                <strong>2. 哪些系统消息必须通知你</strong>
+                <p>任务完成、失败、等待批准和安全异常等可靠性通知，不属于聊天人格。</p>
+              </article>
+              <article>
+                <strong>3. 助手能否主动找你聊天</strong>
+                <p>控制问候、跟进和分享；默认关闭，并受静默时间、频率和未回复上限限制。</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel gate8-context-panel" aria-labelledby="relationshipTargetTitle">
+            <div class="panel-header">
+              <div>
+                <h2 id="relationshipTargetTitle">这套设置应用给谁</h2>
+                <p id="relationshipTargetHelp" class="compact-note">默认的“admin + 本人私有”代表当前 Web 管理员。只有要为某个 QQ 用户、QQ群或项目单独设置时，才需要修改这里。</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <form id="relationshipTargetForm" class="gate8-target-grid" aria-describedby="relationshipTargetHelp">
+                <label>用户标识
+                  <input id="relationshipUserId" type="text" maxlength="80" value="admin" required autocomplete="off">
+                </label>
+                <label>作用域
+                  <select id="relationshipScopeType">
+                    <option value="private_user">本人私有</option>
+                    <option value="channel_thread">当前会话线程</option>
+                    <option value="qq_group">指定 QQ 群</option>
+                    <option value="project">指定项目</option>
+                    <option value="global_preference">全局偏好</option>
+                    <option value="sensitive_private">敏感私有</option>
+                  </select>
+                </label>
+                <label>作用域标识
+                  <input id="relationshipScopeId" type="text" maxlength="160" placeholder="本人私有可留空">
+                </label>
+                <button class="secondary" type="submit">载入</button>
+              </form>
+            </div>
+          </section>
+
+          <div class="gate8-management-grid">
+            <section class="panel gate8-domain-card" aria-labelledby="relationshipStateTitle">
+              <div class="panel-header">
+                <div>
+                  <p class="section-index">RELATIONSHIP</p>
+                  <h2 id="relationshipStateTitle">互动关系</h2>
+                </div>
+                <span id="relationshipVersion" class="meta">版本 0</span>
+              </div>
+              <div class="panel-body">
+                <form id="relationshipStateForm" class="form-stack">
+                  <div class="split-form-row">
+                    <label>希望使用的称呼
+                      <input id="relationshipPreferredAddress" type="text" maxlength="80" placeholder="例如：老板；留空表示不指定">
+                    </label>
+                    <label>互动方式
+                      <select id="relationshipInteractionStyle">
+                        <option value="natural">自然</option>
+                        <option value="quiet">克制安静</option>
+                        <option value="supportive">支持陪伴</option>
+                        <option value="playful">轻松活泼</option>
+                        <option value="direct">直接高效</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label>熟悉程度
+                    <select id="relationshipFamiliarity">
+                      <option value="new">刚开始使用</option>
+                      <option value="familiar">已经熟悉</option>
+                      <option value="long_term">长期相处</option>
+                    </select>
+                  </label>
+                  <label>允许主动提起的话题
+                    <textarea id="relationshipAllowedTopics" maxlength="1200" rows="3" placeholder="每行一个，例如：项目进展&#10;最近提到的比赛"></textarea>
+                  </label>
+                  <label>不应主动提起的话题
+                    <textarea id="relationshipBlockedTopics" maxlength="1200" rows="3" placeholder="每行一个，例如：工作焦虑&#10;家庭隐私"></textarea>
+                  </label>
+                  <p class="compact-note">这里记录的是互动上下文和边界，不是亲密度、依赖度或情绪惩罚。</p>
+                  <button id="saveRelationshipBtn" class="primary" type="submit">保存互动关系</button>
+                  <div id="relationshipStateStatus" class="provider-status" role="status" aria-live="polite">尚未载入。</div>
+                </form>
+              </div>
+            </section>
+
+            <section class="panel gate8-domain-card" aria-labelledby="notificationPolicyTitle">
+              <div class="panel-header">
+                <div>
+                  <p class="section-index">OPERATIONS</p>
+                  <h2 id="notificationPolicyTitle">任务与安全通知</h2>
+                </div>
+                <span id="notificationPolicyVersion" class="meta">版本 0</span>
+              </div>
+              <div class="panel-body">
+                <form id="notificationPolicyForm" class="form-stack">
+                  <fieldset class="gate8-choice-fieldset">
+                    <legend>需要送达的通知</legend>
+                    <div class="gate8-choice-grid">
+                      <label class="checkbox-line"><input name="notificationCategory" type="checkbox" value="approval">等待批准</label>
+                      <label class="checkbox-line"><input name="notificationCategory" type="checkbox" value="task_completed">任务完成</label>
+                      <label class="checkbox-line"><input name="notificationCategory" type="checkbox" value="task_failed">任务失败</label>
+                      <label class="checkbox-line"><input name="notificationCategory" type="checkbox" value="delivery_failed">送达失败</label>
+                      <label class="checkbox-line"><input name="notificationCategory" type="checkbox" value="security">安全事件</label>
+                      <label class="checkbox-line"><input name="notificationCategory" type="checkbox" value="resource">资源异常</label>
+                    </div>
+                  </fieldset>
+                  <div class="split-form-row">
+                    <label>静默开始<input id="notificationQuietStart" type="time" value="23:30"></label>
+                    <label>静默结束<input id="notificationQuietEnd" type="time" value="09:00"></label>
+                  </div>
+                  <label>合并窗口（分钟）
+                    <input id="notificationGroupWindow" type="number" min="0" max="1440" value="10">
+                  </label>
+                  <label class="checkbox-line">
+                    <input id="notificationCriticalBypass" type="checkbox" checked>
+                    严重安全和资源事件可以绕过静默时间
+                  </label>
+                  <p class="compact-note">这些是可靠性通知，不会被“关闭社交主动”一起关闭。</p>
+                  <button id="saveNotificationPolicyBtn" class="primary" type="submit">保存通知规则</button>
+                  <div id="notificationPolicyStatus" class="provider-status" role="status" aria-live="polite">尚未载入。</div>
+                </form>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel gate8-social-card" aria-labelledby="socialProactiveTitle">
+            <div class="panel-header">
+              <div>
+                <p class="section-index">SOCIAL PROACTIVE</p>
+                <h2 id="socialProactiveTitle">社交主动对话</h2>
+              </div>
+              <span id="socialPolicyVersion" class="meta">版本 0</span>
+            </div>
+            <div class="panel-body">
+              <form id="globalProactiveForm" class="form-stack authorization-box">
+                <label class="checkbox-line">
+                  <input id="globalProactiveEnabled" type="checkbox">
+                  启用全局社交主动总开关
+                </label>
+                <p class="compact-note">这是唯一的全局入口。关闭后所有用户规则均不执行；开启后仍需满足下方用户授权、节律和通知边界。</p>
+                <button id="saveGlobalProactiveBtn" class="secondary" type="submit">保存全局总开关</button>
+                <div id="globalProactiveStatus" class="provider-status" role="status" aria-live="polite">尚未载入。</div>
+              </form>
+              <form id="socialProactiveForm" class="form-stack">
+                <div class="gate8-social-grid">
+                  <label>时区<input id="socialTimezone" type="text" maxlength="80" value="Asia/Shanghai"></label>
+                  <label>主动风格
+                    <select id="socialInitiativeMode">
+                      <option value="conservative">保守</option>
+                      <option value="balanced">平衡</option>
+                      <option value="warm">温暖</option>
+                    </select>
+                  </label>
+                  <label>静默开始<input id="socialQuietStart" type="time" value="23:30"></label>
+                  <label>静默结束<input id="socialQuietEnd" type="time" value="09:00"></label>
+                  <label>沉默至少（分钟）<input id="socialMinSilence" type="number" min="15" max="43200" value="180"></label>
+                  <label>两次联系至少间隔（分钟）<input id="socialMinGap" type="number" min="30" max="43200" value="360"></label>
+                  <label>每天最多<input id="socialDailyLimit" type="number" min="1" max="12" value="2"></label>
+                  <label>每周最多<input id="socialWeeklyLimit" type="number" min="1" max="50" value="5"></label>
+                  <label>连续未回复上限<input id="socialUnansweredLimit" type="number" min="1" max="10" value="2"></label>
+                  <label>评估间隔（分钟）<input id="socialEvaluationInterval" type="number" min="15" max="1440" value="60"></label>
+                </div>
+                <fieldset class="gate8-choice-fieldset">
+                  <legend>允许的主动理由</legend>
+                  <div class="gate8-choice-grid">
+                    <label class="checkbox-line"><input name="socialIntent" type="checkbox" value="follow_up">跟进真实事项</label>
+                    <label class="checkbox-line"><input name="socialIntent" type="checkbox" value="share">分享相关内容</label>
+                    <label class="checkbox-line"><input name="socialIntent" type="checkbox" value="check_in">低压力问候</label>
+                    <label class="checkbox-line"><input name="socialIntent" type="checkbox" value="celebrate">纪念与庆祝</label>
+                    <label class="checkbox-line"><input name="socialIntent" type="checkbox" value="reminder">授权提醒</label>
+                  </div>
+                </fieldset>
+                <label>话题偏好与禁区
+                  <textarea id="socialTopicNotes" maxlength="1000" rows="3" placeholder="例如：只根据近期真实对话跟进；不要机械问候"></textarea>
+                </label>
+                <details class="gate8-advanced">
+                  <summary>高级节律</summary>
+                  <div class="gate8-social-grid">
+                    <label>时间抖动（分钟）<input id="socialScheduleJitter" type="number" min="0" max="180" value="20"></label>
+                    <label>话题冷却（分钟）<input id="socialTopicCooldown" type="number" min="30" max="43200" value="1440"></label>
+                  </div>
+                </details>
+                <div class="authorization-box">
+                  <label class="checkbox-line"><input id="socialAuthorized" type="checkbox">该用户已明确允许社交主动联系</label>
+                  <label class="checkbox-line"><input id="socialPolicyEnabled" type="checkbox">启用社交主动判断</label>
+                </div>
+                <p class="compact-note">每次发送都必须留下可审计的真实触发原因；用户未回复时会受上限约束，不制造情绪压力。</p>
+                <button id="saveSocialPolicyBtn" class="primary" type="submit">保存社交主动规则</button>
+                <div id="socialPolicyStatus" class="provider-status" role="status" aria-live="polite">尚未载入。</div>
+              </form>
+            </div>
+          </section>
+
+        </section>
