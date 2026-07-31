@@ -103,6 +103,11 @@ from bridge_conversation_participation_routing_schema import (
     require_conversation_participation_routing_schema,
 )
 from bridge_delivery_continuity_schema import UNIFIED_DELIVERY_FEATURE_FLAG
+from bridge_automation_conversation_schema import (
+    AUTOMATION_CONVERSATION_MIGRATION_CHECKSUM,
+    apply_automation_conversation_v1,
+    require_automation_conversation_schema,
+)
 from bridge_group_participation_schema import (
     GROUP_PARTICIPATION_MIGRATION_CHECKSUM,
     apply_group_participation_v1,
@@ -476,6 +481,12 @@ ASSISTANT_CORE_MIGRATIONS = (
         apply=apply_learning_policy_v2,
         checksum=LEARNING_POLICY_V2_MIGRATION_CHECKSUM,
     ),
+    Migration(
+        version=30,
+        name="automation_conversation_contract_v1",
+        apply=apply_automation_conversation_v1,
+        checksum=AUTOMATION_CONVERSATION_MIGRATION_CHECKSUM,
+    ),
 )
 
 
@@ -530,6 +541,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     learning_schema = None
     network_policy_schema = None
     continuity_kernel_schema = None
+    automation_conversation_schema = None
     if 3 in versions:
         identity_schema = require_identity_schema(conn)
         if 4 in versions:
@@ -578,6 +590,8 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         network_policy_schema = require_network_policy_schema(conn)
     if 28 in versions:
         continuity_kernel_schema = require_continuity_kernel_schema(conn)
+    if 30 in versions:
+        automation_conversation_schema = require_automation_conversation_schema(conn)
     pending = [
         {"version": item.version, "name": item.name, "checksum": item.resolved_checksum()}
         for item in ASSISTANT_CORE_MIGRATIONS
@@ -612,6 +626,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         "learning_schema": learning_schema,
         "network_policy_schema": network_policy_schema,
         "continuity_kernel_schema": continuity_kernel_schema,
+        "automation_conversation_schema": automation_conversation_schema,
         "applied": applied,
         "pending": pending,
         "would_apply": [item["version"] for item in pending],

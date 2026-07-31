@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from bridge_action_registry import action_definition, action_types, planner_action_types
 
 
-PLAN_SCHEMA_VERSION = 1
+PLAN_SCHEMA_VERSION = 2
 PLAN_TOP_LEVEL_FIELDS = {
     "schema_version",
     "summary_mode",
@@ -167,6 +167,7 @@ def fallback_interaction_plan(message: str, mode_decision: Mapping[str, object])
                 "objective": intents[-1]["objective"],
                 "requires_tools": action_definition(action_type).requires_tools or requires_tools,
                 "risk_level": action_definition(action_type).risk_level,
+                "depends_on": [],
             },
         )
 
@@ -226,14 +227,14 @@ def build_interaction_plan_messages(
                 "你是私人助手的交互规划器，只输出一个 JSON 对象。"
                 "一条消息可以同时包含多个意图，禁止把聊天与办事强制二选一。\n"
                 "顶层字段必须且只能是 schema_version, summary_mode, primary_intent, confidence, reason, "
-                "intents, reply_parts, actions, approval_requests, memory_candidates。schema_version 固定为 1。\n"
+                "intents, reply_parts, actions, approval_requests, memory_candidates。schema_version 固定为 2。\n"
                 "summary_mode 只能是 daily/work/mixed；primary_intent 必须等于某个 intents.type。\n"
                 "intents 最多 8 项；type 只能是 chat/emotional_support/ops/code/research/analysis/memory/automation/meta。"
                 "每项字段为 id,type,confidence,objective,requires_tools,risk_level。\n"
                 "reply_parts 最多 4 项，只用于简短的情绪承接或过渡，不回答技术事实；"
                 "字段为 id,type,text,styleable，type 只能是 social_ack/transition/progress/risk/next_step。\n"
                 "actions 最多 12 项，只描述动作类别，禁止输出命令、路径、URL、凭据或任意工具参数；"
-                "字段为 id,type,intent_id,objective,requires_tools,risk_level，type 只能是 "
+                "字段为 id,type,intent_id,objective,requires_tools,risk_level,depends_on；depends_on 只能引用更早动作 ID，type 只能是 "
                 f"{planner_action_types()}。\n"
                 "approval_requests 和 memory_candidates 只给类别元数据，不得复制消息中的敏感内容。"
                 "代码、命令、日志、引用、文件、校验值不属于 reply_parts。"
@@ -339,7 +340,7 @@ def _normalize_actions(items: object, intent_ids: set[str]) -> list[dict]:
     result = []
     seen_ids: set[str] = set()
     for index, raw in enumerate(items[:12], start=1):
-        if not isinstance(raw, dict) or set(raw) - {"id", "type", "intent_id", "objective", "requires_tools", "risk_level"}:
+        if not isinstance(raw, dict) or set(raw) - {"id", "type", "intent_id", "objective", "requires_tools", "risk_level", "depends_on"}:
             raise ValueError("interaction_plan_action_invalid")
         action_type = _clip(raw.get("type"), 40).lower()
         intent_id = _clip(raw.get("intent_id"), 64)
@@ -349,6 +350,13 @@ def _normalize_actions(items: object, intent_ids: set[str]) -> list[dict]:
         item_id = _clip(raw.get("id") or f"action-{index}", 64)
         if not item_id or item_id in seen_ids:
             raise ValueError("interaction_plan_action_id_invalid")
+        depends_on = raw.get("depends_on") if isinstance(raw.get("depends_on"), list) else []
+        normalized_dependencies = []
+        for dependency in depends_on:
+            dependency_id = _clip(dependency, 64)
+            if not dependency_id or dependency_id not in seen_ids or dependency_id in normalized_dependencies:
+                raise ValueError("interaction_plan_action_dependency_invalid")
+            normalized_dependencies.append(dependency_id)
         seen_ids.add(item_id)
         result.append(
             {
@@ -358,6 +366,7 @@ def _normalize_actions(items: object, intent_ids: set[str]) -> list[dict]:
                 "objective": _clip(raw.get("objective"), 240),
                 "requires_tools": bool(raw.get("requires_tools")),
                 "risk_level": risk,
+                "depends_on": normalized_dependencies,
             },
         )
     return result
@@ -385,7 +394,7 @@ def _normalize_metadata_list(items: object, allowed: set[str], limit: int) -> li
 def normalize_interaction_plan(data: Mapping[str, object]) -> dict:
     unknown = set(data) - PLAN_TOP_LEVEL_FIELDS
     missing = PLAN_TOP_LEVEL_FIELDS - set(data)
-    if unknown or missing or int(data.get("schema_version") or 0) != PLAN_SCHEMA_VERSION:
+    if unknown or missing or int(data.get("schema_version") or 0) not in {1, PLAN_SCHEMA_VERSION}:
         raise ValueError("interaction_plan_schema_invalid")
     mode = _clip(data.get("summary_mode"), 16).lower()
     primary = _clip(data.get("primary_intent"), 40).lower()

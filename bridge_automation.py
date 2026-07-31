@@ -16,6 +16,12 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from bridge_automation_schema import ensure_automation_tables
+from bridge_automation_contracts import (
+    DEFAULT_OUTPUT_CONTRACT,
+    automation_config_hash,
+    normalize_output_contract,
+    output_contract_hash,
+)
 from bridge_automation_runs import (
     finish_automation_run,
     list_automation_seen_items,
@@ -180,6 +186,9 @@ def _job_payload(payload: dict, existing: dict | None = None) -> dict:
     parsed_run_at = parse_local_datetime(run_at, zone_name) if run_at else None
     if schedule_type == "once" and parsed_run_at is None:
         raise ValueError("run_at_required")
+    output_contract = normalize_output_contract(
+        payload.get("output_contract", current.get("output_contract_json") or DEFAULT_OUTPUT_CONTRACT),
+    )
     return {
         "user_id": user_id,
         "title": title,
@@ -199,6 +208,10 @@ def _job_payload(payload: dict, existing: dict | None = None) -> dict:
         "interval_minutes": interval,
         "timezone": zone_name,
         "enabled": 1 if truthy(payload.get("enabled", current.get("enabled"))) else 0,
+        "output_contract_json": json.dumps(
+            output_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ),
+        "output_contract_hash": output_contract_hash(output_contract),
     }
 
 
@@ -220,14 +233,18 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
     conn.execute(
         """
         INSERT INTO automation_jobs(
-            id, user_id, title, action_type, instruction, parameters_json, schedule_type, run_at,
+            id, user_id, title, action_type, instruction, parameters_json,
+            revision, output_contract_json, output_contract_hash, schedule_type, run_at,
             time_of_day, weekdays, interval_minutes, timezone, enabled, state,
             next_due_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id=excluded.user_id, title=excluded.title,
             action_type=excluded.action_type, instruction=excluded.instruction,
             parameters_json=excluded.parameters_json,
+            revision=automation_jobs.revision+1,
+            output_contract_json=excluded.output_contract_json,
+            output_contract_hash=excluded.output_contract_hash,
             schedule_type=excluded.schedule_type, run_at=excluded.run_at,
             time_of_day=excluded.time_of_day, weekdays=excluded.weekdays,
             interval_minutes=excluded.interval_minutes, timezone=excluded.timezone,
@@ -236,7 +253,9 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
         """,
         (
             job_id, values["user_id"], values["title"], values["action_type"],
-            values["instruction"], values["parameters_json"], values["schedule_type"], values["run_at"],
+            values["instruction"], values["parameters_json"],
+            1, values["output_contract_json"], values["output_contract_hash"],
+            values["schedule_type"], values["run_at"],
             values["time_of_day"], values["weekdays"], values["interval_minutes"],
             values["timezone"], values["enabled"], state,
             timestamp(next_due) if next_due else "", timestamp(now), timestamp(now),
@@ -311,9 +330,14 @@ def claim_due_jobs(conn: sqlite3.Connection, *, now: datetime | None = None, lim
             conn.execute(
                 """INSERT INTO automation_runs(
                        id,job_id,user_id,scheduled_for,status,started_at,
-                       lease_owner,lease_until,attempt_count
-                   ) VALUES(?,?,?,?,'running',?,?,?,1)""",
-                (run_id, item["id"], item["user_id"], scheduled_for, current_text, owner, lease_until),
+                       lease_owner,lease_until,attempt_count,job_revision,
+                       config_hash,output_contract_hash
+                   ) VALUES(?,?,?,?,'running',?,?,?,1,?,?,?)""",
+                (
+                    run_id, item["id"], item["user_id"], scheduled_for,
+                    current_text, owner, lease_until, int(item.get("revision") or 1),
+                    automation_config_hash(item), str(item.get("output_contract_hash") or ""),
+                ),
             )
         item.update({"lease_until": lease_until, "run_id": run_id, "scheduled_for": scheduled_for})
         claimed.append(item)

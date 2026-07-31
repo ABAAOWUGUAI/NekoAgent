@@ -8,13 +8,38 @@ resolved by AstrBot, never a QQ URL or a file path.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import re
+import unicodedata
 
 
 MAX_VISUAL_IMAGES = 3
 MAX_VISUAL_IMAGE_BYTES = 4 * 1024 * 1024
 _DATA_URL = re.compile(r"^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$", re.I)
+
+
+def _normalized_text(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).replace("\r\n", "\n").replace("\r", "\n")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
+
+
+def event_external_message_id(event) -> str:
+    message_obj = getattr(event, "message_obj", None)
+    raw = str(getattr(message_obj, "message_id", "") or "").strip()
+    platform_getter = getattr(event, "get_platform_id", None)
+    try:
+        platform = str(platform_getter() or "").strip() if callable(platform_getter) else ""
+    except Exception:
+        platform = ""
+    if raw and platform:
+        return f"{platform}:{raw}"[:300]
+    return (raw or platform)[:300]
 
 
 def event_is_structural_group(event, *, group_id: str = "") -> bool:
@@ -59,6 +84,7 @@ def event_participation_metadata(event, *, bot_id: str = "") -> dict:
     attachments: list[dict] = []
     reply_id = ""
     reply_sender = ""
+    reply_text = ""
     for item in chain[:64]:
         kind = type(item).__name__.strip().lower() or "unknown"
         components.append({"type": kind[:40]})
@@ -80,6 +106,10 @@ def event_participation_metadata(event, *, bot_id: str = "") -> dict:
                 or getattr(item, "user_id", "")
                 or getattr(item, "qq", "")
             ).strip()[:80]
+            reply_text = _normalized_text(
+                getattr(item, "message_str", "")
+                or getattr(item, "text", "")
+            )
         elif kind in {"image", "video", "audio", "record", "file"}:
             attachments.append({"type": kind})
     # The event-local self id is the transport fact for this exact message.
@@ -92,10 +122,13 @@ def event_participation_metadata(event, *, bot_id: str = "") -> dict:
         event_self_id = ""
     normalized_bot_id = event_self_id or str(bot_id or "").strip()
     return {
+        "external_message_id": event_external_message_id(event),
         "message_components": components,
         "mention_targets": mentions,
         "attachments": attachments,
         "reply_to_external_message_id": reply_id,
+        "reply_text_sha256": hashlib.sha256(reply_text.encode("utf-8")).hexdigest() if reply_text else "",
+        "reply_text_length": len(reply_text),
         "reply_to_assistant": bool(
             reply_id and reply_sender and normalized_bot_id and reply_sender == normalized_bot_id
         ),
@@ -188,6 +221,7 @@ def event_addresses_assistant(event, metadata: dict) -> bool:
 __all__ = [
     "event_addresses_assistant",
     "event_is_structural_group",
+    "event_external_message_id",
     "event_participation_metadata",
     "event_visual_media_payloads",
 ]

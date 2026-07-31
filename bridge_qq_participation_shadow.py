@@ -478,7 +478,10 @@ def observe_group_access_denied(
 
 def with_qq_transport_metadata(payload: dict, headers, *, default_actor: str = "") -> dict:
     result = dict(payload)
-    result["_external_message_id"] = headers.get("X-QQ-Message-ID", "")
+    result["_external_message_id"] = (
+        headers.get("X-QQ-Message-ID", "")
+        or str(payload.get("external_message_id") or "")
+    )
     result["_qq_actor_id"] = headers.get("X-QQ-Actor-ID", "") or default_actor
     result["_qq_actor_role"] = headers.get("X-QQ-Actor-Role", "") or "user"
     result["_qq_self_id"] = headers.get("X-QQ-Self-ID", "") or str(payload.get("self_id") or "")

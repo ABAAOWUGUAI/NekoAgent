@@ -19,6 +19,12 @@ from zoneinfo import ZoneInfo
 
 from bridge_action_registry import action_definition
 from bridge_automation import DEFAULT_TIMEZONE, ensure_automation_tables, upsert_automation_job
+from bridge_automation_contracts import normalize_output_contract, output_contract_hash
+from bridge_automation_conversation import (
+    clarification_reply,
+    finish_action_plan,
+    plan_automation_conversation,
+)
 from bridge_automation_disable import execute_automation_disable
 from bridge_qq_access_service import check_qq_access
 
@@ -28,7 +34,13 @@ _SCHEDULE_HINTS = (
     "每周", "每隔", "定期", "按时", "到点",
 )
 _CREATE_HINTS = ("做一个", "创建", "新建", "设置", "安排", "帮我", "要求", "提醒", "推送")
-_UPDATE_HINTS = ("修改", "改成", "改为", "调整", "更新")
+_UPDATE_HINTS = (
+    "修改", "改成", "改为", "调整", "更新", "改一下", "改一改", "改改", "换一下",
+)
+_READABLE_FORMAT_HINTS = (
+    "看不懂", "看不明白", "不能理解", "不好理解", "太乱", "清楚一点", "易懂",
+    "好读", "聊天记录", "聊天式", "对话式", "简洁", "直观",
+)
 _DISABLE_HINTS = ("删除", "取消", "停用", "停止", "停掉", "关掉", "不要了", "不再需要")
 _RUN_NOW_HINTS = (
     "强制触发", "立即触发", "现在触发", "马上触发",
@@ -156,6 +168,11 @@ def parse_automation_action(
     """Parse only explicit schedule requests; return ``None`` for normal chat."""
 
     text = str(message or "").strip()
+    if _is_run_now_request(text) and _is_schedule_request(text) and any(hint in text for hint in _UPDATE_HINTS):
+        return {
+            "action_type": "automation_create_clarification",
+            "reason": "multi_action_contract_required",
+        }
     if _is_disable_request(text):
         if current_group_id:
             return {"action_type": "automation_disable_blocked", "reason": "owner_private_only"}
@@ -180,13 +197,17 @@ def parse_automation_action(
     if any(hint in lowered for hint in _HIGH_RISK_HINTS):
         return {"action_type": "automation_create_blocked", "reason": "high_risk_schedule"}
     if any(hint in lowered for hint in _UPDATE_HINTS):
-        if any(token in lowered for token in ("github", "githu")) and any(
-            token in text for token in ("中文", "简体中文", "使用中文", "必须是中文")
-        ):
+        context = f"{_history_text(history)}\n{text}".lower()
+        changes = {}
+        if any(token in text for token in ("中文", "简体中文", "使用中文", "必须是中文")):
+            changes["output_language"] = "zh-CN"
+        if "格式" in text and any(hint in text for hint in _READABLE_FORMAT_HINTS):
+            changes["delivery_format"] = "conversation"
+        if changes:
             return {
                 "action_type": "automation_update",
-                "target_source": "github",
-                "changes": {"output_language": "zh-CN"},
+                "target_source": "github" if "github" in context or "githu" in context else "latest",
+                "changes": changes,
             }
         return {
             "action_type": "automation_create_clarification",
@@ -283,12 +304,100 @@ def execute_automation_action(
 ) -> dict:
     action_type = str(action.get("action_type") or "")
     reason = str(action.get("reason") or "")
+    if action_type == "automation_action_plan":
+        target_job_id = str(action.get("target_job_id") or "")
+        expected_revision = int(action.get("target_revision") or 0)
+        steps = action.get("actions") if isinstance(action.get("actions"), list) else []
+        seen_step_ids: set[str] = set()
+        valid_step_types = {"automation.schedule.update", "automation.schedule.run_now"}
+        plan_error = ""
+        if not target_job_id or not expected_revision or not steps:
+            plan_error = "automation_action_plan_target_or_steps_missing"
+        for step in steps:
+            if plan_error:
+                break
+            if not isinstance(step, dict):
+                plan_error = "automation_action_plan_step_invalid"
+                break
+            step_id = str(step.get("id") or "")
+            step_type = str(step.get("type") or "")
+            dependencies = step.get("depends_on") if isinstance(step.get("depends_on"), list) else None
+            if not step_id or step_id in seen_step_ids or step_type not in valid_step_types or dependencies is None:
+                plan_error = "automation_action_plan_step_invalid"
+                break
+            if any(str(item or "") not in seen_step_ids for item in dependencies):
+                plan_error = "automation_action_plan_dependency_invalid"
+                break
+            seen_step_ids.add(step_id)
+        if plan_error:
+            return {
+                "ok": True,
+                "dispatch": "automation_action_plan_failed",
+                "reply": "自动化连续动作计划不完整，本轮没有修改或触发任何任务。",
+                "automation_job": {"id": target_job_id, "revision": expected_revision},
+                "action_receipts": [
+                    _receipt("automation.action_plan", "blocked", target_job_id, reason=plan_error),
+                ],
+                "plan_status": "failed",
+            }
+        receipts: list[dict] = []
+        replies: list[str] = []
+        latest_revision = expected_revision
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if any(
+                receipt.get("status") not in {"completed", "no_op"}
+                for receipt in receipts
+            ):
+                receipts.append(
+                    _receipt(
+                        str(step.get("type") or "automation.unknown"),
+                        "blocked",
+                        target_job_id,
+                        reason="dependency_failed",
+                    ),
+                )
+                break
+            step_type = str(step.get("type") or "")
+            nested = {
+                "action_type": {
+                    "automation.schedule.update": "automation_update",
+                    "automation.schedule.run_now": "automation_run_now",
+                }.get(step_type, ""),
+                "target_job_id": target_job_id,
+                "expected_revision": latest_revision,
+                "changes": step.get("changes") if isinstance(step.get("changes"), dict) else {},
+            }
+            result = execute_automation_action(
+                connect,
+                actor_id=actor_id,
+                action=nested,
+                trace_id=trace_id,
+                preflight=preflight,
+            )
+            step_receipts = [dict(item) for item in result.get("action_receipts") or [] if isinstance(item, dict)]
+            receipts.extend(step_receipts)
+            if result.get("reply"):
+                replies.append(str(result["reply"]))
+            job = result.get("automation_job") if isinstance(result.get("automation_job"), dict) else {}
+            latest_revision = int(job.get("revision") or latest_revision)
+        succeeded = bool(receipts) and all(item.get("status") in {"completed", "no_op"} for item in receipts)
+        return {
+            "ok": True,
+            "dispatch": "automation_action_plan" if succeeded else "automation_action_plan_failed",
+            "reply": "\n".join(replies),
+            "automation_job": {"id": target_job_id, "revision": latest_revision},
+            "action_receipts": receipts,
+            "plan_status": "completed" if succeeded else "failed",
+        }
     if action_type == "automation_create_clarification":
         replies = {
             "time_required": "我知道这是长期定时任务，但还缺每天几点执行。请补一个明确时间，例如“每天 09:00”。",
             "instruction_required": "执行时间已经明确，但还缺每次要做的具体内容。请补充要提醒、查询或生成什么。",
             "unsupported_or_missing_frequency": "我识别到你要创建定时任务，但当前还缺明确的每日频率；请告诉我每天几点执行。",
             "update_scope_required": "我知道你要修改现有定时任务，但还缺明确的修改目标；请说明要改哪类任务和具体改动。",
+            "multi_action_contract_required": "我知道你要先修改再立即执行，但当前连续动作契约尚未启用；本轮没有跳过修改直接触发。",
         }
         return {
             "ok": True,
@@ -341,6 +450,8 @@ def execute_automation_action(
                 _authorise_owner(conn, actor_id)
                 ensure_automation_tables(conn)
                 target_source = str(action.get("target_source") or "latest")
+                target_job_id = _clip(action.get("target_job_id"), 80)
+                expected_revision = int(action.get("expected_revision") or 0)
                 source_filter = ""
                 if target_source == "github":
                     source_filter = """
@@ -350,6 +461,8 @@ def execute_automation_action(
                           OR lower(j.parameters_json) LIKE '%github%'
                       )
                     """
+                target_filter = " AND j.id=?" if target_job_id else ""
+                params = (actor_id, target_job_id) if target_job_id else (actor_id,)
                 row = conn.execute(
                     f"""
                     SELECT j.*,
@@ -364,9 +477,10 @@ def execute_automation_action(
                     FROM automation_jobs j
                     WHERE j.user_id=? AND j.enabled=1
                     {source_filter}
+                    {target_filter}
                     ORDER BY last_completed_at DESC,j.updated_at DESC LIMIT 1
                     """,
-                    (actor_id,),
+                    params,
                 ).fetchone()
                 if row is None:
                     return {
@@ -378,6 +492,21 @@ def execute_automation_action(
                         ],
                     }
                 job = dict(row)
+                if expected_revision and int(job.get("revision") or 0) != expected_revision:
+                    return {
+                        "ok": True,
+                        "dispatch": "automation_run_now_conflict",
+                        "reply": "这条定时任务在修改后又发生了变化，本轮没有按旧版本触发。",
+                        "automation_job": {"id": job["id"], "revision": int(job.get("revision") or 0)},
+                        "action_receipts": [
+                            _receipt(
+                                "automation.schedule.run_now", "blocked", job["id"],
+                                reason="revision_conflict",
+                                expected_revision=expected_revision,
+                                actual_revision=int(job.get("revision") or 0),
+                            ),
+                        ],
+                    }
                 if int(job.get("active_run_count") or 0) > 0 or str(job.get("state") or "") in {
                     "running",
                     "dispatched",
@@ -403,8 +532,12 @@ def execute_automation_action(
                     SET state='scheduled',next_due_at=?,lease_until='',updated_at=?
                     WHERE id=? AND user_id=? AND enabled=1
                       AND state NOT IN ('running','dispatched')
+                      AND (?=0 OR revision=?)
                     """,
-                    (triggered_at, triggered_at, job["id"], actor_id),
+                    (
+                        triggered_at, triggered_at, job["id"], actor_id,
+                        expected_revision, expected_revision,
+                    ),
                 )
                 if updated.rowcount != 1:
                     raise ValueError("automation_run_now_conflict")
@@ -426,6 +559,7 @@ def execute_automation_action(
                     "next_due_at": job["next_due_at"],
                     "timezone": job["timezone"],
                     "enabled": bool(job["enabled"]),
+                    "revision": int(job.get("revision") or 1),
                 },
                 "action_receipts": [
                     _receipt(
@@ -462,73 +596,138 @@ def execute_automation_action(
             with connect() as conn:
                 _authorise_owner(conn, actor_id)
                 ensure_automation_tables(conn)
-                row = conn.execute(
-                    """
-                    SELECT j.*,
-                           COALESCE((
-                               SELECT MAX(r.finished_at) FROM automation_runs r
-                               WHERE r.job_id=j.id AND r.status='completed'
-                           ),'') AS last_completed_at
-                    FROM automation_jobs j
-                    WHERE j.user_id=? AND j.enabled=1
+                target_source = str(action.get("target_source") or "latest")
+                target_job_id = _clip(action.get("target_job_id"), 80)
+                expected_revision = int(action.get("expected_revision") or 0)
+                source_filter = ""
+                if target_source == "github":
+                    source_filter = """
                       AND (
                           lower(j.instruction) LIKE '%github%'
                           OR lower(j.instruction) LIKE '%githu%'
                           OR lower(j.parameters_json) LIKE '%github%'
                       )
+                    """
+                row = conn.execute(
+                    f"""
+                    SELECT j.*,
+                           COALESCE((
+                               SELECT MAX(r.finished_at) FROM automation_runs r
+                               WHERE r.job_id=j.id AND r.status='completed'
+                           ),'') AS last_completed_at,
+                           COALESCE((
+                               SELECT COUNT(*) FROM automation_runs r
+                               WHERE r.job_id=j.id AND r.status IN ('running','dispatched')
+                           ),0) AS active_run_count
+                    FROM automation_jobs j
+                    WHERE j.user_id=? AND j.enabled=1
+                    {source_filter}
+                    {" AND j.id=?" if target_job_id else ""}
                     ORDER BY last_completed_at DESC,j.updated_at DESC LIMIT 1
                     """,
-                    (actor_id,),
+                    (actor_id, target_job_id) if target_job_id else (actor_id,),
                 ).fetchone()
                 if row is None:
                     return {
                         "ok": True,
                         "dispatch": "automation_update_missing",
-                        "reply": "没有找到可修改的 GitHub 定时任务，本轮没有写入任何变更。",
+                        "reply": "没有找到可修改的已启用定时任务，本轮没有写入任何变更。",
                         "action_receipts": [
                             _receipt("automation.schedule.update", "not_found", reason="target_missing"),
                         ],
                     }
                 job = dict(row)
+                if int(job.get("active_run_count") or 0) > 0:
+                    return {
+                        "ok": True,
+                        "dispatch": "automation_update_busy",
+                        "reply": "这条定时任务正在运行，本轮没有修改它，也不会触发依赖动作。",
+                        "automation_job": {"id": job["id"], "revision": int(job.get("revision") or 0)},
+                        "action_receipts": [
+                            _receipt("automation.schedule.update", "blocked", job["id"], reason="run_already_active"),
+                        ],
+                    }
+                if expected_revision and int(job.get("revision") or 0) != expected_revision:
+                    return {
+                        "ok": True,
+                        "dispatch": "automation_update_conflict",
+                        "reply": "这条定时任务已经被其他变更更新，本轮没有覆盖新版本。",
+                        "automation_job": {"id": job["id"], "revision": int(job.get("revision") or 0)},
+                        "action_receipts": [
+                            _receipt(
+                                "automation.schedule.update", "blocked", job["id"],
+                                reason="revision_conflict",
+                                expected_revision=expected_revision,
+                                actual_revision=int(job.get("revision") or 0),
+                            ),
+                        ],
+                    }
                 try:
                     parameters = json.loads(str(job.get("parameters_json") or "{}"))
                 except json.JSONDecodeError:
                     parameters = {}
                 parameters = parameters if isinstance(parameters, dict) else {}
                 changes = action.get("changes") if isinstance(action.get("changes"), dict) else {}
-                parameters.update(changes)
+                legacy_parameters = changes.get("legacy_parameters") if isinstance(changes.get("legacy_parameters"), dict) else {}
+                for key in ("output_language", "delivery_format"):
+                    if key in changes:
+                        legacy_parameters[key] = changes[key]
+                parameters.update(legacy_parameters)
+                output_contract = normalize_output_contract(
+                    changes.get("output_contract") or job.get("output_contract_json"),
+                )
+                contract_json = json.dumps(
+                    output_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                )
+                contract_hash = output_contract_hash(output_contract)
                 instruction = str(job.get("instruction") or "").strip()
                 language_rule = "输出要求：除项目名、技术术语和链接外，所有说明使用简体中文。"
-                if changes.get("output_language") == "zh-CN" and language_rule not in instruction:
+                if legacy_parameters.get("output_language") == "zh-CN" and language_rule not in instruction:
                     instruction = f"{instruction}；{language_rule}".strip("；")
+                format_rule = (
+                    "输出格式要求：使用适合 QQ 阅读的中文聊天式摘要；先给结论，再按条目说明"
+                    "关键信息；不要输出数据库字段、内部 ID 或技术表格；链接紧跟对应条目。"
+                )
+                if legacy_parameters.get("delivery_format") == "conversation" and format_rule not in instruction:
+                    instruction = f"{instruction}；{format_rule}".strip("；")
                 updated_at = datetime.now(timezone.utc).isoformat()
-                conn.execute(
+                updated = conn.execute(
                     """UPDATE automation_jobs
-                       SET instruction=?,parameters_json=?,updated_at=?
-                       WHERE id=?""",
+                       SET instruction=?,parameters_json=?,revision=revision+1,
+                           output_contract_json=?,output_contract_hash=?,updated_at=?
+                       WHERE id=? AND (?=0 OR revision=?)""",
                     (
                         instruction,
                         json.dumps(parameters, ensure_ascii=False, sort_keys=True),
-                        updated_at,
+                        contract_json, contract_hash, updated_at,
                         job["id"],
+                        expected_revision, expected_revision,
                     ),
                 )
+                if updated.rowcount != 1:
+                    raise ValueError("automation_update_conflict")
                 conn.commit()
                 job.update(
                     {
                         "instruction": instruction,
                         "parameters_json": json.dumps(parameters, ensure_ascii=False, sort_keys=True),
                         "updated_at": updated_at,
+                        "revision": int(job.get("revision") or 1) + 1,
+                        "output_contract_json": contract_json,
+                        "output_contract_hash": contract_hash,
                     },
                 )
             due = _local_due(job.get("next_due_at"), str(job.get("timezone") or DEFAULT_TIMEZONE))
+            change_facts = []
+            if legacy_parameters.get("output_language") == "zh-CN":
+                change_facts.append("说明统一使用简体中文")
+            if legacy_parameters.get("delivery_format") == "conversation":
+                change_facts.append("结果改为适合 QQ 阅读的聊天式摘要")
+            change_summary = "；".join(change_facts) or "已应用请求中的格式变更"
             return {
                 "ok": True,
                 "dispatch": "automation_update",
-                "reply": (
-                    "已修改最近一次执行的 GitHub 定时任务：后续结果除项目名、技术术语和链接外，"
-                    f"统一使用简体中文。下一次运行：{due}。"
-                ),
+                "reply": f"已修改最近一次匹配的定时任务：{change_summary}。下一次运行：{due}。",
                 "automation_job": {
                     "id": job["id"],
                     "time_of_day": job["time_of_day"],
@@ -536,14 +735,18 @@ def execute_automation_action(
                     "enabled": bool(job["enabled"]),
                     "state": job["state"],
                     "next_due_at": job["next_due_at"],
-                    "output_language": "zh-CN",
+                    "output_language": parameters.get("output_language", ""),
+                    "delivery_format": parameters.get("delivery_format", ""),
+                    "revision": int(job.get("revision") or 1),
+                    "output_contract_hash": contract_hash,
                 },
                 "action_receipts": [
                     _receipt(
                         "automation.schedule.update",
                         "completed",
                         job["id"],
-                        output_language="zh-CN",
+                        output_language=parameters.get("output_language", ""),
+                        delivery_format=parameters.get("delivery_format", ""),
                         next_due_at=job["next_due_at"],
                         trace_id=_clip(trace_id, 80),
                     ),
@@ -665,8 +868,38 @@ def build_automation_mode_decision(action: dict) -> dict:
         "automation_run_now": "automation.schedule.run_now",
     }.get(action_type, "respond")
     definition = action_definition(status_action)
+    planned_actions = []
+    if action_type == "automation_action_plan":
+        for index, step in enumerate(action.get("actions") or [], start=1):
+            if not isinstance(step, dict):
+                continue
+            step_type = str(step.get("type") or "respond")
+            step_definition = action_definition(step_type)
+            planned_actions.append(
+                {
+                    "id": str(step.get("id") or f"action-{index}"),
+                    "type": step_type,
+                    "intent_id": "intent-1",
+                    "objective": "按顺序完成已绑定自动化对象的控制动作",
+                    "requires_tools": step_definition.requires_tools,
+                    "risk_level": step_definition.risk_level,
+                    "depends_on": list(step.get("depends_on") or []),
+                },
+            )
+    if not planned_actions:
+        planned_actions = [
+            {
+                "id": "action-1",
+                "type": status_action,
+                "intent_id": "intent-1",
+                "objective": "返回自动化动作的事实、状态与结构化回执",
+                "requires_tools": definition.requires_tools,
+                "risk_level": definition.risk_level,
+                "depends_on": [],
+            },
+        ]
     plan = {
-        "schema_version": 1,
+        "schema_version": 2,
         "summary_mode": "work",
         "primary_intent": "automation",
         "confidence": 1.0,
@@ -682,16 +915,7 @@ def build_automation_mode_decision(action: dict) -> dict:
             },
         ],
         "reply_parts": [],
-        "actions": [
-            {
-                "id": "action-1",
-                "type": status_action,
-                "intent_id": "intent-1",
-                "objective": "返回自动化动作的事实、状态与结构化回执",
-                "requires_tools": definition.requires_tools,
-                "risk_level": definition.risk_level,
-            },
-        ],
+        "actions": planned_actions,
         "approval_requests": [],
         "memory_candidates": [],
     }
@@ -705,7 +929,7 @@ def build_automation_mode_decision(action: dict) -> dict:
         "allow_emoji": False,
         "need_tools": action_type in {
             "automation_create", "automation_update", "automation_disable", "automation_run_now",
-        },
+        } or any(bool(item.get("requires_tools")) for item in planned_actions),
         "execution_lane": status_action,
         "response_style": "structured",
         "emotion": "neutral",
@@ -727,7 +951,86 @@ def dispatch_automation_action(
     source: str,
     current_group_id: str = "",
     preflight: Callable[[dict], dict] | None = None,
+    inbound_context: dict | None = None,
+    resolve_target: Callable[[str, dict], dict] | None = None,
 ) -> dict | None:
+    durable = None
+    if not current_group_id and resolve_target is not None:
+        durable = plan_automation_conversation(
+            connect,
+            actor_id=actor_id,
+            message=message,
+            inbound_context=inbound_context,
+            resolve_target=resolve_target,
+        )
+    if durable is not None:
+        plan = dict(durable.get("plan") or {})
+        record = dict(durable.get("record") or {})
+        target_job_id = str(record.get("target_job_id") or "")
+        if plan.get("status") == "waiting_clarification":
+            result = {
+                "ok": True,
+                "dispatch": "automation_clarification",
+                "reply": clarification_reply(plan, target_resolved=bool(target_job_id)),
+                "action_receipts": [
+                    _receipt(
+                        "request_clarification", "pending", target_job_id,
+                        reason=str(plan.get("clarification_key") or "clarification_required"),
+                        action_plan_id=str(record.get("id") or ""),
+                    ),
+                ],
+            }
+        else:
+            action = {
+                "action_type": "automation_action_plan",
+                "target_job_id": target_job_id,
+                "target_revision": int(record.get("target_revision") or 0),
+                "actions": list(plan.get("actions") or []),
+            }
+            result = execute_automation_action(
+                connect,
+                actor_id=actor_id,
+                action=action,
+                trace_id=trace_id,
+                preflight=preflight,
+            )
+            with connect() as conn:
+                finish_action_plan(
+                    conn,
+                    str(record.get("id") or ""),
+                    status=str(result.get("plan_status") or "failed"),
+                    receipts=[dict(item) for item in result.get("action_receipts") or [] if isinstance(item, dict)],
+                )
+                conn.commit()
+        mode_action = {
+            "action_type": "automation_action_plan",
+            "actions": list(plan.get("actions") or []),
+        }
+        mode_decision = build_automation_mode_decision(mode_action)
+        plan_record = store.persist(actor_id, mode_decision, source=source)
+        store.record_exchange(
+            actor_id,
+            message,
+            str(result.get("reply") or ""),
+            mode_decision,
+            source=source,
+            inbound_context=inbound_context,
+            exchange_metadata={
+                "automation_action_plan_id": str(record.get("id") or ""),
+                "automation_job_id": target_job_id,
+            },
+        )
+        result.update(
+            {
+                "mode": "work",
+                "intent": "automation",
+                "mode_decision": mode_decision,
+                "interaction_plan": mode_decision["interaction_plan"],
+                "interaction_plan_record": plan_record,
+                "automation_action_plan_id": str(record.get("id") or ""),
+            },
+        )
+        return result
     action = parse_automation_action(message, history, current_group_id=current_group_id)
     if action is None:
         return None
@@ -746,6 +1049,7 @@ def dispatch_automation_action(
         str(result.get("reply") or ""),
         mode_decision,
         source=source,
+        inbound_context=inbound_context,
     )
     result.update(
         {

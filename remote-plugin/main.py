@@ -17,6 +17,7 @@ from .delivery_worker import deliver_claimed_record
 from .participation_feedback import group_event_requires_failure_notice
 from .participation_metadata import (
     event_addresses_assistant,
+    event_external_message_id,
     event_is_structural_group,
     event_participation_metadata,
     event_visual_media_payloads,
@@ -607,10 +608,7 @@ async def _event_access_allowed(event: AstrMessageEvent, action: str) -> bool:
         return False
     return await event_access_allowed(event, action, call_bridge=_call_bridge,
         group_id_of=_group_id, sender_id_of=_sender_id,
-        message_id_of=lambda item: (
-            f"{item.get_platform_id()}:{getattr(item.message_obj, 'message_id', '')}"
-            if getattr(item.message_obj, "message_id", "") else ""
-        ),
+        message_id_of=event_external_message_id,
         logger=logger)
 
 

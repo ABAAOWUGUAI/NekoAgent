@@ -204,6 +204,11 @@ def record_conversation(
     *,
     source: str = "",
     project_id: str | None = None,
+    external_message_id: str = "",
+    reply_to_external_message_id: str = "",
+    directed_to_assistant: bool = False,
+    message_kind: str = "text",
+    metadata: Mapping[str, object] | None = None,
 ) -> str | None:
     content = str(content or "").strip()
     if not content:
@@ -221,12 +226,19 @@ def record_conversation(
     conn.execute(
         """
         INSERT INTO conversation_messages(
-            id,thread_id,role,content,source_type,legacy_conversation_id,created_at
-        ) VALUES(?,?,?,?,?,?,?)
+            id,thread_id,role,content,source_type,legacy_conversation_id,created_at,
+            external_message_id,reply_to_external_message_id,directed_to_assistant,
+            message_kind,metadata_json
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             message_id, thread["id"], str(role or ""), content[-6000:],
             thread["channel_type"], int(cursor.lastrowid), created_at,
+            str(external_message_id or "")[:300],
+            str(reply_to_external_message_id or "")[:300],
+            1 if directed_to_assistant else 0,
+            str(message_kind or "text")[:40],
+            json.dumps(dict(metadata or {}), ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:4000],
         ),
     )
     conn.execute(

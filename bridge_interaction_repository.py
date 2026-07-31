@@ -83,13 +83,14 @@ def create_interaction_plan(
             schema_version,status,summary_mode,primary_intent,intent_count,
             action_count,plan_json,plan_hash,classifier_source,origin_channel,
             created_at,updated_at
-        ) VALUES(?,?,?,?,NULL,1,'planned',?,?,?,?,?,?,?,?,?,?)
+        ) VALUES(?,?,?,?,NULL,?,'planned',?,?,?,?,?,?,?,?,?,?)
         """,
         (
             plan_id,
             thread["owner_actor_id"],
             thread["assistant_id"],
             thread["id"],
+            int(normalized["schema_version"]),
             normalized["summary_mode"],
             normalized["primary_intent"],
             len(normalized["intents"]),

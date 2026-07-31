@@ -29,6 +29,12 @@ server address, user-specific Assistant instance or private PetPack is bundled.
 This project ships no default character identity. After bootstrap, create your
 own Assistant in the console or explicitly apply an optional Starter Pack.
 
+Version `0.1.0` adds object-bound Automation conversations: a referenced,
+confirmed Delivery can resolve one Automation, clarification preserves the
+pending plan, dependent updates run in order, and evidence is presented through
+a versioned output contract. Configuration conflicts and ambiguous references
+fail closed instead of silently running a different or stale job.
+
 ## Product chain
 
 ```text

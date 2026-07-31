@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from bridge_delivery_continuity import logical_response_id
 
 
@@ -170,7 +172,19 @@ def bind_qq_response_decision(outbox, result: dict, observation: dict | None) ->
     )
 
 
+def load_qq_delivery_sessions(connect) -> dict[str, str]:
+    """Read only the delivery routing projection, never conversation content."""
+
+    try:
+        with connect() as conn:
+            rows = conn.execute("SELECT user_id, session FROM qq_sessions").fetchall()
+        return {str(row[0]): str(row[1] or "") for row in rows}
+    except sqlite3.Error:
+        return {}
+
+
 __all__ = [
     "bind_qq_response_decision", "dispatch_qq_response", "enqueue_qq_response",
+    "load_qq_delivery_sessions",
     "reserve_qq_response",
 ]

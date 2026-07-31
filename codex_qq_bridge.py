@@ -251,7 +251,7 @@ from bridge_proactive_decision_contract import (
     sanitize_proactive_decision as _sanitize_proactive_decision,
 )
 from bridge_outbound_policy import DeliveryPolicyBlockedError, begin_delivery_with_policy, filter_claimed_deliveries, social_proactive_globally_enabled
-from bridge_qq_delivery import bind_qq_response_decision, dispatch_qq_response
+from bridge_qq_delivery import bind_qq_response_decision, dispatch_qq_response, load_qq_delivery_sessions
 from bridge_group_participation_worker import process_group_participation_queue
 from bridge_proactive_runtime import process_proactive_policies
 from bridge_task_delivery import enqueue_task_result
@@ -277,6 +277,11 @@ from bridge_automation import (
     upsert_proactive_policy,
 )
 from bridge_automation_actions import dispatch_automation_action
+from bridge_automation_reference_runtime import (
+    github_purpose_summaries,
+    prepare_github_delivery_payload,
+    resolve_automation_target,
+)
 from bridge_automation_execution import (
     automation_thread_ref as _automation_thread_ref,
     build_skill_execution_contract as _build_skill_execution_contract,
@@ -286,6 +291,7 @@ from bridge_automation_execution import (
 )
 from bridge_reliability_runtime import drain_action_outbox
 from bridge_automation_reliability import reconcile_automation_tasks
+from bridge_automation_worker import run_automation_worker
 from bridge_inbound_idempotency import (
     InboundConflictError, InboundProcessingError, execute_once as execute_inbound_once,
 )
@@ -877,12 +883,7 @@ def _sync_phase2_task(task: dict) -> dict:
     task["run_id"] = projection.get("run_id") or ""
     return result
 def _qq_delivery_sessions() -> dict[str, str]:
-    try:
-        with _assistant_db_connect() as conn:
-            rows = conn.execute("SELECT user_id, session FROM qq_sessions").fetchall()
-        return {str(row["user_id"]): str(row["session"] or "") for row in rows}
-    except sqlite3.Error:
-        return {}
+    return load_qq_delivery_sessions(_assistant_db_connect)
 def _enqueue_phase2_delivery(task: dict, projection: dict | None = None) -> dict | None:
     return enqueue_task_result(
         _phase2_outbox(), task, projection,
@@ -4257,6 +4258,22 @@ def _automation_execution_preflight(action: dict) -> dict:
     return _automation_preflight(_resolve_executor_snapshot, executor_workspace_root, _validate_executor_sandbox_and_cwd)
 
 
+def _automation_github_purpose_summaries(job: dict, items: list[dict]) -> dict[str, str]:
+    settings = _assistant_settings(include_secrets=True)
+    model_settings = _settings_for_model_role("conversation_reply", settings)
+    return github_purpose_summaries(
+        job, items, settings=settings, model_settings=model_settings,
+        call_openai_retry=call_openai_with_empty_retry, call_openai=_call_openai_compatible_chat,
+        run_codex=_run_codex_assistant_chat, record_model=_record_model_call, default_cwd=_default_cwd(),
+    )
+
+
+def _resolve_automation_conversation_target(actor_id: str, inbound_context: dict) -> dict:
+    return resolve_automation_target(
+        actor_id, inbound_context, outbox=_phase2_outbox(), assistant_connect=_assistant_db_connect,
+    )
+
+
 def _notify_automation_failure(job: dict, error: object) -> None:
     _notify_automation_failure_impl(_phase2_outbox().enqueue, job, error)
 
@@ -4321,36 +4338,14 @@ def _run_automation_job(job: dict) -> dict:
         ).execute_capability("github.trending.read", github_arguments)
         if light_result.get("status") != "completed" or light_result.get("fallback"):
             raise RuntimeError("github_trending_authoritative_source_unavailable")
-        content = _format_light_result(light_result)
-        evidence = light_result.get("evidence") if isinstance(light_result.get("evidence"), list) else []
-        if not content or not evidence:
-            raise RuntimeError("automation_evidence_missing")
         output = light_result.get("output") if isinstance(light_result.get("output"), dict) else {}
         items = output.get("items") if isinstance(output.get("items"), list) else []
-        item_keys = [
-            str(item.get("repo") or item.get("name") or "").strip()
-            for item in items
-            if isinstance(item, dict)
-        ]
-        if len([key for key in item_keys if key]) < int(github_arguments.get("limit") or 10):
-            raise RuntimeError("github_trending_insufficient_unique_results")
-        with _assistant_db_connect() as conn:
-            reserve_automation_items(
-                conn,
-                job_id=str(job.get("id") or ""),
-                run_id=str(job.get("run_id") or ""),
-                item_keys=item_keys,
-            )
-        payload = {
-            "kind": "automation_result",
-            "automation_job_id": job["id"],
-            "automation_run_id": job["run_id"],
-            "user_id": job["user_id"],
-            "capability_id": "github.trending.read",
-            "skill_ids": list(execution_contract.skill_ids),
-            "evidence": evidence,
-            "content": content,
-        }
+        summaries = _automation_github_purpose_summaries(job, items)
+        payload = prepare_github_delivery_payload(
+            job, light_result, github_arguments, summaries,
+            assistant_connect=_assistant_db_connect, reserve_items=reserve_automation_items,
+        )
+        payload["skill_ids"] = list(execution_contract.skill_ids)
         delivery = _phase2_outbox().enqueue(
             dedupe_key=f"qq:automation:{job['id']}:{job['scheduled_for']}",
             channel="qq",
@@ -4436,27 +4431,10 @@ def _process_proactive_policies() -> None:
 
 def _process_group_participation_queue() -> None:
     process_group_participation_queue(globals())
+
+
 def _automation_worker() -> None:
-    while True:
-        WORKER_HEALTH.begin("automation")
-        try:
-            drain_action_outbox(_assistant_db_connect, _phase2_outbox(), limit=10)
-            with _assistant_db_connect() as conn:
-                expire_stale_memories(conn)
-            _process_group_participation_queue()
-            _process_automation_jobs()
-            reconcile_automation_tasks(_assistant_db_connect, _db_connect, limit=50)
-            _process_proactive_policies()
-            with _assistant_db_connect() as conn:
-                wait_seconds = seconds_until_next_event(conn, maximum=60.0)
-            WORKER_HEALTH.success("automation")
-        except Exception as exc:
-            WORKER_HEALTH.failure("automation", exc)
-            failures = WORKER_HEALTH.snapshot()["automation"]["consecutive_failures"]
-            print(type(exc).__name__,flush=True)
-            wait_seconds = min(300.0, 15.0 * (2 ** min(int(failures) - 1, 4)))
-        AUTOMATION_EVENT.wait(timeout=wait_seconds)
-        AUTOMATION_EVENT.clear()
+    run_automation_worker(globals())
 
 
 def _automation_overview() -> dict:
@@ -5143,6 +5121,8 @@ def _assistant_dispatch_impl(
         _assistant_db_connect, INTERACTION_STORE, user_id, message, history, trace_id, source,
         str((inbound_context or {}).get("group_id") or ""),
         preflight=_automation_execution_preflight,
+        inbound_context=inbound_context,
+        resolve_target=_resolve_automation_conversation_target,
     )
     if auto is not None:
         AUTOMATION_EVENT.set()

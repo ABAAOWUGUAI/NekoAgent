@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+
+from bridge_automation_contracts import DEFAULT_OUTPUT_CONTRACT, normalize_output_contract, output_contract_hash
 
 
 def ensure_automation_tables(conn: sqlite3.Connection) -> None:
@@ -23,6 +26,7 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
         "automation_jobs",
         "automation_runs",
         "automation_item_history",
+        "automation_action_plans",
         "proactive_policies",
         "proactive_events",
     }.issubset(tables):
@@ -60,8 +64,8 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
                 "topic_cooldown_minutes",
             }.issubset(policy_columns)
             and "intent" in event_columns
-            and {"lease_owner", "lease_until", "attempt_count", "terminal_source"}.issubset(run_columns)
-            and "parameters_json" in job_columns
+            and {"lease_owner", "lease_until", "attempt_count", "terminal_source", "job_revision", "config_hash", "output_contract_hash"}.issubset(run_columns)
+            and {"parameters_json", "revision", "output_contract_json", "output_contract_hash"}.issubset(job_columns)
             and required_indexes.issubset(indexes)
         ):
             return
@@ -74,6 +78,9 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             action_type TEXT NOT NULL,
             instruction TEXT NOT NULL,
             parameters_json TEXT NOT NULL DEFAULT '{}',
+            revision INTEGER NOT NULL DEFAULT 1,
+            output_contract_json TEXT NOT NULL DEFAULT '{}',
+            output_contract_hash TEXT NOT NULL DEFAULT '',
             schedule_type TEXT NOT NULL,
             run_at TEXT NOT NULL DEFAULT '',
             time_of_day TEXT NOT NULL DEFAULT '09:00',
@@ -110,6 +117,9 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             lease_until TEXT NOT NULL DEFAULT '',
             attempt_count INTEGER NOT NULL DEFAULT 0,
             terminal_source TEXT NOT NULL DEFAULT '',
+            job_revision INTEGER NOT NULL DEFAULT 0,
+            config_hash TEXT NOT NULL DEFAULT '',
+            output_contract_hash TEXT NOT NULL DEFAULT '',
             UNIQUE(job_id, scheduled_for),
             FOREIGN KEY(job_id) REFERENCES automation_jobs(id)
         );
@@ -128,6 +138,27 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_automation_item_history_run
         ON automation_item_history(run_id, state);
+
+        CREATE TABLE IF NOT EXISTS automation_action_plans (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            thread_ref TEXT NOT NULL,
+            source_message_id TEXT NOT NULL DEFAULT '',
+            target_job_id TEXT,
+            target_revision INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            plan_json TEXT NOT NULL,
+            receipts_json TEXT NOT NULL DEFAULT '[]',
+            clarification_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(target_job_id) REFERENCES automation_jobs(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_automation_action_plans_open
+        ON automation_action_plans(actor_id,thread_ref,status,updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_automation_action_plans_job
+        ON automation_action_plans(target_job_id,updated_at DESC);
 
         CREATE TABLE IF NOT EXISTS proactive_policies (
             user_id TEXT PRIMARY KEY,
@@ -217,6 +248,9 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
         ("lease_until", "TEXT NOT NULL DEFAULT ''"),
         ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
         ("terminal_source", "TEXT NOT NULL DEFAULT ''"),
+        ("job_revision", "INTEGER NOT NULL DEFAULT 0"),
+        ("config_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("output_contract_hash", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in run_columns:
             conn.execute(f"ALTER TABLE automation_runs ADD COLUMN {name} {definition}")
@@ -225,6 +259,23 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE automation_jobs ADD COLUMN parameters_json TEXT NOT NULL DEFAULT '{}'",
         )
+    for name, definition in (
+        ("revision", "INTEGER NOT NULL DEFAULT 1"),
+        ("output_contract_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("output_contract_hash", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if name not in job_columns:
+            conn.execute(f"ALTER TABLE automation_jobs ADD COLUMN {name} {definition}")
+    contract = normalize_output_contract(DEFAULT_OUTPUT_CONTRACT)
+    contract_json = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    conn.execute(
+        """UPDATE automation_jobs
+           SET revision=CASE WHEN revision<1 THEN 1 ELSE revision END,
+               output_contract_json=CASE WHEN output_contract_json='' OR output_contract_json='{}'
+                                         THEN ? ELSE output_contract_json END,
+               output_contract_hash=CASE WHEN output_contract_hash='' THEN ? ELSE output_contract_hash END""",
+        (contract_json, output_contract_hash(contract)),
+    )
 
 
 __all__ = ["ensure_automation_tables"]
