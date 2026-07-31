@@ -1,0 +1,6 @@
+# Default ownership for the public platform source. GitHub only enforces these
+# entries after the repository administrator enables a branch rule that requires
+# Code Owner review.
+* @ABAAOWUGUAI
+/.github/ @ABAAOWUGUAI
+/docs/ @ABAAOWUGUAI

@@ -96,10 +96,18 @@ Read [SECURITY.md](SECURITY.md) before reporting a vulnerability and
 Provider key, QQ credential, Codex login state, runtime SQLite database or
 private conversation into an issue, pull request or repository fork.
 
+Before an Internet-facing deployment, follow the [Deployment Guide](docs/DEPLOYMENT.md)
+and [Operations Guide](docs/OPERATIONS.md). Repository administrators should
+also complete the [Repository Protection Guide](docs/REPOSITORY_PROTECTION.md);
+the presence of a workflow file alone does not protect `main`.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [AstrBot, models and Codex integrations](docs/INTEGRATIONS.md)
+- [Deployment guide](docs/DEPLOYMENT.md)
+- [Operations and recovery guide](docs/OPERATIONS.md)
+- [Repository protection guide](docs/REPOSITORY_PROTECTION.md)
 - [Privacy boundary](PRIVACY.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Changelog](CHANGELOG.md)

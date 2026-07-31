@@ -14,3 +14,9 @@ data, an impact description and a regression test where practical.
 The project is self-hosted. Operators are responsible for protecting their own
 model keys, channel credentials, databases, artifact storage and reverse proxy.
 Never expose the Admin API directly to the public Internet during bootstrap.
+
+Deployment hardening, backup and incident handling are documented in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) and [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+Repository settings such as private vulnerability reporting and branch rules
+are intentionally not enabled by a source checkout; maintainers must complete
+[`docs/REPOSITORY_PROTECTION.md`](docs/REPOSITORY_PROTECTION.md).
