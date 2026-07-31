@@ -1,5 +1,7 @@
 # Operations and recovery guide
 
+> 简体中文说明：[docs/zh-CN/OPERATIONS.md](zh-CN/OPERATIONS.md)
+
 NekoAgent is stateful. Treat Assistant identity, relationship, conversation,
 memory, goals, runs, Delivery and Learning as deployment-owned data, not as
 replaceable model or channel cache.

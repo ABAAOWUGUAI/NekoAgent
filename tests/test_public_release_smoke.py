@@ -23,9 +23,16 @@ def test_bridge_imports_without_runtime_bootstrap() -> None:
 
 def test_deployment_and_protection_documents_are_present() -> None:
     expected_documents = (
+        "README.zh-CN.md",
+        "SECURITY.zh-CN.md",
         "docs/DEPLOYMENT.md",
         "docs/OPERATIONS.md",
         "docs/REPOSITORY_PROTECTION.md",
+        "docs/zh-CN/ARCHITECTURE.md",
+        "docs/zh-CN/INTEGRATIONS.md",
+        "docs/zh-CN/DEPLOYMENT.md",
+        "docs/zh-CN/OPERATIONS.md",
+        "docs/zh-CN/REPOSITORY_PROTECTION.md",
         ".github/CODEOWNERS",
     )
 

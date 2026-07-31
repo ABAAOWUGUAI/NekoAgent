@@ -1,5 +1,7 @@
 # Deployment guide
 
+> 简体中文说明：[docs/zh-CN/DEPLOYMENT.md](zh-CN/DEPLOYMENT.md)
+
 This guide deploys a fresh NekoAgent instance. It does not migrate an existing
 private installation, copy an Assistant, reuse a model key, or turn on a QQ
 channel. Start with the loopback-only configuration and enable integrations one

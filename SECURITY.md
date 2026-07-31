@@ -1,5 +1,7 @@
 # Security policy
 
+> 简体中文说明：[SECURITY.zh-CN.md](SECURITY.zh-CN.md)
+
 Do not report vulnerabilities, credentials, private chat content, media,
 database files or server details in a public issue. Use this repository's
 GitHub private vulnerability reporting feature after the maintainer enables it

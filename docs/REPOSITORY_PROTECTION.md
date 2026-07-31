@@ -1,5 +1,7 @@
 # Repository protection guide
 
+> 简体中文说明：[docs/zh-CN/REPOSITORY_PROTECTION.md](zh-CN/REPOSITORY_PROTECTION.md)
+
 This guide turns the repository's security expectations into GitHub settings
 that a repository administrator can verify. Committing this file, a workflow,
 or `.github/CODEOWNERS` **does not** enable those GitHub settings by itself.

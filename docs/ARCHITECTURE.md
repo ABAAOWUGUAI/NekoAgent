@@ -1,5 +1,7 @@
 # Architecture
 
+> 简体中文说明：[docs/zh-CN/ARCHITECTURE.md](zh-CN/ARCHITECTURE.md)
+
 The platform is a modular Python and SQLite application, not an AstrBot fork
 and not a Codex wrapper.
 

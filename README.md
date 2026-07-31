@@ -1,5 +1,11 @@
 # NekoAgent
 
+> **简体中文：**完整中文说明请看 [README.zh-CN.md](README.zh-CN.md)。部署、运行与仓库保护也有对应的中文文档。
+
+## 中文简介
+
+NekoAgent 是一个 Owner 优先、可自托管的私人 AI 助手平台。Assistant 的身份、关系、对话、记忆、目标、运行、交付和学习状态不绑定某一个模型或渠道；AstrBot 和 Codex 都是可选集成，不是产品本体。首次部署请从[中文部署指南](docs/zh-CN/DEPLOYMENT.md)开始，日常维护看[中文运行指南](docs/zh-CN/OPERATIONS.md)，仓库治理看[中文保护指南](docs/zh-CN/REPOSITORY_PROTECTION.md)。
+
 NekoAgent is an Owner-first, self-hosted personal AI assistant platform. It keeps Assistant
 identity, relationship, conversation, memory, goals, runs, delivery and
 learning state independent from any single model or channel.
@@ -103,6 +109,12 @@ the presence of a workflow file alone does not protect `main`.
 
 ## Documentation
 
+- [中文说明](README.zh-CN.md)
+- [中文架构说明](docs/zh-CN/ARCHITECTURE.md)
+- [中文集成说明](docs/zh-CN/INTEGRATIONS.md)
+- [中文部署指南](docs/zh-CN/DEPLOYMENT.md)
+- [中文运行与恢复指南](docs/zh-CN/OPERATIONS.md)
+- [中文仓库保护指南](docs/zh-CN/REPOSITORY_PROTECTION.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [AstrBot, models and Codex integrations](docs/INTEGRATIONS.md)
 - [Deployment guide](docs/DEPLOYMENT.md)

@@ -1,5 +1,7 @@
 # Integration guide
 
+> 简体中文说明：[docs/zh-CN/INTEGRATIONS.md](zh-CN/INTEGRATIONS.md)
+
 ## OpenAI-compatible model connection
 
 Create a Connection Instance with your own endpoint and credential in the
