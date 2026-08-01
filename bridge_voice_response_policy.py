@@ -40,6 +40,49 @@ def negative_voice_request(text: object) -> bool:
     return bool(_NEGATIVE_PATTERN.search(" ".join(str(text or "").split())))
 
 
+def voice_response_prompt_context(
+    conn: sqlite3.Connection,
+    message: object,
+    *,
+    scope: str,
+    owner_authorized: bool,
+) -> dict:
+    """Project configured server capability into a prompt-safe fact object."""
+
+    if scope != "private" or not owner_authorized or negative_voice_request(message):
+        return {"available": False, "requested": False, "policy_may_select": False}
+    row = conn.execute(
+        f"""
+        SELECT p.mode,v.id,v.status,
+               COALESCE(MAX(CASE WHEN f.name='voice_output_v1' THEN f.enabled END),0),
+               COALESCE(MAX(CASE WHEN f.name='voice_delivery_v1' THEN f.enabled END),0)
+        FROM assistant_instances a
+        JOIN {VOICE_RESPONSE_POLICY_TABLE} p ON p.assistant_id=a.id
+        LEFT JOIN voice_packs v ON v.id=a.active_voice_pack_id
+        LEFT JOIN assistant_feature_flags f
+          ON f.name IN ('voice_output_v1','voice_delivery_v1')
+        WHERE a.status='active'
+        GROUP BY p.mode,v.id,v.status
+        LIMIT 1
+        """,
+    ).fetchone()
+    mode = str(row[0] or "text_only") if row else "text_only"
+    available = bool(
+        row
+        and row[1]
+        and str(row[2]) == "active"
+        and bool(row[3])
+        and bool(row[4])
+        and mode != "text_only"
+    )
+    return {
+        "available": available,
+        "requested": bool(available and explicit_voice_request(message)),
+        "policy_may_select": bool(available and mode in {"emotion_auto", "always"}),
+        "policy_mode": mode,
+    }
+
+
 def _parse_emotions(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         try:
@@ -284,4 +327,5 @@ __all__ = [
     "negative_voice_request",
     "release_voice_response_reservation",
     "update_active_voice_response_policy",
+    "voice_response_prompt_context",
 ]

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 
 class VoiceTtsError(RuntimeError):
@@ -25,6 +25,7 @@ class PiperSynthesizer:
         timeout_seconds: int = 30,
         temp_dir: str | None = None,
         max_attempts: int = 2,
+        synthesis: Mapping[str, object] | None = None,
     ) -> None:
         if not command_prefix:
             raise ValueError("piper_command_required")
@@ -34,11 +35,22 @@ class PiperSynthesizer:
         self.timeout_seconds = max(5, min(int(timeout_seconds), 120))
         self.temp_dir = temp_dir
         self.max_attempts = max(1, min(int(max_attempts), 2))
+        self.synthesis = dict(synthesis or {})
 
     def build_command(self, output_path: Path, text: str) -> list[str]:
         command = [*self.command_prefix, "-m", self.model, "-f", str(output_path)]
         if self.data_dir:
             command.extend(["--data-dir", self.data_dir])
+        option_names = {
+            "length_scale": "--length-scale",
+            "noise_scale": "--noise-scale",
+            "noise_w_scale": "--noise-w-scale",
+            "sentence_silence": "--sentence-silence",
+            "volume": "--volume",
+        }
+        for key, option in option_names.items():
+            if key in self.synthesis:
+                command.extend([option, str(self.synthesis[key])])
         command.extend(["--", text])
         return command
 

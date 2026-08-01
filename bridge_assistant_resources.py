@@ -20,6 +20,7 @@ from bridge_assistant_identity import (
 from bridge_assistant_identity_schema import DEFAULT_OWNER_ACTOR_ID
 from bridge_migrations import utc_now
 from bridge_network_policy_schema import ensure_network_policy_for_assistant
+from bridge_voice_pack_tuning import normalize_piper_synthesis, piper_tuning_presets
 
 
 def create_assistant(
@@ -304,6 +305,88 @@ def archive_voice_pack(conn: sqlite3.Connection, pack_id: str) -> dict:
     )
 
 
+def active_voice_pack_tuning(conn: sqlite3.Connection) -> dict:
+    row = conn.execute(
+        """
+        SELECT a.id,v.id,v.name,v.status,v.config_json,v.updated_at
+        FROM assistant_instances a
+        LEFT JOIN voice_packs v ON v.id=a.active_voice_pack_id
+        WHERE a.status='active' ORDER BY a.updated_at DESC,a.id LIMIT 1
+        """,
+    ).fetchone()
+    if not row or not row[1] or str(row[3]) != "active":
+        raise ValueError("voice_pack_not_bound")
+    try:
+        config = json.loads(str(row[4] or "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("voice_pack_config_invalid") from exc
+    if not isinstance(config, dict) or str(config.get("engine") or "") != "piper":
+        raise ValueError("voice_pack_engine_tuning_unsupported")
+    return {
+        "assistant_id": str(row[0]),
+        "voice_pack_id": str(row[1]),
+        "voice_pack_name": str(row[2]),
+        "engine": "piper",
+        "model": str(config.get("model") or ""),
+        "synthesis": normalize_piper_synthesis(config.get("synthesis")),
+        "presets": piper_tuning_presets(),
+        "updated_at": str(row[5]),
+    }
+
+
+def update_active_voice_pack_tuning(
+    conn: sqlite3.Connection,
+    payload: Mapping[str, object],
+) -> dict:
+    current = active_voice_pack_tuning(conn)
+    expected = str(payload.get("expected_updated_at") or "").strip()
+    if not expected:
+        raise ValueError("voice_pack_version_required")
+    if expected != current["updated_at"]:
+        raise ValueError("voice_pack_version_conflict")
+    row = conn.execute(
+        "SELECT config_json FROM voice_packs WHERE id=? AND status='active'",
+        (current["voice_pack_id"],),
+    ).fetchone()
+    if not row:
+        raise ValueError("voice_pack_not_found")
+    try:
+        config = json.loads(str(row[0] or "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("voice_pack_config_invalid") from exc
+    synthesis = normalize_piper_synthesis(payload.get("synthesis"))
+    config["synthesis"] = synthesis
+    now = utc_now()
+    cursor = conn.execute(
+        """
+        UPDATE voice_packs SET config_json=?,updated_at=?
+        WHERE id=? AND status='active' AND updated_at=?
+        """,
+        (
+            json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            now,
+            current["voice_pack_id"],
+            expected,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise ValueError("voice_pack_version_conflict")
+    _record_event(
+        conn,
+        current["assistant_id"],
+        "voice_pack_tuning_updated",
+        {
+            "voice_pack_id": current["voice_pack_id"],
+            "engine": "piper",
+            "preset": synthesis["preset"],
+            "emotion_variation": synthesis["emotion_variation"],
+        },
+        actor_type="owner",
+        channel="web",
+    )
+    return active_voice_pack_tuning(conn)
+
+
 def appearance_pack_binding(conn: sqlite3.Connection, pack_id: str) -> list[str]:
     table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='assistant_instances'",
@@ -359,10 +442,12 @@ def replace_or_unbind_appearance(
 
 __all__ = [
     "activate_assistant",
+    "active_voice_pack_tuning",
     "appearance_pack_binding",
     "archive_assistant",
     "archive_voice_pack",
     "create_assistant",
     "create_voice_pack",
     "replace_or_unbind_appearance",
+    "update_active_voice_pack_tuning",
 ]

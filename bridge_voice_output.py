@@ -14,6 +14,7 @@ from pathlib import Path
 
 from bridge_artifact_service import ArtifactService
 from bridge_qq_access_runtime import super_admin_ids
+from bridge_response_modality import reconcile_voice_capability_claims
 from bridge_voice_tts import PiperSynthesizer, VoiceTtsError
 from bridge_voice_output_schema import (
     VOICE_DELIVERY_FEATURE_FLAG,
@@ -24,6 +25,7 @@ from bridge_voice_response_policy import (
     explicit_voice_request,
     release_voice_response_reservation,
 )
+from bridge_voice_pack_tuning import normalize_piper_synthesis, resolve_piper_synthesis
 
 
 MAX_SPOKEN_CHARS = 600
@@ -206,6 +208,7 @@ class VoiceOutputRuntime:
             "model_path": model_path,
             "license": license_name,
             "max_chars": int(config.get("max_chars") or MAX_SPOKEN_CHARS),
+            "synthesis": normalize_piper_synthesis(config.get("synthesis")),
         }
 
     def prepare(self, result: dict, transport: dict, *, scope: str) -> dict | None:
@@ -227,9 +230,17 @@ class VoiceOutputRuntime:
             return None
         try:
             voice = self._active_voice()
-            text = spoken_text(
+            delivery_text, capability_truth_guarded = reconcile_voice_capability_claims(
                 result.get("reply") or result.get("output") or "",
+                prepared=True,
+            )
+            text = spoken_text(
+                delivery_text,
                 limit=voice["max_chars"],
+            )
+            synthesis = resolve_piper_synthesis(
+                voice.get("synthesis"),
+                response_decision["affect"]["kind"],
             )
             synthesizer = PiperSynthesizer(
                 command_prefix=(self.python, "-m", "piper"),
@@ -237,6 +248,7 @@ class VoiceOutputRuntime:
                 data_dir=str(self.model_root),
                 timeout_seconds=self.timeout_seconds,
                 temp_dir=str(self.temp_root),
+                synthesis=synthesis,
             )
             self.temp_root.mkdir(parents=True, exist_ok=True)
             try:
@@ -282,6 +294,12 @@ class VoiceOutputRuntime:
             "sha256": metadata["sha256"],
             "duration_ms": metadata["duration_ms"],
             "voice_pack_id": voice["voice_pack_id"],
+            "delivery_text": delivery_text,
+            "capability_truth_guarded": capability_truth_guarded,
+            "synthesis": {
+                "preset": synthesis["preset"],
+                "emotion_variation": synthesis["emotion_variation"],
+            },
             "response_policy": {
                 "mode": response_decision["policy"]["mode"],
                 "version": response_decision["policy"]["version"],

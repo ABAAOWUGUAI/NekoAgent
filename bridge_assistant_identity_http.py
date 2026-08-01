@@ -15,11 +15,13 @@ from bridge_assistant_identity import (
     update_assistant,
 )
 from bridge_assistant_resources import (
+    active_voice_pack_tuning,
     activate_assistant,
     archive_assistant,
     archive_voice_pack,
     create_assistant,
     create_voice_pack,
+    update_active_voice_pack_tuning,
 )
 from bridge_voice_response_policy import (
     active_voice_response_policy,
@@ -28,7 +30,7 @@ from bridge_voice_response_policy import (
 
 
 def _error_status(message: str) -> int:
-    if message == "assistant_version_required":
+    if message in {"assistant_version_required", "voice_pack_version_required"}:
         return 428
     if "not_found" in message or message == "active_assistant_missing":
         return 404
@@ -68,6 +70,7 @@ class AssistantIdentityHttpApi:
             "/assistant/identity/resources": identity_resources,
             "/assistant/identity/cutover-plan": identity_cutover_plan,
             "/assistant/voice-response-policy": active_voice_response_policy,
+            "/assistant/voice-pack/tuning": active_voice_pack_tuning,
         }
         handler = handlers.get(path)
         if handler is None:
@@ -114,6 +117,9 @@ class AssistantIdentityHttpApi:
                     status = 200
                 elif path == "/assistant/voice-response-policy":
                     result = update_active_voice_response_policy(conn, payload)
+                    status = 200
+                elif path == "/assistant/voice-pack/tuning":
+                    result = update_active_voice_pack_tuning(conn, payload)
                     status = 200
                 else:
                     return False

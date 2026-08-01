@@ -1,0 +1,1833 @@
+{
+  "candidate_only": true,
+  "files": [
+    {
+      "bytes": 239,
+      "path": ".github/CODEOWNERS",
+      "sha256": "3ba5e3b42f22d25ddc267cdb0f70bd82de59de7bd4acb75e11a07a3069b8f7ce"
+    },
+    {
+      "bytes": 1064,
+      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "sha256": "ace21b1dbbf2d64494d42e02f3312910497d3f9d53a5d761eff52e0bda1f5204"
+    },
+    {
+      "bytes": 204,
+      "path": ".github/ISSUE_TEMPLATE/config.yml",
+      "sha256": "b98968ce342e8e7e4a93469fa9f16ca298de6d0e94533e3634e59377dfda29b5"
+    },
+    {
+      "bytes": 663,
+      "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+      "sha256": "1533cd379c55d8258b8384872c5b834d883c1c4762a20d42540228319e4b8a46"
+    },
+    {
+      "bytes": 195,
+      "path": ".github/dependabot.yml",
+      "sha256": "6f409c7eb1720adce645ef906344afa8b333abb1e6f9f5b3de826da4ec314842"
+    },
+    {
+      "bytes": 776,
+      "path": ".github/workflows/verify.yml",
+      "sha256": "15a354c7100dc2d559d06ac4d1514681f9989b11ec30c2c700a9b6e16a750b68"
+    },
+    {
+      "bytes": 398,
+      "path": ".gitignore",
+      "sha256": "d9b2d0744d901ee031b90c961196eeac1516c3c834e374c06d611168a5696d29"
+    },
+    {
+      "bytes": 4979,
+      "path": "CHANGELOG.md",
+      "sha256": "904a0002efc614310ac75acfde571a3dae34f0bb0401809e1d8354cc34e45d79"
+    },
+    {
+      "bytes": 239,
+      "path": "CODE_OF_CONDUCT.md",
+      "sha256": "ff1dfa63bdb5ae498f2db72756fbf4d53f4c582225ef0bfa7b90f18d18ffb2c6"
+    },
+    {
+      "bytes": 550,
+      "path": "CONTRIBUTING.md",
+      "sha256": "bfaf1c082b9b5236e190c42a6d178fe031d5dbbf721d72131b520303df167ad1"
+    },
+    {
+      "bytes": 11341,
+      "path": "LICENSE",
+      "sha256": "edd8d86b5f0163bdebb84e767700ed611476cb8214f3fc4e05f48eda24da251e"
+    },
+    {
+      "bytes": 681,
+      "path": "LICENSE-DECISION.md",
+      "sha256": "64bc75685020790f1e763c68af1488f598a891e80ccfd21863483a4e5f62fada"
+    },
+    {
+      "bytes": 726,
+      "path": "PRIVACY.md",
+      "sha256": "aa7215b33dcedf1c196c8eea5a62d45c79f25bbaa0c7c8fabfe510a4b205cbef"
+    },
+    {
+      "bytes": 8011,
+      "path": "README.md",
+      "sha256": "d0b98880aef77cfdc6d74e5789571bdd2e239dbd27e25143a1c6e3902ce7531f"
+    },
+    {
+      "bytes": 6344,
+      "path": "README.zh-CN.md",
+      "sha256": "cfbf2fb6712c4018691b74909e23c51a9e4a7fa856b24b168ac182631894d815"
+    },
+    {
+      "bytes": 1336,
+      "path": "SECURITY.md",
+      "sha256": "5efd6cdd5bfa891d0e466a65bd6e7422547b4b71400ee19822707d9832a62f23"
+    },
+    {
+      "bytes": 1117,
+      "path": "SECURITY.zh-CN.md",
+      "sha256": "0264aafb80470b2e1b54123d952a3baded186255442517acecc9b1f02348590b"
+    },
+    {
+      "bytes": 968,
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "fefd58c7f7f8854e86ae642e0662314499a0d18b66e4fb166eb9c8ca0fbbc4a9"
+    },
+    {
+      "bytes": 8835,
+      "path": "admin/admin-artifacts.css",
+      "sha256": "777471e4f597c38e2c48149aa97109523158020bad6a18ff0e53f1f4436e78df"
+    },
+    {
+      "bytes": 17689,
+      "path": "admin/admin-components.css",
+      "sha256": "869b99c22b9ce768984dcbab3616e52cfa0d4779653a9a4bb48b2ba8a592afc7"
+    },
+    {
+      "bytes": 20676,
+      "path": "admin/admin-features.css",
+      "sha256": "ad100ecac332f0e83d4c189895289ebfe42208b429179381eace3738a4d194bf"
+    },
+    {
+      "bytes": 8571,
+      "path": "admin/admin-gate8.css",
+      "sha256": "34d3b70a580a214d02b957911342cdac62c0bb6ec9b40224996a1cc36f9ea825"
+    },
+    {
+      "bytes": 6582,
+      "path": "admin/admin-knowledge.css",
+      "sha256": "326cdd5ca081b641f5914a3986c2273dd91659aaf8f5dcd231330e631d15c6c5"
+    },
+    {
+      "bytes": 19272,
+      "path": "admin/admin-layout.css",
+      "sha256": "c29ffa21d25af67fb2ec39ad953bf32969b8c91e890511d72926e4b3bc9406cc"
+    },
+    {
+      "bytes": 10993,
+      "path": "admin/admin-models.css",
+      "sha256": "e97a51b75d4cc31c4f31b164169dc72c85d0ccdc9162578ea885e24f599a213b"
+    },
+    {
+      "bytes": 1391,
+      "path": "admin/admin-motion.css",
+      "sha256": "7bd2b0c9cd5cc928faa4e743de0668267674065bf8a33d6efe59f09aeee3defd"
+    },
+    {
+      "bytes": 7908,
+      "path": "admin/admin-persona.css",
+      "sha256": "1b20ac5b8fd2cee3a0f4f222602bc0c517fb674d6785fa998abcfe64515a56e9"
+    },
+    {
+      "bytes": 1772,
+      "path": "admin/admin-pets.css",
+      "sha256": "566c3e9e16e24332ebadac0d0721adc5b8f14c1533cd1b39c02a11a4b83f09cf"
+    },
+    {
+      "bytes": 2345,
+      "path": "admin/admin-projects.css",
+      "sha256": "62fe55c8fce25a12c3a5ee095dff7eed67889e29d4ac6219185a488bde5c4da3"
+    },
+    {
+      "bytes": 3197,
+      "path": "admin/admin-qq-access.css",
+      "sha256": "d31be9a2ba2d9dff38349db5243d66d0858cb181f6599bea77ccb78bdc5896d9"
+    },
+    {
+      "bytes": 6571,
+      "path": "admin/admin-social-virtual.css",
+      "sha256": "15764081e7f30b878c7f49d6e2f9a517dcbb3eb0f9825f1e6102a0929a1220c3"
+    },
+    {
+      "bytes": 19065,
+      "path": "admin/admin-surfaces.css",
+      "sha256": "9f883abee2ee1021eefc483e78b3ab4a83ed6ff2e2a45873d584225bb687bfdc"
+    },
+    {
+      "bytes": 4028,
+      "path": "admin/admin-tasks.css",
+      "sha256": "a68fda662f9f3295acaf8418ad4aa7eceb5ebe442afc13f2be3403b3953a0e7a"
+    },
+    {
+      "bytes": 1081,
+      "path": "admin/admin-voice.css",
+      "sha256": "2daf3055fe2514596d892f0adcfbc7d34a1af690038992d69c0cbc1fbf2e4595"
+    },
+    {
+      "bytes": 7740,
+      "path": "admin/admin-workbench.css",
+      "sha256": "14810e4210fabab62bcdf567dc6c3794d6d0a44f53069537c9c0dad5e25416d5"
+    },
+    {
+      "bytes": 17156,
+      "path": "admin/admin.css",
+      "sha256": "9b0ffc9e6983dbf541f35f51ce22ec7cd456d309d7d2eadaae55687fd39a608b"
+    },
+    {
+      "bytes": 94,
+      "path": "admin/admin.js",
+      "sha256": "607f17bc8bcc1e8c123b323ce7268e04c128aebdaa1ffe58a340bf4b2320566d"
+    },
+    {
+      "bytes": 118043,
+      "path": "admin/anime.umd.min.js",
+      "sha256": "8d5b3a58a1f64023a04a4cedeef135a2263b18da04b35177ac13438a0bad033b"
+    },
+    {
+      "bytes": 1075,
+      "path": "admin/animejs.LICENSE.md",
+      "sha256": "3f3e835a9952cfc2a6ca836fb95b3257c981f24fa3ef51249055acb09931897b"
+    },
+    {
+      "bytes": 4141,
+      "path": "admin/components/network-policy.js",
+      "sha256": "55e11425e57ddd4db0092f9f88e86dcc5158a6fbcd3cda8c0d8f9706ac85f94a"
+    },
+    {
+      "bytes": 22844,
+      "path": "admin/components/qq-access-editor.js",
+      "sha256": "828f1e0e9f09caa494b3fa9ebbc0c0f7417bc7bdd1b20ff20e15af8015892c52"
+    },
+    {
+      "bytes": 35355,
+      "path": "admin/core.js",
+      "sha256": "e1338b7037075ef9bfc3fab70cd560329d4d511fbbd1512139b441b55091e2bb"
+    },
+    {
+      "bytes": 6511,
+      "path": "admin/index.html",
+      "sha256": "a8d6a135c9f0ef045c4d8f6a8ffb2e748b2d06a85c1e5fbf17b0831882638cd4"
+    },
+    {
+      "bytes": 1827,
+      "path": "admin/model-discovery-validation-state.js",
+      "sha256": "b038217343e7f93b926d47095903b8f0183ee1a94afcd4642372aa43213b808b"
+    },
+    {
+      "bytes": 2373,
+      "path": "admin/model-validation-diagnostics.js",
+      "sha256": "da40c6837d00c04190b8c741fd8cc6bdaa56254da403f1d9d1ad12d1a6147d4d"
+    },
+    {
+      "bytes": 4653,
+      "path": "admin/motion.js",
+      "sha256": "5c28e31dfcbc7a6ad44aae0eda65814ffb56deedd8e80e095efbc19c84c99969"
+    },
+    {
+      "bytes": 9345,
+      "path": "admin/partials/artifacts.html",
+      "sha256": "2cef6916e59bb040d46444a901e71fcdbaf71826b3db39c7e2e455c7c9ee6f73"
+    },
+    {
+      "bytes": 35287,
+      "path": "admin/partials/catalog.html",
+      "sha256": "e2f301ca55750d352bf81e52efae9ed3b4495b6ea64da60819d67ea784ba9cb0"
+    },
+    {
+      "bytes": 10025,
+      "path": "admin/partials/infrastructure.html",
+      "sha256": "e35e6e4bf87da2ad23a31415f5f81689e0f5aa00fe9479dee5aac16e7a35e3c3"
+    },
+    {
+      "bytes": 1686,
+      "path": "admin/partials/learning.html",
+      "sha256": "25b165cab751776c7d8b2d74bf7ac8b5a6ad3a62292ccd45571f3c7e919721ab"
+    },
+    {
+      "bytes": 15730,
+      "path": "admin/partials/operations.html",
+      "sha256": "6bc4bd361bf0a5a3ccddbd379ce3bf312b344f800e8d74c0a80767ed2703366e"
+    },
+    {
+      "bytes": 5592,
+      "path": "admin/partials/overview.html",
+      "sha256": "0bb4bad20ca9f6cf151adf62cf71df5906f801cc77282193cd28254527f18e2d"
+    },
+    {
+      "bytes": 14314,
+      "path": "admin/partials/relationship.html",
+      "sha256": "bc63fdaf41b08afc8a2512248f22f069fd732c8275af7a857f2fdfc5718df6ff"
+    },
+    {
+      "bytes": 11749,
+      "path": "admin/partials/social.html",
+      "sha256": "30319583a583f2fe6b65b0d3fa74b6ceb0f2c594b9d0b7835c19bddee39002b2"
+    },
+    {
+      "bytes": 12359,
+      "path": "admin/partials/workflows.html",
+      "sha256": "b566fa81d88ad139a937319f49cb1c7e922db0c3cb3a0ac93794f1cfaf5167d3"
+    },
+    {
+      "bytes": 39640,
+      "path": "admin/partials/workspace.html",
+      "sha256": "8bea1dea8475dfc364fea59b76906a49d0ca3c018301802743b0e987903d33a6"
+    },
+    {
+      "bytes": 609,
+      "path": "admin/pet-placeholder.svg",
+      "sha256": "75c51bd6432418e3b99aa99e836d7d8aa886ac00905b5de5cd60b4550f1a8019"
+    },
+    {
+      "bytes": 1161,
+      "path": "admin/pet-xiaofei-animated.json",
+      "sha256": "d01b16f19e060e88490a31f216a200fdc7dcfb3cbe5bf319476aa32394491a37"
+    },
+    {
+      "bytes": 5118,
+      "path": "admin/pet-xiaofei.svg",
+      "sha256": "9b41ebb084ba43be22b95f6df1a8a112ed16d814bf744c079618ec2faa61f05d"
+    },
+    {
+      "bytes": 33819,
+      "path": "admin/runtime.js",
+      "sha256": "bcc0f77c2c424ace5f2eee311b590aa910e3ea73ccfee9d4302dd4126ced3daf"
+    },
+    {
+      "bytes": 14077,
+      "path": "admin/ui-shell.js",
+      "sha256": "acd7171b0831631b58334adfabd7c9e1a9b27811708681afe5d0b8508017d28d"
+    },
+    {
+      "bytes": 1682,
+      "path": "admin/view-config.js",
+      "sha256": "f05bad5d9d402d4a13ce71a246e305e30ef27a97975bfe5ee8cea82512c0809e"
+    },
+    {
+      "bytes": 20994,
+      "path": "admin/views-artifacts.js",
+      "sha256": "af23be9e9237674b35290632f6e8e0768181ba42b150e1e4042803dec9535caf"
+    },
+    {
+      "bytes": 7174,
+      "path": "admin/views-automation.js",
+      "sha256": "61424b5343215ef65f58ffb860de2e1611996d297d62d213302b61976fa880ec"
+    },
+    {
+      "bytes": 56249,
+      "path": "admin/views-catalog.js",
+      "sha256": "c58d8932674799d95592a84aec4f183e25b82b8cde336076943cbd91ed7167d3"
+    },
+    {
+      "bytes": 28576,
+      "path": "admin/views-gate8.js",
+      "sha256": "0a3baf1e63ddb2957fc330e8d8a2025e3407184052cf518d9f70ff0fe991cc9d"
+    },
+    {
+      "bytes": 27615,
+      "path": "admin/views-infrastructure.js",
+      "sha256": "60f0e47e77e5417eff43982849e718dd6138971d50a1c8b3c251f82f8fe0e2a4"
+    },
+    {
+      "bytes": 20998,
+      "path": "admin/views-knowledge.js",
+      "sha256": "3f295466e386059f0748f928c22eefddea28d0050a5b66abe9d857258ecafd9a"
+    },
+    {
+      "bytes": 9087,
+      "path": "admin/views-learning.js",
+      "sha256": "bc8ab8bb640dc05b79b327dd1889db68b12864392cb5acec2cc4e3bce6fdb3b8"
+    },
+    {
+      "bytes": 4863,
+      "path": "admin/views-model-playground.js",
+      "sha256": "12a5e9416850e43836216094f7683144fbad3d17a5a28bdf2172fff1a54898fc"
+    },
+    {
+      "bytes": 56724,
+      "path": "admin/views-models.js",
+      "sha256": "dcbaef8be431868d0399c68b46989a2b4d1d96c3ada797c00ed8e0cacf81ae95"
+    },
+    {
+      "bytes": 20138,
+      "path": "admin/views-overview.js",
+      "sha256": "c657c5dfcafe4727c0941b2d7b72042515899c71db5abf5f5691f6038ecc2dde"
+    },
+    {
+      "bytes": 32679,
+      "path": "admin/views-persona.js",
+      "sha256": "0d2ac0a7a8f749fc4db8091e82261a01d9a3479696ae5827827bcc975b4a64b9"
+    },
+    {
+      "bytes": 19487,
+      "path": "admin/views-pets.js",
+      "sha256": "943a812b1d8f60ca2c46a3c4b88566406ebc7ee6ebe9e90562218ae18265a227"
+    },
+    {
+      "bytes": 15768,
+      "path": "admin/views-projects.js",
+      "sha256": "7c6905b629b56795ecf4b6e64bbc9ce158aa6499fc019228034b0b903f4dd726"
+    },
+    {
+      "bytes": 28492,
+      "path": "admin/views-social-virtual.js",
+      "sha256": "35f5618c7ec57c8a51edf4c0c15e42151ace5e3e94fc3fa368b267be58ebbc40"
+    },
+    {
+      "bytes": 20232,
+      "path": "admin/views-tasks.js",
+      "sha256": "d3c3d4985032ab1cd4d692c6a37cb3a5ee5461cbc39df7f0bc084f6d7da3401d"
+    },
+    {
+      "bytes": 14830,
+      "path": "admin/views-voice.js",
+      "sha256": "6b494367d1d508649c5c917bcf30b9b890347374f408f44175eba8fa664e59a8"
+    },
+    {
+      "bytes": 3780,
+      "path": "admin/views-workbench.js",
+      "sha256": "7e999d4cba2deb7e9a0d9cfff2ecfb80e60511d76fa9400117fcef1e90e9c928"
+    },
+    {
+      "bytes": 28614,
+      "path": "admin/views-workspace.js",
+      "sha256": "687ad793ee51d2fd1fbd3c5c176459750be1967aae7b8365b320d501d8cca9a9"
+    },
+    {
+      "bytes": 4353,
+      "path": "admin_console.py",
+      "sha256": "0df6d51b5eb5f9db4e0001041134ccc3829e4594cbcb9056a0dcddc631a85bf2"
+    },
+    {
+      "bytes": 15046,
+      "path": "artifact_preview_server.py",
+      "sha256": "7540d399c61020bc0966ae6ed332a549fb831d9b93762ef48f2979164bacd2e3"
+    },
+    {
+      "bytes": 4644,
+      "path": "bridge_action_registry.py",
+      "sha256": "689d0d42ce20748fb394513e26b8f54ef71a3fa1caad019fc42341d7b1404c29"
+    },
+    {
+      "bytes": 3432,
+      "path": "bridge_action_truth.py",
+      "sha256": "3f0cc7518a9cc9155dd919d10cab2f10f38095a25854ffbac241619d46c47c45"
+    },
+    {
+      "bytes": 2301,
+      "path": "bridge_admin_token.py",
+      "sha256": "0df452a7412c8838c429f657904c75449fcfe1d3cb561486c6ff143e79a765d2"
+    },
+    {
+      "bytes": 33072,
+      "path": "bridge_agent_modes.py",
+      "sha256": "b74e4a44a6cf71a428059c34ea605dfbe3f3528fc3f39eed739cc4f7bff3419e"
+    },
+    {
+      "bytes": 11557,
+      "path": "bridge_approval_runtime.py",
+      "sha256": "4125a208307f61c423039d913d0f4713b0b803efc2916ee50086dd0702856bdc"
+    },
+    {
+      "bytes": 8911,
+      "path": "bridge_artifact_broker.py",
+      "sha256": "331878351566e390cc92fe1c95fad547ec1680c0f9aa00cb6d4536cf1d99aac4"
+    },
+    {
+      "bytes": 5929,
+      "path": "bridge_artifact_cutover.py",
+      "sha256": "25787fc0c42b2da8732f8bdae9c54d35f4512b62cb570a831c8dd86ebc28fecf"
+    },
+    {
+      "bytes": 9038,
+      "path": "bridge_artifact_http.py",
+      "sha256": "711ef74754971c82c1179a4dc1b7d9b43a06a50e9322c54ea95bb11420091544"
+    },
+    {
+      "bytes": 5537,
+      "path": "bridge_artifact_lifecycle.py",
+      "sha256": "e91a6002e199428dee1a07e29fc0e57ae4293de06461c787016ee5da5fcb8b04"
+    },
+    {
+      "bytes": 21217,
+      "path": "bridge_artifact_preview_repository.py",
+      "sha256": "4bc219bb4725c51edf92de1b03dd25205544b44671dd5473b903101ee7d9c915"
+    },
+    {
+      "bytes": 17882,
+      "path": "bridge_artifact_repository.py",
+      "sha256": "0d926cde6d4d197f6de45429539074172537a60538552413f1ea7021cdb91c69"
+    },
+    {
+      "bytes": 885,
+      "path": "bridge_artifact_revision_schema.py",
+      "sha256": "c94014daf742622e274a857da980eff73b9937490eb54d9929dba188f20b8c90"
+    },
+    {
+      "bytes": 7029,
+      "path": "bridge_artifact_runtime.py",
+      "sha256": "b71f1d6980e5ddc4076fafe382786fa4f46fbd37a04d25acfd423cb50b559b66"
+    },
+    {
+      "bytes": 14765,
+      "path": "bridge_artifact_schema.py",
+      "sha256": "d3b06661065bc70a27e6792f9c788cc3db25304488ab8e6edbdd9a6f8054ef69"
+    },
+    {
+      "bytes": 33039,
+      "path": "bridge_artifact_service.py",
+      "sha256": "3bcea690199fe3b84f62cc50d071c95fc6742c2bf04f545c88ff79d34c7fceea"
+    },
+    {
+      "bytes": 2131,
+      "path": "bridge_assistant_audit.py",
+      "sha256": "908b0a1f87615300ca3ffe64ff106cfa1337b8823e99988c9163fa6298f0fe49"
+    },
+    {
+      "bytes": 8211,
+      "path": "bridge_assistant_chat_context.py",
+      "sha256": "d24d659f75383f76c2d8d7119f2dcc3c9d47628fcb9e274c85746efadc90e19d"
+    },
+    {
+      "bytes": 24307,
+      "path": "bridge_assistant_home.py",
+      "sha256": "cb809c6793f35a6774c73c524f7fe39cfa3348073019c9f40f128287133a78b4"
+    },
+    {
+      "bytes": 1413,
+      "path": "bridge_assistant_home_http.py",
+      "sha256": "eb4ab5aea997a381e7ab91780474a5c130de11918cb0e01d4e054905296dc9ce"
+    },
+    {
+      "bytes": 1776,
+      "path": "bridge_assistant_home_invalidation.py",
+      "sha256": "0500f6ed6c8893ef7b0edcdabafb9dc4c90e5111a96131053d6796dc32cdbba7"
+    },
+    {
+      "bytes": 19596,
+      "path": "bridge_assistant_identity.py",
+      "sha256": "9e21e8d6833d3327c8f90e4caf303c59fc4b59c1f20de9a186b4c92219f0c1d7"
+    },
+    {
+      "bytes": 7066,
+      "path": "bridge_assistant_identity_http.py",
+      "sha256": "6f0582060d44798f4ba8e2895e4425f836e2d59299ebb25d9d7dda8e899696cb"
+    },
+    {
+      "bytes": 14721,
+      "path": "bridge_assistant_identity_schema.py",
+      "sha256": "9cb3df7510b24d4b6063fc6ff537d34caa949a1e1057b3111d9efd2e8593ace6"
+    },
+    {
+      "bytes": 31210,
+      "path": "bridge_assistant_migrations.py",
+      "sha256": "b77e9915cda544e6bcedc95e64872a02879380dea06344e35bbaaecc7464d6a3"
+    },
+    {
+      "bytes": 14985,
+      "path": "bridge_assistant_resources.py",
+      "sha256": "7a8c2696b0533bc1b5e1250ba98ef38b8471b0353556555f3a110da815a23ed6"
+    },
+    {
+      "bytes": 3599,
+      "path": "bridge_auth.py",
+      "sha256": "bf8cdc40cdc3f82cc079a22582687ba50dfe135658526af12e64978c1d7a4756"
+    },
+    {
+      "bytes": 40483,
+      "path": "bridge_automation.py",
+      "sha256": "6282e12c2794ba4d7311f4c82e9a2f37c79ff4ae5de4db5099d5f8b8bba8c2ad"
+    },
+    {
+      "bytes": 48198,
+      "path": "bridge_automation_actions.py",
+      "sha256": "5eee35504be5174290b7c7556a23761d79e818d87eef5ef3a47445903a3acdd2"
+    },
+    {
+      "bytes": 10043,
+      "path": "bridge_automation_contracts.py",
+      "sha256": "98774dcc920c6792e6f9b63eac2b34c05750b4a27305b0fc759b644adf2ce884"
+    },
+    {
+      "bytes": 11910,
+      "path": "bridge_automation_conversation.py",
+      "sha256": "712180f81ece7bcbe99c11aeb4bfb81d33f70f2c71d37ad0c4f85d08e86f601f"
+    },
+    {
+      "bytes": 9394,
+      "path": "bridge_automation_conversation_schema.py",
+      "sha256": "89a483ba0e119feba23f7d2a9eb94354e8b1014b57a5e18fc86124ab270810bc"
+    },
+    {
+      "bytes": 6670,
+      "path": "bridge_automation_disable.py",
+      "sha256": "ea7c4bae6c1b854a6a1789a850f9bd888cd19b21cf119d898139cc0d020445a4"
+    },
+    {
+      "bytes": 6855,
+      "path": "bridge_automation_execution.py",
+      "sha256": "d388886dd6e3e7d6bebd2e54054ec99ca4aa46949ba90a9470c8b96e1d364291"
+    },
+    {
+      "bytes": 7155,
+      "path": "bridge_automation_reference_runtime.py",
+      "sha256": "c747b9628d780ce9ef186d09894a359ee238636d105502bd9df31867ffc853fd"
+    },
+    {
+      "bytes": 2622,
+      "path": "bridge_automation_reliability.py",
+      "sha256": "3e28fc55174338c7fc4f43d10b1d7f94a885b276472ac7bb4f5a11625ecbb492"
+    },
+    {
+      "bytes": 7457,
+      "path": "bridge_automation_runs.py",
+      "sha256": "724fb8320c4bd0468c800b925a28eead8b77a1bf740a1d405ac913eb6a2240c5"
+    },
+    {
+      "bytes": 11881,
+      "path": "bridge_automation_schema.py",
+      "sha256": "eab8ab38dabd7f1fa23cf400574085c2f289f01f38b5e564108e88d9444769cf"
+    },
+    {
+      "bytes": 1627,
+      "path": "bridge_automation_worker.py",
+      "sha256": "6e8fbd93ee4bc0b2e29145153e513e0d3dbbcc99402be49b08df4a165509d470"
+    },
+    {
+      "bytes": 22428,
+      "path": "bridge_business_health.py",
+      "sha256": "71246e84eb974207adc5b9f321b3ca10f836330586bdaa457f3af55ce82eed40"
+    },
+    {
+      "bytes": 21997,
+      "path": "bridge_capabilities.py",
+      "sha256": "9691f876a0c17a46caa4b6088995db6c5abeaae4d3b14d9984337705f91c5a0a"
+    },
+    {
+      "bytes": 26191,
+      "path": "bridge_capability_registry.py",
+      "sha256": "1a83dd9071896a07df439cbba89d8f42f0bef9d0dd52df3662eb3952b698d749"
+    },
+    {
+      "bytes": 3098,
+      "path": "bridge_codex_operations.py",
+      "sha256": "7aca14a52e6ea2d8ca582fdb58af18cbf47abbc870bceffef76abef2e3de4d35"
+    },
+    {
+      "bytes": 1452,
+      "path": "bridge_connectivity_probe.py",
+      "sha256": "90bf235b61c4cd79605e5eec28f64dcb4353910aa3399b168c96338a4ffd98d5"
+    },
+    {
+      "bytes": 2691,
+      "path": "bridge_container_status.py",
+      "sha256": "61b9fbeeefad01aaa1e78773c45678e34ab3975e6d01cae6557daa7f2a74e822"
+    },
+    {
+      "bytes": 20347,
+      "path": "bridge_continuity_kernel.py",
+      "sha256": "31e6d1c04bfde7c548b546ac557d2b723498360860bf94e72bada4cddac83c44"
+    },
+    {
+      "bytes": 8501,
+      "path": "bridge_continuity_kernel_schema.py",
+      "sha256": "a2ef8b1b4d53cc8a790147fb74b554059cdf94b06d2a8a656330155734ee5d01"
+    },
+    {
+      "bytes": 8799,
+      "path": "bridge_continuity_outcomes.py",
+      "sha256": "263dd14a83bff95006c1fed55e46e14e964220f76c4fc3c59c80f69b9bc3c3f7"
+    },
+    {
+      "bytes": 1689,
+      "path": "bridge_continuity_projection.py",
+      "sha256": "f018a289dcb060d5ab7021f4c2b8de079ed95a8f0495263f29ce49a31d702968"
+    },
+    {
+      "bytes": 7249,
+      "path": "bridge_continuity_reconciliation.py",
+      "sha256": "cbbb1dcf9b75e9d7fafc86cc28751e357374796752e9cc3da304f07de25a54cc"
+    },
+    {
+      "bytes": 6106,
+      "path": "bridge_continuity_schema.py",
+      "sha256": "bb187f2452c80b107915ffd4b1751fb966aca0a029b2610e5af45bc3990c6b2b"
+    },
+    {
+      "bytes": 10047,
+      "path": "bridge_continuity_service.py",
+      "sha256": "0208c9ff6690fa0d4bf286e622adf1b10fc1e99c56f268f43f9594c2fedf5a1b"
+    },
+    {
+      "bytes": 28264,
+      "path": "bridge_conversation_memory.py",
+      "sha256": "e24be680c10fff9efc40c53bc6c3f873d9ba467c0e758e1e512845991b94f6c2"
+    },
+    {
+      "bytes": 2832,
+      "path": "bridge_conversation_memory_http.py",
+      "sha256": "cca77832ee749cb19b40b9a31abfac3af7a0c96c3c77c7173200dc7457b28c7e"
+    },
+    {
+      "bytes": 15976,
+      "path": "bridge_conversation_memory_schema.py",
+      "sha256": "bab62ca879fe193314950c66821849327eb9b96874a7cc7608409400c63bf35c"
+    },
+    {
+      "bytes": 1901,
+      "path": "bridge_conversation_model_runtime.py",
+      "sha256": "a723b9ffde2b6cba0e8f66e0d4bebb06fd47fd1001e5bb3bd0b88d83249fe61d"
+    },
+    {
+      "bytes": 19040,
+      "path": "bridge_conversation_participation.py",
+      "sha256": "546ab3aa03ed93d65bc8fcf43be973b21b59b039df8d0f54f50739d776f4994f"
+    },
+    {
+      "bytes": 14887,
+      "path": "bridge_conversation_participation_contract.py",
+      "sha256": "2ddebd799a5af8efa95e4cc20ebe7b4a88ea8ab087e2e38f885d792a2506cfa5"
+    },
+    {
+      "bytes": 10372,
+      "path": "bridge_conversation_participation_engine.py",
+      "sha256": "44a75b35d5c475002d50a7ef5cb1e7197278faccafc648087b9d12765b4f9eb1"
+    },
+    {
+      "bytes": 4648,
+      "path": "bridge_conversation_participation_routing_schema.py",
+      "sha256": "223055f0b97790af50906b69ac81b26eac2610c1c8ded8e464a1a86367219d03"
+    },
+    {
+      "bytes": 11847,
+      "path": "bridge_conversation_participation_schema.py",
+      "sha256": "5fa9575cc07a10dba3c9adb606a55ff9bce68a9d2aebd3fec9f669cbd0d04716"
+    },
+    {
+      "bytes": 4514,
+      "path": "bridge_conversation_reply_runtime.py",
+      "sha256": "c260427cbc532343d6024c30dd2e525fd24d86e76746d5983c97537e688ababb"
+    },
+    {
+      "bytes": 14352,
+      "path": "bridge_delivery_attempts.py",
+      "sha256": "01622ee187dd87b81d149dad190509a40912c5912253efde205a4d7cfd854209"
+    },
+    {
+      "bytes": 1546,
+      "path": "bridge_delivery_claim.py",
+      "sha256": "4f4bbb8fb0f5d3dc2d04b91794faede24ecf0271f3632f583a1cf06551b289b2"
+    },
+    {
+      "bytes": 2948,
+      "path": "bridge_delivery_continuity.py",
+      "sha256": "cedf7f09334a72acddc0f15fa90ddc976742968654f755da1b4abcaf38ea7ac7"
+    },
+    {
+      "bytes": 5082,
+      "path": "bridge_delivery_continuity_schema.py",
+      "sha256": "221e19bc00fc39fe33161b910fab66ff921fda47f6a00341e82421d252f833c7"
+    },
+    {
+      "bytes": 8320,
+      "path": "bridge_delivery_enqueue.py",
+      "sha256": "bbeadfe5808743d90dbfe2287d6e4d96d22d0dc17e61a247a0a85b23c5c8838c"
+    },
+    {
+      "bytes": 781,
+      "path": "bridge_delivery_operations.py",
+      "sha256": "17db2cb7f7f2512d73287393384be441d74b7dae9494a1e5100fea7196979d58"
+    },
+    {
+      "bytes": 31869,
+      "path": "bridge_delivery_outbox.py",
+      "sha256": "288862dda526c791b10b7ee12ccecc89d67e0ca0d70cb6656d8f133e7040c071"
+    },
+    {
+      "bytes": 4196,
+      "path": "bridge_delivery_sequences.py",
+      "sha256": "234281b625ccd3b463e4d24f68905fc02deaa55bf33885024292b22c9d85eb24"
+    },
+    {
+      "bytes": 4579,
+      "path": "bridge_delivery_settlement.py",
+      "sha256": "d7d268c3f212b647fcb31ca257b9df9242a996aa09c09a533e48d381d76f7daf"
+    },
+    {
+      "bytes": 6509,
+      "path": "bridge_executor_apply.py",
+      "sha256": "4e85616af73e9475b81fea54b435b43de53fbfe646192176052578086e40b8e7"
+    },
+    {
+      "bytes": 4757,
+      "path": "bridge_executor_health.py",
+      "sha256": "34b388c6b8de3b3d055887b1f5d63cfce4f9e4c676ddb214d0ddc00cfb4f840a"
+    },
+    {
+      "bytes": 14721,
+      "path": "bridge_executor_profiles.py",
+      "sha256": "57e84e77ea7e3c8981036c5237ca7cd9ff54dad39ea6d2b190cd7ebafb258ce2"
+    },
+    {
+      "bytes": 3167,
+      "path": "bridge_executor_runtime.py",
+      "sha256": "8b1ca92f9ec89b72b1ca5c4460a6fc2a1c99147b8800b91bcd7404901751b8c0"
+    },
+    {
+      "bytes": 32081,
+      "path": "bridge_formal_approval.py",
+      "sha256": "9a410d5df5fbf51d793fac5d0ae52c487ab8bb124584761f4495eb9c0d938c58"
+    },
+    {
+      "bytes": 6099,
+      "path": "bridge_formal_approval_http.py",
+      "sha256": "79e62b6daa2c7c8283bfdb46dd159b932f96fde813703e1c194da622203383e1"
+    },
+    {
+      "bytes": 9772,
+      "path": "bridge_formal_approval_schema.py",
+      "sha256": "51bf483aa7b3516e9151479d34af8887ecc6716fe7d2cf16ac1c3878498996e0"
+    },
+    {
+      "bytes": 8496,
+      "path": "bridge_gate8_http.py",
+      "sha256": "0c3eed49173ad94c1805c10739e75107b8185f1fdff41f23a038ef16152f9de4"
+    },
+    {
+      "bytes": 20039,
+      "path": "bridge_goal_continuity.py",
+      "sha256": "dc095279754f726731158ac745a4e564b83ba3788190de4fd062c98af2c0cd65"
+    },
+    {
+      "bytes": 5030,
+      "path": "bridge_goal_continuity_http.py",
+      "sha256": "359f50771fb99a1e6a93d70738b0a17ccba2a7e984a3067dd8023ad4b8ae3116"
+    },
+    {
+      "bytes": 6440,
+      "path": "bridge_goal_continuity_schema.py",
+      "sha256": "57f9625291a00b30754c4f002ea43ad08bd5fcd8d654fa8a55f84f18d0eaa660"
+    },
+    {
+      "bytes": 10089,
+      "path": "bridge_goal_followup.py",
+      "sha256": "d0d08f79fe796f48e2a6b5e30e85a0f16bc242c602eeff5be2bd4daa192c9c53"
+    },
+    {
+      "bytes": 2214,
+      "path": "bridge_goal_followup_runtime.py",
+      "sha256": "63179bd561d0439e7fd14a4eeed563a9442380054b4e6ba5d56cd81781909bf0"
+    },
+    {
+      "bytes": 4869,
+      "path": "bridge_goal_revision_link_schema.py",
+      "sha256": "06e87853d5c1f84d597e0a007be71dedf90d0078938c2a7bb3da7fcd130d3f69"
+    },
+    {
+      "bytes": 8357,
+      "path": "bridge_goal_run.py",
+      "sha256": "264fadbcbe6adc3b43a54c05125c2adb5f20c15d08108961503227bf659be24c"
+    },
+    {
+      "bytes": 5420,
+      "path": "bridge_goal_timeline.py",
+      "sha256": "66375f16646caf2d76163cf16c6acdd281b5e27401ab64c0a7cf4e85497319a6"
+    },
+    {
+      "bytes": 14278,
+      "path": "bridge_group_context_frame.py",
+      "sha256": "2d26137b12720421c45671ed629c4da0c549f62228b3e8c1ae5efc3306cfe630"
+    },
+    {
+      "bytes": 8416,
+      "path": "bridge_group_direct_dispatch.py",
+      "sha256": "fd52c2be6a67bb75e9f24414ce981220e2a1dd629c5fa1c6844e548a49beed0a"
+    },
+    {
+      "bytes": 6425,
+      "path": "bridge_group_message_store.py",
+      "sha256": "ff07e6670d86db64e3aae0760d8e125523cf513e6806e5734c5c87847e11f102"
+    },
+    {
+      "bytes": 2218,
+      "path": "bridge_group_participation_http.py",
+      "sha256": "1d030aa12707f136cdba3059f411cb1acf0f773db7cb2fd762a946f5d7f9e5dc"
+    },
+    {
+      "bytes": 12837,
+      "path": "bridge_group_participation_policy.py",
+      "sha256": "8c110280cb771d0b3f1db7939fb11d9f4eeb9887701afd36dc766bc71d84abeb"
+    },
+    {
+      "bytes": 5294,
+      "path": "bridge_group_participation_queue.py",
+      "sha256": "f1380bb0ff46d174add6f3d172b34c7a59c4e6f39411072e3e717ebb51508c20"
+    },
+    {
+      "bytes": 7059,
+      "path": "bridge_group_participation_schema.py",
+      "sha256": "e6bea3df9d514cca1539fbb4d2e7eb10a7858f50e2a2c6059a03c921ad9ea71c"
+    },
+    {
+      "bytes": 22794,
+      "path": "bridge_group_participation_worker.py",
+      "sha256": "2b2bd4f8919a5f203aa7089bc00ee2a810cddd938e397e8799a853a3033809a0"
+    },
+    {
+      "bytes": 8459,
+      "path": "bridge_group_policy_store.py",
+      "sha256": "623fc1ec5a33f51d66f6430caa8470f8f670a4efbe778cd461b0a42305ecc496"
+    },
+    {
+      "bytes": 11725,
+      "path": "bridge_group_proactive_scheduler.py",
+      "sha256": "f7d191ac806455006adf918550de40dacb9bed515633a94307b9d6f285f348ac"
+    },
+    {
+      "bytes": 985,
+      "path": "bridge_http_body.py",
+      "sha256": "4764d973730b1ea06ec2c171619cd7cc1c3f628bcc6c2e8970f774de3b7ae33a"
+    },
+    {
+      "bytes": 6270,
+      "path": "bridge_http_responses.py",
+      "sha256": "7fe88793dda03dfa36025d3fd13d49fb74a524d0029fdb51d2e11cba5c07af94"
+    },
+    {
+      "bytes": 2799,
+      "path": "bridge_http_routes.py",
+      "sha256": "97a9fb135415b0daebe651d322159a03fbe6f4031bbd6a28c248f8d98453f9e1"
+    },
+    {
+      "bytes": 592,
+      "path": "bridge_inbound_context.py",
+      "sha256": "f72cddebd95a5984d03ed2526192fe21374d682e6db534d72a28bcebdceab508"
+    },
+    {
+      "bytes": 4431,
+      "path": "bridge_inbound_idempotency.py",
+      "sha256": "ab715923d3746bfd68167db283dd08c7c7092d9340f34b283159c84483daeba3"
+    },
+    {
+      "bytes": 9173,
+      "path": "bridge_inbound_media.py",
+      "sha256": "66c758b452b9dc73f7827e1216cae741a0e45eeed2075e44d5e2ac0cd96fd47e"
+    },
+    {
+      "bytes": 3036,
+      "path": "bridge_interaction_action_gate.py",
+      "sha256": "8cdb4343a1949d317fb3b2caaee34c4b153f08dc86690560231b9cfe13f08275"
+    },
+    {
+      "bytes": 26186,
+      "path": "bridge_interaction_contract.py",
+      "sha256": "7312cc7e806e2531ccad57fe0f710e796e4c3bd10594873fa55bddda3f9822fc"
+    },
+    {
+      "bytes": 1643,
+      "path": "bridge_interaction_http.py",
+      "sha256": "8d38da8ea1dd8ee150b23a983f8aadf8982cdedf6c8d4e7bd8054f3f6db07116"
+    },
+    {
+      "bytes": 6695,
+      "path": "bridge_interaction_plan_schema.py",
+      "sha256": "39bcbcd058ed29ddb8332c0c191b692fa5e9845c540852b0229582a64bd98bc7"
+    },
+    {
+      "bytes": 8466,
+      "path": "bridge_interaction_repository.py",
+      "sha256": "24f14ac63b4bfbf1dc089c555891cc6e7d015ef53e51f48ec41e806b570103b4"
+    },
+    {
+      "bytes": 11354,
+      "path": "bridge_interaction_runtime.py",
+      "sha256": "da07549a4d60e083d359975e425bc4093196b7af225331ce92f27a86312e4c69"
+    },
+    {
+      "bytes": 6360,
+      "path": "bridge_knowledge_http.py",
+      "sha256": "54ba5bee96172506e75734d6adca737a22c924be65b235de9c0e7c221781fd4f"
+    },
+    {
+      "bytes": 3454,
+      "path": "bridge_knowledge_schema.py",
+      "sha256": "f99a9158e7ba25ff93b488bc625fd849617f045ef5efe00eb99f96487f1e308c"
+    },
+    {
+      "bytes": 21108,
+      "path": "bridge_knowledge_service.py",
+      "sha256": "40eb8127cbe6d1eac8b455d760f06261fa943045f4198341a165992385a1fa29"
+    },
+    {
+      "bytes": 3843,
+      "path": "bridge_learning_http.py",
+      "sha256": "4b52989d8c2bca323a5997226805746e4f9ea0185eadee4d95e8462fea7c5a17"
+    },
+    {
+      "bytes": 10444,
+      "path": "bridge_learning_schema.py",
+      "sha256": "ded9bdb8cd9a574f79411db5791795e45a2d46f22db330ba60f6cecbef7d1fd8"
+    },
+    {
+      "bytes": 24373,
+      "path": "bridge_learning_service.py",
+      "sha256": "649d20a201a5888c6777df6860aa35c1eac1153c3a945977b7b8d65098d72da4"
+    },
+    {
+      "bytes": 35241,
+      "path": "bridge_light_executor.py",
+      "sha256": "3feb9ac0a0337b1b31fb268aeffeb30885d8eb82526827fd6dd225eed1845a43"
+    },
+    {
+      "bytes": 16701,
+      "path": "bridge_living_wiki.py",
+      "sha256": "a143e9c12fffa1c7ad97f140444b164653c7e52ec0c8e738aca1d3131c559d0e"
+    },
+    {
+      "bytes": 11641,
+      "path": "bridge_living_wiki_schema.py",
+      "sha256": "ec3328e245888e599561c4267a4e2f428df5a6dd86b5bb5e798ce62db04593b1"
+    },
+    {
+      "bytes": 6887,
+      "path": "bridge_meme_attachment.py",
+      "sha256": "d429df2394c0f96b985aa79158da7a2ae1cb4d11035148a4c2f74940e5715b7c"
+    },
+    {
+      "bytes": 42205,
+      "path": "bridge_meme_discovery.py",
+      "sha256": "56c2f5e218dd66c2aac9de3681e0b2f7c74407137d0369dd3a2bb3de8fbce4e7"
+    },
+    {
+      "bytes": 6046,
+      "path": "bridge_meme_http.py",
+      "sha256": "9b9766a88d5a05a637b8ceb0ee6cd6bdcc421030bbea07df5fbeff95e2256869"
+    },
+    {
+      "bytes": 12767,
+      "path": "bridge_meme_selection.py",
+      "sha256": "3d46288dc755fbe8486a62aa30af6b4018fa199424b52171b2507cf068b433d8"
+    },
+    {
+      "bytes": 33747,
+      "path": "bridge_meme_social.py",
+      "sha256": "ea33a3a4ab7c23d8501f4e073c51ff4f53c2b03d8dbb37be644f210496d0cf50"
+    },
+    {
+      "bytes": 16170,
+      "path": "bridge_migrations.py",
+      "sha256": "5639c2ec20004b1e4cf2b652b4670f270ecbc0f51953d39c9f8777f2a240932b"
+    },
+    {
+      "bytes": 8736,
+      "path": "bridge_model_adapters.py",
+      "sha256": "4c4923df2699110f8395eb255f00f613451ef2169f3502651e355a42167c4a30"
+    },
+    {
+      "bytes": 17028,
+      "path": "bridge_model_control.py",
+      "sha256": "18fe15c161f3a7df8442a18d1b20d4ca0fab785c06274431f3e4fc3fadada2e3"
+    },
+    {
+      "bytes": 10726,
+      "path": "bridge_model_discovery.py",
+      "sha256": "5daf2eecf84de90adf6c34157887351fe18c0b602ec10783f9af4671f10bb5af"
+    },
+    {
+      "bytes": 6666,
+      "path": "bridge_model_instances.py",
+      "sha256": "816dd523ffb12e7ee3b06fbd66765605921976456e85b1011d655e77e124b2a6"
+    },
+    {
+      "bytes": 7445,
+      "path": "bridge_model_observability.py",
+      "sha256": "da01a39907505433e38fe372e9c0af1e9aa89035ff640e6a4fd745326cb2806b"
+    },
+    {
+      "bytes": 4593,
+      "path": "bridge_model_playground.py",
+      "sha256": "7451805295469150f4042c168817e58846a4437321dcc23a50c800648fb21656"
+    },
+    {
+      "bytes": 2042,
+      "path": "bridge_model_probe_log.py",
+      "sha256": "92f824fd7e44d1aa2e07787629d49e8964985f757d956fd10104a732c037c81a"
+    },
+    {
+      "bytes": 235,
+      "path": "bridge_model_profiles.py",
+      "sha256": "d0873a6b35cb180dee7f58292759166730fe5bb6ef35d32398ff867c254c5b42"
+    },
+    {
+      "bytes": 34096,
+      "path": "bridge_model_registry.py",
+      "sha256": "cb378714f358cbded06ceb9739334575a489778e2fa6aca5d239bbfdb93faada"
+    },
+    {
+      "bytes": 15893,
+      "path": "bridge_model_routing_presets.py",
+      "sha256": "6715ecb0ad3a149271885016857ba86c97d49cd8d92874dbec3b1aba933edb7f"
+    },
+    {
+      "bytes": 6676,
+      "path": "bridge_model_runtime_inventory.py",
+      "sha256": "abdd847f7077ada209d36f9e04681fa074c0716cc595197aecefc291dd1931d9"
+    },
+    {
+      "bytes": 11745,
+      "path": "bridge_network_policy.py",
+      "sha256": "2351536fdc2302db53f2c2dfb8d4bd24776d5a78d65dfec4ce08e6c44333aa9f"
+    },
+    {
+      "bytes": 2665,
+      "path": "bridge_network_policy_http.py",
+      "sha256": "6ef49f11e37d12ad1ea332179b5f346ebeed58dadb5a1bcb48a4fca8535bbbee"
+    },
+    {
+      "bytes": 6690,
+      "path": "bridge_network_policy_schema.py",
+      "sha256": "53127054ff09dbb188c3db1ca7a73a664c952a7df0f0753d635099a6d1af1e31"
+    },
+    {
+      "bytes": 2148,
+      "path": "bridge_ops_actions.py",
+      "sha256": "80401fe6aff5a771e3fdd959e847fdd2276c11a5e56c9607191fa20d6f857b7a"
+    },
+    {
+      "bytes": 7757,
+      "path": "bridge_ops_broker.py",
+      "sha256": "3655548556be830049f7257bde336a6caa3dfbb9988b0e7333e00c3a11915312"
+    },
+    {
+      "bytes": 2084,
+      "path": "bridge_ops_broker_client.py",
+      "sha256": "b2d2bb5c0f8ac341345848c9144abbe29949e0a56d5c7b7b6b2855b54c9c4c98"
+    },
+    {
+      "bytes": 10998,
+      "path": "bridge_ops_broker_contract.py",
+      "sha256": "ae7760a104bdf85f7562add5ae4401ecb350908fefb2c019cb1736436478389e"
+    },
+    {
+      "bytes": 12190,
+      "path": "bridge_ops_broker_executor.py",
+      "sha256": "19f439d534985aabe304b8287f0640c38b9345a2a730985ff9d21d67e4b43306"
+    },
+    {
+      "bytes": 3087,
+      "path": "bridge_ops_command_router.py",
+      "sha256": "60d23b899d8a8860e5c30390db3f414a3d8c7024b8d8c0dac122cbbdff679750"
+    },
+    {
+      "bytes": 12099,
+      "path": "bridge_outbound_policy.py",
+      "sha256": "2d6de9374429284e43bc03659704d5eaff2ce85acbedfed81a138f14e5910277"
+    },
+    {
+      "bytes": 2316,
+      "path": "bridge_participation_diagnostics.py",
+      "sha256": "6928aa46b794cf8d3676fe05ea3ab196aa8674c13e02514e2f2edcb64d9e3c56"
+    },
+    {
+      "bytes": 15636,
+      "path": "bridge_persona_runtime.py",
+      "sha256": "a9ba098d36ae1b2ecff7a84b596e737c5ecce848590331019af07e397f327993"
+    },
+    {
+      "bytes": 2855,
+      "path": "bridge_persona_runtime_http.py",
+      "sha256": "ec27584a4a7d24d2cb20683a5eb476f312c9186f6f13bae5e5e8ef81ca434197"
+    },
+    {
+      "bytes": 2286,
+      "path": "bridge_pet_http.py",
+      "sha256": "ddbc0c81d7db7ba73857535cc494d471b968822c3cc0284ff27c56c0476eb1f7"
+    },
+    {
+      "bytes": 22251,
+      "path": "bridge_pet_service.py",
+      "sha256": "69b59ff9394dc0faec4cbb568984dea66a87a98b8ba194428d181b7e4695d7b5"
+    },
+    {
+      "bytes": 26324,
+      "path": "bridge_platform_repository.py",
+      "sha256": "da5775d743d71dd9dd795c7434839d7af2e3dcb94160ef7f4987115399f89018"
+    },
+    {
+      "bytes": 22665,
+      "path": "bridge_plugin_marketplace.py",
+      "sha256": "263bf3a56b0e543328045f264e660f46f7c624940cd6069ff6a87d6fd8c43c6b"
+    },
+    {
+      "bytes": 3946,
+      "path": "bridge_proactive_decision_contract.py",
+      "sha256": "7675a15d416e88f3f6f1b7e5377d2ace5dffb378c17c2237b42b613eafc9c3e1"
+    },
+    {
+      "bytes": 4719,
+      "path": "bridge_proactive_feedback.py",
+      "sha256": "c9187bbf7399f4d4ba16e3bc7c5c2828b7bb3816b22d216e1c09e7c5eee24cc5"
+    },
+    {
+      "bytes": 17124,
+      "path": "bridge_proactive_messaging_policy.py",
+      "sha256": "7b7452cdd00dc1c2ff3fe21bbb2bc76e7916a2c2ff72e8a6ae5e428c716b6d1e"
+    },
+    {
+      "bytes": 6657,
+      "path": "bridge_proactive_messaging_schema.py",
+      "sha256": "56ae94ae09a6d60a1d2dcc0616b5ccc86cea07503a03d0906f46ea44ca4c0bdd"
+    },
+    {
+      "bytes": 5904,
+      "path": "bridge_proactive_review.py",
+      "sha256": "b5eaa377261ba5c634f78eb7b4bde617c95075ef92bf6baddec0cb6abf382bb2"
+    },
+    {
+      "bytes": 2670,
+      "path": "bridge_proactive_runtime.py",
+      "sha256": "8f968ab4ee2293eb7315dbf45675ca288549f1879b9e09ef17cd2ae04fe2530f"
+    },
+    {
+      "bytes": 4974,
+      "path": "bridge_product_framework.py",
+      "sha256": "b9746fe2fb3a13865909d51ccc3fd2cdce6b933aed3400355828243fc02b4340"
+    },
+    {
+      "bytes": 4687,
+      "path": "bridge_project_http.py",
+      "sha256": "583d5e25d66b0ec9d51626da3e554ce25f6303601f2307d5b4f9ad463c97b0f5"
+    },
+    {
+      "bytes": 4636,
+      "path": "bridge_project_schema.py",
+      "sha256": "6ccd7a028eee6e0c932c5e532ddf878020084cec99a145d0c8cf4171464079b7"
+    },
+    {
+      "bytes": 15983,
+      "path": "bridge_project_service.py",
+      "sha256": "3b959aa7664be1144e87a6fab751c6ddcc47cf3b3779e1c751525d6ce7bc00a7"
+    },
+    {
+      "bytes": 2436,
+      "path": "bridge_provider_errors.py",
+      "sha256": "acce565de5107fcdb7a659fc5fa465bf0f7055c543a5dde03b1114fb508868ac"
+    },
+    {
+      "bytes": 2893,
+      "path": "bridge_provider_presets.py",
+      "sha256": "0407ea9425026b530d25f1ecd17632401b088455d810795e935d23bebb04ac58"
+    },
+    {
+      "bytes": 10719,
+      "path": "bridge_provider_secrets.py",
+      "sha256": "5523dc24742fde348db876580dff1260aef9d8d292fc8a67e5ebf5623b49d1e7"
+    },
+    {
+      "bytes": 1887,
+      "path": "bridge_proxy_environment.py",
+      "sha256": "4661234724234cd116ede4d1ad8d936fc2257ab0469f161d15926c38a844295b"
+    },
+    {
+      "bytes": 8056,
+      "path": "bridge_proxy_instances.py",
+      "sha256": "da18625606883ab1ebb2372c511b9f35e4d2f428166ccaabf99b4a59a55a900a"
+    },
+    {
+      "bytes": 7963,
+      "path": "bridge_proxy_probe.py",
+      "sha256": "1db337c29591914aa7ee92f7f2e3bdf6f10cc6877cc79d5a5d63c61e4ed3d987"
+    },
+    {
+      "bytes": 30933,
+      "path": "bridge_proxy_service.py",
+      "sha256": "5ed4082067f48211097fccc64338086db97720614b8ce63d3cc48ff9acd919b6"
+    },
+    {
+      "bytes": 6901,
+      "path": "bridge_proxy_status.py",
+      "sha256": "d0ad95d6c9f84b402f010fab83e078728c6a6ff177c6fff1877e2f2caabfeac1"
+    },
+    {
+      "bytes": 3369,
+      "path": "bridge_qq_access_http.py",
+      "sha256": "ef4480680a7c68db6497c20b3b21e6e514ac355a81d122719d5c8ce33e2b49f4"
+    },
+    {
+      "bytes": 2651,
+      "path": "bridge_qq_access_runtime.py",
+      "sha256": "f105f8a4009c5bc13d19972c1a5a7512602620d0394126f3f85827cc66ee602f"
+    },
+    {
+      "bytes": 7898,
+      "path": "bridge_qq_access_schema.py",
+      "sha256": "bc8a07f03bdab74b4514176a637315a0949d4b5cfc9ac3e47377bdb1e653325e"
+    },
+    {
+      "bytes": 28252,
+      "path": "bridge_qq_access_service.py",
+      "sha256": "46efd34e86ea4c0056294b240c2d984f63352e2d690dbb816d31e308f5eb4d9e"
+    },
+    {
+      "bytes": 18568,
+      "path": "bridge_qq_admin_actions.py",
+      "sha256": "490092d98c2bb1bb6c52e2d429d67a01865161b82a34dd4c89e9080aa92f814e"
+    },
+    {
+      "bytes": 9799,
+      "path": "bridge_qq_delivery.py",
+      "sha256": "bb71584f1f91a88ee8c330aa3ff36f1cbede51d072d6c3712e33a37ede252f28"
+    },
+    {
+      "bytes": 9602,
+      "path": "bridge_qq_diagnostics.py",
+      "sha256": "8a1fcae11e2bf80ef688b708895e5f4780a063c5deb91d04401ff4fff41dcaa0"
+    },
+    {
+      "bytes": 6955,
+      "path": "bridge_qq_llbot_diagnostics.py",
+      "sha256": "cf0dc13aaf35d094cd1c13c490e2d72d59bdcb6ccd88e721afb6c84113f625d2"
+    },
+    {
+      "bytes": 3263,
+      "path": "bridge_qq_login_status.py",
+      "sha256": "041ecd86388e34f0679b9c218f004e650297f71a6aec17aea644bdc079b016f6"
+    },
+    {
+      "bytes": 22445,
+      "path": "bridge_qq_object_runtime.py",
+      "sha256": "fda4141462ee52b401bd1818394345757c111477c9bc022f6aef301968e0807a"
+    },
+    {
+      "bytes": 4400,
+      "path": "bridge_qq_object_schema.py",
+      "sha256": "d24a17468944999bce8ab915686b9916b7722ddc88ebb4fbec5c1cb1c78aea14"
+    },
+    {
+      "bytes": 10851,
+      "path": "bridge_qq_object_service.py",
+      "sha256": "096a16a1c0084bc25798d638b9282005f80cafc28e27761b1f242bfd0fe82f91"
+    },
+    {
+      "bytes": 24654,
+      "path": "bridge_qq_participation_shadow.py",
+      "sha256": "76aae87466143f222e3b8941af794095c91d3366c306277422f005ed6cb19dc8"
+    },
+    {
+      "bytes": 2340,
+      "path": "bridge_qq_qrcode.py",
+      "sha256": "05e86d6785833f1ea1e7919cd2625bf7ff5a39d45209a81a026d780bdb62ce57"
+    },
+    {
+      "bytes": 3268,
+      "path": "bridge_qq_runtime_http.py",
+      "sha256": "d86c70dc98c706325d5bd90953dc337e63348122052d55ef3d92bb165e8137d3"
+    },
+    {
+      "bytes": 6144,
+      "path": "bridge_qq_runtime_schema.py",
+      "sha256": "ca2c334afa308de6407edfce12be217b45793290ac56ffe774ab5a65547d470b"
+    },
+    {
+      "bytes": 12248,
+      "path": "bridge_qq_runtime_service.py",
+      "sha256": "38c9009b03c06175228dc66b39732e58f5970e8e8e5e469d7fdfc4d9cee650df"
+    },
+    {
+      "bytes": 5608,
+      "path": "bridge_relationship_cutover.py",
+      "sha256": "ffaaf540e31c99a92feae5ea5179579f0b25955726e271fc0d7c404ff4f19846"
+    },
+    {
+      "bytes": 12120,
+      "path": "bridge_relationship_proactive_schema.py",
+      "sha256": "8f6a7b7b184c2c8f0b754be8b62eff371cef13e968a2fb52d98ce24736a1ca11"
+    },
+    {
+      "bytes": 23691,
+      "path": "bridge_relationship_service.py",
+      "sha256": "870d53735bf20b7719fcd97242b710b02c24f98b270daa9689a5747b48838fa7"
+    },
+    {
+      "bytes": 4029,
+      "path": "bridge_reliability_cutover.py",
+      "sha256": "ea74e399ad8940e6dab21b994a02389a74d225a2e5dd3dfccda91c814a4ad2ee"
+    },
+    {
+      "bytes": 7746,
+      "path": "bridge_reliability_http.py",
+      "sha256": "5d288d6e8e71ca58b98fedd04c8e2223f35b76bb2c55436a532c4d37fe22e1b9"
+    },
+    {
+      "bytes": 1942,
+      "path": "bridge_reliability_runtime.py",
+      "sha256": "15a5de58b2c093d11b3090589643642f5b42b3091980adcc46dc3485bdc04fea"
+    },
+    {
+      "bytes": 6197,
+      "path": "bridge_reliability_schema.py",
+      "sha256": "3072f0fe2618606ce4a298e63f35c239c1dae851a71fa85bd2381144032f8181"
+    },
+    {
+      "bytes": 5064,
+      "path": "bridge_reliability_service.py",
+      "sha256": "22f56693090019748312e63dfade62a43743f7540883da74d4681417567c28d4"
+    },
+    {
+      "bytes": 3708,
+      "path": "bridge_response_modality.py",
+      "sha256": "1f1f17526ec2a4d07206eb927df867f8b2353f4130110a44ee2734d3be00f4e6"
+    },
+    {
+      "bytes": 4011,
+      "path": "bridge_server_status.py",
+      "sha256": "8f799f0ecbeea159b8c85339e517f5c279ea1b2359c8e642efd63ea9c92939ff"
+    },
+    {
+      "bytes": 2445,
+      "path": "bridge_service_status.py",
+      "sha256": "fc39972bc7cdf76ffcadc71053ecd48597123fb78ad2dfbbf13e5225ac8d5fa0"
+    },
+    {
+      "bytes": 34373,
+      "path": "bridge_social_engine.py",
+      "sha256": "98a673d1ee80c30a65dc864c20743331d6ba1fc0fdf383e5a40ba34b102609dc"
+    },
+    {
+      "bytes": 31075,
+      "path": "bridge_social_experience.py",
+      "sha256": "9c75d80c2c2b4ae054156b80429f141e2eff607306e5ba3cca84e5759af56d12"
+    },
+    {
+      "bytes": 2571,
+      "path": "bridge_social_identity.py",
+      "sha256": "c6ba9a400c7c1d3c391cd90ba3b621c66e83d6bd8a0ad0ad5f51ab9342f07439"
+    },
+    {
+      "bytes": 20450,
+      "path": "bridge_social_opportunity.py",
+      "sha256": "6c6fae73f148a6d085440655b40168ee1bbf3004f4b765c5163a5b77c8b7002e"
+    },
+    {
+      "bytes": 4184,
+      "path": "bridge_social_reply.py",
+      "sha256": "27c859086669a45c7936cf01a303300a799eecd50104383f0a31fabd6777d4f8"
+    },
+    {
+      "bytes": 13558,
+      "path": "bridge_social_start.py",
+      "sha256": "4ca20462edf8671bcfb92af7f68e0c5e264e4366e2309aefa4a7527387914ccd"
+    },
+    {
+      "bytes": 6631,
+      "path": "bridge_social_virtual_http.py",
+      "sha256": "524be8174ea477bf847ae33fadeb09ef6c0976a394e63de500526a5e679bbc3c"
+    },
+    {
+      "bytes": 13524,
+      "path": "bridge_social_virtual_schema.py",
+      "sha256": "f4473551d311d313826034d8ce928c53f69df1966c1f6696e5301ffc9c2709fb"
+    },
+    {
+      "bytes": 6243,
+      "path": "bridge_sqlite_commit_hooks.py",
+      "sha256": "72c02b9e589440dc68758d3f924a60cb267f9a014fb17d7c74578eadda04f26a"
+    },
+    {
+      "bytes": 3820,
+      "path": "bridge_sqlite_safety.py",
+      "sha256": "eefb0acebcdbb9cf4bd472412f6df52febad725f4cfdaf9e4c01befa869e9479"
+    },
+    {
+      "bytes": 17347,
+      "path": "bridge_system_audit.py",
+      "sha256": "889e4e32b24a29ad226cf2dac9aaf3157f03a302b99e79cd45c33cfc5a0c975d"
+    },
+    {
+      "bytes": 2365,
+      "path": "bridge_task_delivery.py",
+      "sha256": "d84a2fe6cb1629925f7f7d19faf8cb3584bb1e079766bf9f8ba6c6d7d0274071"
+    },
+    {
+      "bytes": 3464,
+      "path": "bridge_task_dispatch_policy.py",
+      "sha256": "fd65f6c7b19b053e6a08d5c5201776b95e79ec2040ef760b07491eaf53c8c07d"
+    },
+    {
+      "bytes": 1948,
+      "path": "bridge_task_followup.py",
+      "sha256": "d71489ff4b0ff6d705a99c71c9e6e2b33de8d80c8ba7268bbbef592c98616acd"
+    },
+    {
+      "bytes": 1119,
+      "path": "bridge_task_persistence.py",
+      "sha256": "07c976e592b8ef67fc5650f54b8fab12175a6c2664bb1fa2f916fa4ff6ab308b"
+    },
+    {
+      "bytes": 1888,
+      "path": "bridge_task_query.py",
+      "sha256": "72aceb54f1160110da64184546b12958010f543012be0d6fea2cfb0cc32d9ecd"
+    },
+    {
+      "bytes": 2230,
+      "path": "bridge_task_retry.py",
+      "sha256": "f82046efd531731ecf6e79895c93f24233de0493cc3dd050abeda46bf68ce9d5"
+    },
+    {
+      "bytes": 21575,
+      "path": "bridge_virtual_life.py",
+      "sha256": "0b57ce0eabf6f0fd06c9ffaf96434f54d61160be77bdddb1e578ed57f3e7b0bf"
+    },
+    {
+      "bytes": 16597,
+      "path": "bridge_visual_context.py",
+      "sha256": "f02cf7b0ccf4a92cc57b053f856f7930f0cb1c6531ca759c7c0e50c075cd8a5f"
+    },
+    {
+      "bytes": 10409,
+      "path": "bridge_voice_audio.py",
+      "sha256": "e687185c4987ea30016c98cdd12d2ca795cb3bd991b571ea52ae8fee44efe1af"
+    },
+    {
+      "bytes": 7831,
+      "path": "bridge_voice_calls.py",
+      "sha256": "000e56f0f8ff3a83b1ad4448f24c005c1df9d0092119c3e2759a5428ddc33e64"
+    },
+    {
+      "bytes": 12677,
+      "path": "bridge_voice_codex.py",
+      "sha256": "a4db2c63a0d539a7dada1c8259a049ed56149139b67565b43501da85d9f39d6e"
+    },
+    {
+      "bytes": 2736,
+      "path": "bridge_voice_delivery.py",
+      "sha256": "08830d8b1a81962aaf0c39efa660506df18d8a05ea7281033ec4b8c69cb4e308"
+    },
+    {
+      "bytes": 6093,
+      "path": "bridge_voice_dispatch.py",
+      "sha256": "2efc4dcca6add8f8dd69aab3c8daf598b53a977e5d2460ba0e81f148be078c41"
+    },
+    {
+      "bytes": 12966,
+      "path": "bridge_voice_input.py",
+      "sha256": "df9388e3adb00922aefdb3a86342434d1657e399a5e9a4689d8bd2315005c831"
+    },
+    {
+      "bytes": 2516,
+      "path": "bridge_voice_input_http.py",
+      "sha256": "f724290b25b70f4de83cf9e3a58578b8fddacd70824493053e4b7480c6a4a95d"
+    },
+    {
+      "bytes": 5705,
+      "path": "bridge_voice_input_runtime.py",
+      "sha256": "7e3a819ef10185aaa8390749d3c534f5c64db2415bcba972cf3d6f71675f3a4b"
+    },
+    {
+      "bytes": 9334,
+      "path": "bridge_voice_media_fetch.py",
+      "sha256": "fdd7ebaea7a30e7395ed21708926b8f1fea6609a3d6d591ec60239c1bbcccc57"
+    },
+    {
+      "bytes": 9500,
+      "path": "bridge_voice_message_schema.py",
+      "sha256": "2f232c83f66b73469be40b83daa715ee8a08a90c5160988dcef4d13f2af72a55"
+    },
+    {
+      "bytes": 6426,
+      "path": "bridge_voice_message_source.py",
+      "sha256": "c3cb438bbeb43a42d155594172366f031f3d6d6719281d53f424f6ea995f635e"
+    },
+    {
+      "bytes": 1768,
+      "path": "bridge_voice_migration_registry.py",
+      "sha256": "f73709bdc74700eb08481159589f1124366cb76d6c15a2fe8abf09aa1eecf12f"
+    },
+    {
+      "bytes": 13608,
+      "path": "bridge_voice_output.py",
+      "sha256": "89c630489c8257752a2f1255465055b2a1e90d8973112e257bbe5a96b92fdb0a"
+    },
+    {
+      "bytes": 3017,
+      "path": "bridge_voice_output_schema.py",
+      "sha256": "3aa17afd03b6cb4c6ed6809c80b821ec5807bc970e8a639d5a6e265adcc54d3e"
+    },
+    {
+      "bytes": 3515,
+      "path": "bridge_voice_pack_tuning.py",
+      "sha256": "c80d513cdaad6a893c2a5d7632aed8f259cec35fdcefb60f3513ddb8e0a4fbd6"
+    },
+    {
+      "bytes": 12464,
+      "path": "bridge_voice_response_policy.py",
+      "sha256": "8a52ec95c3df9cdeac7de415c0de1ce79d7dc2914511ce64360be50b0b996e47"
+    },
+    {
+      "bytes": 5470,
+      "path": "bridge_voice_response_policy_schema.py",
+      "sha256": "fe63a345ec6bc8b6ad8915f42065b6e709a023ef9a697f27cb9143c7de958a52"
+    },
+    {
+      "bytes": 7517,
+      "path": "bridge_voice_transport_probe.py",
+      "sha256": "44f60114397b29365078967c4c6030da94cbf8ccf5d9cdaa36a40bd3897e74a7"
+    },
+    {
+      "bytes": 2285,
+      "path": "bridge_voice_transport_probe_http.py",
+      "sha256": "bc1007accd84d63c7b9de5efa36aa6f50e60dacbfc3f29f8e3d606d084e797ed"
+    },
+    {
+      "bytes": 5040,
+      "path": "bridge_voice_transport_probe_schema.py",
+      "sha256": "cc82d11914753f3cab3ed4bf17ccec5a552aca426d560db6fb9bbf43ffbd4cae"
+    },
+    {
+      "bytes": 4288,
+      "path": "bridge_voice_tts.py",
+      "sha256": "0463963b215bf8a48f4822a9d63e8b33702d35d082954f3a33c0aab4aee85b1b"
+    },
+    {
+      "bytes": 2947,
+      "path": "bridge_worker_health.py",
+      "sha256": "44b7a6c4d3de3934d8258f14898c53cf021b0af86874bfd4dc4366fd3d22fb76"
+    },
+    {
+      "bytes": 341160,
+      "path": "codex_qq_bridge.py",
+      "sha256": "e5dd7194b59834e21e4d96920406a04994cd5c10b20e36a316ae52c6f1e8d60d"
+    },
+    {
+      "bytes": 657,
+      "path": "deploy/bridge.env.example",
+      "sha256": "6f21db2945ead2a956824c5571d2d1ccabdc0258e723f6f7633953bb73b45c5d"
+    },
+    {
+      "bytes": 1307,
+      "path": "deploy/start-local.ps1",
+      "sha256": "e03794f26fb5f652e7d908e33ff3290597f6d4edc50e69c4406af8aa8c72dd9f"
+    },
+    {
+      "bytes": 1163,
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "cfcaa966fae20d894c41326a4c16ff22ecf9ce30896602f9a98bc6cde1b658fe"
+    },
+    {
+      "bytes": 6384,
+      "path": "docs/DEPLOYMENT.md",
+      "sha256": "4c444c1d2ff2b6ac4f0856a952c34125e3fb601c6cb471bf1738113f727992c5"
+    },
+    {
+      "bytes": 1718,
+      "path": "docs/INTEGRATIONS.md",
+      "sha256": "c299d8786bbd7212c23e1fdaa32b4b64c8caff68a0ba50d3ba9c3df034dd50c6"
+    },
+    {
+      "bytes": 5185,
+      "path": "docs/OPERATIONS.md",
+      "sha256": "85a80e7734c1db9e25008895ed319018bf384c6e39805bae4c9acbee9d8d2e89"
+    },
+    {
+      "bytes": 3903,
+      "path": "docs/REPOSITORY_PROTECTION.md",
+      "sha256": "363d20153527c5228d840f3e24ecf76f25d8b4d8afe794dd9ef1ea398ea1615e"
+    },
+    {
+      "bytes": 4407,
+      "path": "docs/VOICE_INPUT.md",
+      "sha256": "578de0f929427510321ce8e1ec322d87ffaec0d4bda8b75ff0eac17b1093dfad"
+    },
+    {
+      "bytes": 4861,
+      "path": "docs/VOICE_OUTPUT.md",
+      "sha256": "2a2dc4d639b0cd567bae46bfb3e3facf9ca4e1fd990e81b233a029e784a80170"
+    },
+    {
+      "bytes": 1050,
+      "path": "docs/zh-CN/ARCHITECTURE.md",
+      "sha256": "2a4645c73ea8b6d28c393c315d5fbe563f536beec5233e7aaf1adb130d763aa2"
+    },
+    {
+      "bytes": 5328,
+      "path": "docs/zh-CN/DEPLOYMENT.md",
+      "sha256": "cfef62a31f0ea2b4c0cd730a908769b41cb1c4c15dc906f79f652e4ea5f84f04"
+    },
+    {
+      "bytes": 1567,
+      "path": "docs/zh-CN/INTEGRATIONS.md",
+      "sha256": "8e726129057ece1c41cad626595c386f5f4ce68bc080b4c9f88c4fc1119b8705"
+    },
+    {
+      "bytes": 4318,
+      "path": "docs/zh-CN/OPERATIONS.md",
+      "sha256": "a699060da638375f17ebd472a9fb09bc3ace2847eb07b19053c06ce5611bff3b"
+    },
+    {
+      "bytes": 3188,
+      "path": "docs/zh-CN/REPOSITORY_PROTECTION.md",
+      "sha256": "cf4ef946fe96a94f7a0745580122a405515440e32b35c6716e149fc4a9d1465d"
+    },
+    {
+      "bytes": 3953,
+      "path": "docs/zh-CN/VOICE_INPUT.md",
+      "sha256": "42617ef9e4cff0c7b505cdcdb316603d46a778d6b0d95e9362a5758d899c0e35"
+    },
+    {
+      "bytes": 4215,
+      "path": "docs/zh-CN/VOICE_OUTPUT.md",
+      "sha256": "84ec6a721b1cd27dee683a20ccd6376cd2ffb3ccbe1ecb6c03ccf702a7fe28d5"
+    },
+    {
+      "bytes": 11057,
+      "path": "remote-plugin/bridge_client.py",
+      "sha256": "f193ae3fcd515a8b6bdd765dc561b77ac93a33fc67049354db5bfbc9bb4db820"
+    },
+    {
+      "bytes": 5947,
+      "path": "remote-plugin/delivery_worker.py",
+      "sha256": "ed874e25b703301d6ebfe8a09092caa96853b95f80de1a771301ba1792ff3d0d"
+    },
+    {
+      "bytes": 66721,
+      "path": "remote-plugin/main.py",
+      "sha256": "aecc279e2317575ee1063462983455fe413f847379f44786e16fb3145d0b3460"
+    },
+    {
+      "bytes": 237,
+      "path": "remote-plugin/metadata.yaml",
+      "sha256": "d49e43be78e91b023f02d8eea01e37107af61b768350e893c125d6928d4e88a7"
+    },
+    {
+      "bytes": 714,
+      "path": "remote-plugin/participation_feedback.py",
+      "sha256": "ac4efbe1988c7b1ba7677f1835523801d241df34cad02e9f09f6c7f7cc014125"
+    },
+    {
+      "bytes": 8161,
+      "path": "remote-plugin/participation_metadata.py",
+      "sha256": "559a47e25c912b192b33dfddfd2d179a2aae224589e00c8b17a821498f0630fe"
+    },
+    {
+      "bytes": 2523,
+      "path": "remote-plugin/qq_access.py",
+      "sha256": "365d9a8a6f573d0d05f4eefa5e40a102e9874000cc1a8856758ee733485d4a5b"
+    },
+    {
+      "bytes": 8828,
+      "path": "remote-plugin/runtime_config.py",
+      "sha256": "9f4792c8e898809788e6d8f025fa1e2d047c05da779298805b9d61aab229da8f"
+    },
+    {
+      "bytes": 3631,
+      "path": "remote-plugin/voice_input_fetch.py",
+      "sha256": "8bb2753c002b365a0b8a6193014d401720f2149a56e6b55d4b2cc34c714bfab0"
+    },
+    {
+      "bytes": 2907,
+      "path": "remote-plugin/voice_media.py",
+      "sha256": "696cd87381c292723da6a56db77684730628ab44edcd667dddc6a903366d9734"
+    },
+    {
+      "bytes": 7295,
+      "path": "remote-plugin/voice_message_source.py",
+      "sha256": "43d5a9b2884b32e571d316329d3d93377078d85e30c1b9c1314286957853cda1"
+    },
+    {
+      "bytes": 1432,
+      "path": "remote-plugin/voice_transport_probe.py",
+      "sha256": "897e1f1b375f1d10ddd447f10c734d8b0fdfc333c8061143751d69b6d4b52229"
+    },
+    {
+      "bytes": 271,
+      "path": "requirements.lock",
+      "sha256": "54a9473fd2e329241a2eb66d864bb689dcc6b82369a7734467c0b09e8d17ba58"
+    },
+    {
+      "bytes": 524,
+      "path": "starter-packs/xiaofei/LICENSE.md",
+      "sha256": "c842f7d3720e6395dacec99251075faf82e9bb35bfbafd9feb9d63f13f2e27f8"
+    },
+    {
+      "bytes": 1166,
+      "path": "starter-packs/xiaofei/README.md",
+      "sha256": "64f9004f7ff0f9a9a232bb515eceff5b39491b0e89927e83506b26298c2166dc"
+    },
+    {
+      "bytes": 1161,
+      "path": "starter-packs/xiaofei/appearance/pet-xiaofei-animated.json",
+      "sha256": "d01b16f19e060e88490a31f216a200fdc7dcfb3cbe5bf319476aa32394491a37"
+    },
+    {
+      "bytes": 1792936,
+      "path": "starter-packs/xiaofei/appearance/pet-xiaofei-animated.webp",
+      "sha256": "39c6bbb6cad1446482e88077dabf4a8948d8c59e00f9c63ab9c41b324150c9d3"
+    },
+    {
+      "bytes": 4030,
+      "path": "starter-packs/xiaofei/manifest.json",
+      "sha256": "21c974e2d9200c787123279694bda4c5d1f17c1987d3c4654bd2277b4e5dfde5"
+    },
+    {
+      "bytes": 49020,
+      "path": "starter-packs/xiaofei/memes/xiaofei-cry.webp",
+      "sha256": "2c2820626c0f414554b3090567a8090473bac00d653d16125d6d6393207f1592"
+    },
+    {
+      "bytes": 46016,
+      "path": "starter-packs/xiaofei/memes/xiaofei-reaction.webp",
+      "sha256": "d0562707417788b66df29fd7f2950661e7bbdfb58e3714b177e1ef05e68d0ed8"
+    },
+    {
+      "bytes": 28226,
+      "path": "starter-packs/xiaofei/memes/xiaofei-start.webp",
+      "sha256": "1c3a20c3c4c967c0efa9b999615147b478792f4808eff31438939e1c388c5485"
+    },
+    {
+      "bytes": 64608,
+      "path": "starter-packs/xiaofei/memes/xiaofei-sweat.webp",
+      "sha256": "5192b8d62ead94d2a2d0114001c8b41f00648760421b24957615a036d74de90b"
+    },
+    {
+      "bytes": 36308,
+      "path": "starter-packs/xiaofei/memes/xiaofei-thanks.webp",
+      "sha256": "3f92a85a6fb439dedb43a6f1e1d0c5bc0db21f7c39020c16f7c1f577e586b318"
+    },
+    {
+      "bytes": 8446,
+      "path": "tests/test_public_release_smoke.py",
+      "sha256": "8d9a76f1973a83b0ac418f5bc034a0f50ac934f60d8052d91f003fa49cf4cc69"
+    },
+    {
+      "bytes": 900,
+      "path": "tests/test_starter_pack.py",
+      "sha256": "32b5d15acd975f55aa5d09ee3ef2cae33fa8a685c23bf0386a83d9512535160e"
+    },
+    {
+      "bytes": 7908,
+      "path": "tools/install_starter_pack.py",
+      "sha256": "fc3a96dd4a2b1ca99f9099893983956599cdb461669a805d76848a6027194333"
+    },
+    {
+      "bytes": 4040,
+      "path": "tools/run_public_tests.py",
+      "sha256": "edecac0737d78f923fae80cc06517df25b3175fd2ed557a22ee2c76fdef72229"
+    },
+    {
+      "bytes": 2383,
+      "path": "tools/set_voice_input.py",
+      "sha256": "43fedcf7775a72082593993264ed1d9b76511d6f42c2643e284d30bc30d6f42f"
+    }
+  ],
+  "issues": [],
+  "publication_ready": false,
+  "reason": "independent_clone_and_remote_ci_gate_required"
+}
