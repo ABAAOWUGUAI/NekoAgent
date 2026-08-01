@@ -29,6 +29,12 @@ server address, user-specific Assistant instance or private PetPack is bundled.
 This project ships no default character identity. After bootstrap, create your
 own Assistant in the console or explicitly apply an optional Starter Pack.
 
+Version `0.2.0` adds optional Owner-private QQ voice-message input. Audio is
+fetched through a bounded channel path, transcribed by a deployer-supplied local
+`whisper.cpp` runtime, dispatched into the same Continuity chain as text, and
+answered through normal text Delivery/ACK. It also settles terminal Interaction
+Plans and empty Skill Plans from final turn evidence.
+
 Version `0.1.1` closes the run-now follow-up path: quoted or recent Automation
 context is resolved before execution, unvalidated model-proposed actions fail
 closed, and operational replies retain bounded job references for continuity.
@@ -75,6 +81,8 @@ After local startup:
    model before binding it to a scene.
 2. Optionally integrate AstrBot or Codex by following
    [Integration Guide](docs/INTEGRATIONS.md).
+   Owner-private voice messages require the separate, opt-in
+   [Voice Input Guide](docs/VOICE_INPUT.md).
 3. Run the dependency-free public source Gate at any time:
 
 ```powershell
@@ -130,6 +138,7 @@ the presence of a workflow file alone does not protect `main`.
 - [Deployment guide](docs/DEPLOYMENT.md)
 - [Operations and recovery guide](docs/OPERATIONS.md)
 - [Repository protection guide](docs/REPOSITORY_PROTECTION.md)
+- [Owner-private voice input](docs/VOICE_INPUT.md)
 - [Privacy boundary](PRIVACY.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Changelog](CHANGELOG.md)

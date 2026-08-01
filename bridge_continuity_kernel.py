@@ -268,7 +268,7 @@ class ContinuityKernel:
             else "unavailable" if source_status == "unavailable"
             else "applied" if selected and applied
             else "not_applied" if selected
-            else "selected"
+            else "not_applied"
         )
         payload = {"selected": selected, "required": required, "missing": missing}
         plan_hash = _digest(_json(payload))

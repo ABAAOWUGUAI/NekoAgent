@@ -160,10 +160,7 @@ from bridge_knowledge_http import KnowledgeHttpApi
 from bridge_interaction_contract import assemble_response
 from bridge_interaction_http import InteractionPlanHttpApi
 from bridge_interaction_action_gate import gate_actions
-from bridge_interaction_runtime import (
-    InteractionPersistenceRuntime,
-    InteractionPlannerRuntime,
-)
+from bridge_interaction_runtime import InteractionPersistenceRuntime, InteractionPlannerRuntime
 from bridge_approval_runtime import (
     consume_legacy_pending,
     create_legacy_pending,
@@ -7058,7 +7055,7 @@ GATE8_HTTP_API = Gate8HttpApi(
 SOCIAL_VIRTUAL_HTTP_API = SocialVirtualHttpApi(_assistant_db_connect, _json_response)
 GROUP_PARTICIPATION_HTTP_API = GroupParticipationHttpApi(_assistant_db_connect, _json_response)
 QQ_ACCESS_HTTP_API = QqAccessHttpApi(_assistant_db_connect, _json_response)
-QQ_RUNTIME_HTTP_API = QqRuntimeHttpApi(_assistant_db_connect, _json_response)
+QQ_RUNTIME_HTTP_API = QqRuntimeHttpApi(_assistant_db_connect,_json_response,None,globals())
 QQ_OBJECT_RUNTIME = QqObjectRuntime(
     _assistant_db_connect, _db_connect, _json_response,
     row_to_task=_row_to_task, public_task=_public_task, get_task=_get_task,

@@ -13,10 +13,32 @@ from bridge_migrations import utc_now
 
 
 FINAL_TASK_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
+FINAL_PLAN_STATUSES = {
+    "succeeded": "completed",
+    "failed": "failed",
+    "blocked": "failed",
+    "cancelled": "cancelled",
+}
 
 
 def _clip(value: object, limit: int = 160) -> str:
     return str(value or "").strip()[:limit]
+
+
+def _settle_interaction_plan(conn, turn, turn_status: str, now: str) -> str:
+    plan_id = _clip(turn["plan_id"])
+    plan_status = FINAL_PLAN_STATUSES.get(str(turn_status), "")
+    if not plan_id or not plan_status:
+        return ""
+    conn.execute(
+        """
+        UPDATE interaction_plans
+        SET status=?,updated_at=?
+        WHERE id=? AND status IN ('planned','dispatched')
+        """,
+        (plan_status, now, plan_id),
+    )
+    return plan_status
 
 
 def _settle_skill_outcome(kernel, conn, turn_id: str, succeeded: bool, now: str) -> None:
@@ -184,12 +206,13 @@ def settle_delivery(kernel, delivery_id: str, outcome: str, error_kind: str = ""
                     turn["id"],
                 ),
             )
+            plan_status = _settle_interaction_plan(conn, turn, status, now)
             kernel._event(
                 conn,
                 str(turn["id"]),
                 "delivery_settled",
                 outcome,
-                {"delivery_id": delivery_id},
+                {"delivery_id": delivery_id, "plan_status": plan_status},
                 key=f"delivery-settled:{delivery_id}:{outcome}",
             )
             if outcome in {"dead_letter", "ambiguous"} and learning_feature_enabled(conn):

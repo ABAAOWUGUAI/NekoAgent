@@ -46,11 +46,16 @@ def policy_for(method: str, path: str, *, long_poll_seconds: int = 25) -> Reques
     route = str(path or "").split("?", 1)[0]
     if route == "/deliveries/claim":
         return RequestPolicy("long_poll", min(90, max(20, int(long_poll_seconds) + 15)), True)
+    if route == "/qq/voice/fetch":
+        return RequestPolicy("voice_fetch", 40, True)
+    if route == "/qq/voice/input":
+        return RequestPolicy("voice_input", 195, True)
     if route in {"/assistant/dispatch", "/assistant/group/dispatch"}:
         return INTERACTIVE
     if route in {
         "/status", "/server/status", "/tasks/stats", "/qq/events",
         "/qq/channel/runtime-config", "/qq/channel/heartbeat",
+        "/qq/voice/transport-probe",
     } or route.endswith(("/ack", "/retry", "/delivery")):
         return QUICK
     return STANDARD

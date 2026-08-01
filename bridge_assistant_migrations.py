@@ -21,7 +21,6 @@ from bridge_migrations import (
     MigrationError,
     applied_migrations,
     apply_migrations,
-    utc_now,
 )
 from bridge_assistant_identity_schema import (
     IDENTITY_MIGRATION_CHECKSUM,
@@ -140,6 +139,13 @@ from bridge_continuity_kernel_schema import (
     apply_continuity_kernel_v1,
     require_continuity_kernel_schema,
 )
+from bridge_voice_transport_probe_schema import (
+    VOICE_TRANSPORT_PROBE_MIGRATION_CHECKSUM,
+    apply_voice_transport_probe_v1,
+    require_voice_transport_probe_schema,
+)
+from bridge_voice_migration_registry import VOICE_MIGRATIONS, require_voice_schemas
+from bridge_assistant_audit import audit, record_security_audit
 
 
 ASSISTANT_CORE_NAMESPACE = "assistant-core"
@@ -487,6 +493,13 @@ ASSISTANT_CORE_MIGRATIONS = (
         apply=apply_automation_conversation_v1,
         checksum=AUTOMATION_CONVERSATION_MIGRATION_CHECKSUM,
     ),
+    Migration(
+        version=31,
+        name="qq_voice_transport_probe_v1",
+        apply=apply_voice_transport_probe_v1,
+        checksum=VOICE_TRANSPORT_PROBE_MIGRATION_CHECKSUM,
+    ),
+    *VOICE_MIGRATIONS,
 )
 
 
@@ -542,6 +555,9 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     network_policy_schema = None
     continuity_kernel_schema = None
     automation_conversation_schema = None
+    voice_transport_probe_schema = None
+    voice_message_schema = None
+    voice_input_schema = None
     if 3 in versions:
         identity_schema = require_identity_schema(conn)
         if 4 in versions:
@@ -592,6 +608,9 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         continuity_kernel_schema = require_continuity_kernel_schema(conn)
     if 30 in versions:
         automation_conversation_schema = require_automation_conversation_schema(conn)
+    if 31 in versions:
+        voice_transport_probe_schema = require_voice_transport_probe_schema(conn)
+    voice_message_schema, voice_input_schema = require_voice_schemas(conn, versions)
     pending = [
         {"version": item.version, "name": item.name, "checksum": item.resolved_checksum()}
         for item in ASSISTANT_CORE_MIGRATIONS
@@ -627,6 +646,9 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         "network_policy_schema": network_policy_schema,
         "continuity_kernel_schema": continuity_kernel_schema,
         "automation_conversation_schema": automation_conversation_schema,
+        "voice_transport_probe_schema": voice_transport_probe_schema,
+        "voice_message_schema": voice_message_schema,
+        "voice_input_schema": voice_input_schema,
         "applied": applied,
         "pending": pending,
         "would_apply": [item["version"] for item in pending],
@@ -706,6 +728,13 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
     learning_schema = require_learning_schema(conn) if 26 in versions else None
     network_policy_schema = require_network_policy_schema(conn) if 27 in versions else None
     continuity_kernel_schema = require_continuity_kernel_schema(conn) if 28 in versions else None
+    automation_conversation_schema = (
+        require_automation_conversation_schema(conn) if 30 in versions else None
+    )
+    voice_transport_probe_schema = (
+        require_voice_transport_probe_schema(conn) if 31 in versions else None
+    )
+    voice_message_schema, voice_input_schema = require_voice_schemas(conn, versions)
     return {
         "registered": True,
         "applied": applied,
@@ -732,6 +761,10 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
         "learning_schema": learning_schema,
         "network_policy_schema": network_policy_schema,
         "continuity_kernel_schema": continuity_kernel_schema,
+        "automation_conversation_schema": automation_conversation_schema,
+        "voice_transport_probe_schema": voice_transport_probe_schema,
+        "voice_message_schema": voice_message_schema,
+        "voice_input_schema": voice_input_schema,
     }
 
 
@@ -754,62 +787,3 @@ def register_after_legacy_bootstrap(conn: sqlite3.Connection) -> list[int]:
 
     conn.commit()
     return ensure_assistant_core_migrations(conn)
-
-
-def record_security_audit(
-    conn: sqlite3.Connection,
-    event_type: str,
-    outcome: str,
-    *,
-    actor_type: str = "admin",
-    channel: str = "web",
-    client_ip: str = "",
-    detail: Mapping[str, object] | None = None,
-) -> int:
-    """Persist a sanitized security event; callers must never include secrets."""
-
-    event_type = str(event_type or "").strip()[:80]
-    outcome = str(outcome or "").strip()[:40]
-    if not event_type or not outcome:
-        raise ValueError("security_audit_event_required")
-    cursor = conn.execute(
-        """
-        INSERT INTO security_audit_events(
-            event_type, outcome, actor_type, channel, client_ip, detail_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event_type,
-            outcome,
-            str(actor_type or "admin")[:40],
-            str(channel or "web")[:40],
-            str(client_ip or "")[:80],
-            json.dumps(dict(detail or {}), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-            utc_now(),
-        ),
-    )
-    return int(cursor.lastrowid)
-
-
-def audit(
-    connect,
-    event_type: str,
-    outcome: str,
-    client_ip: str = "",
-    detail: Mapping[str, object] | None = None,
-) -> bool:
-    """Record an admin event without allowing audit I/O to block logout."""
-
-    try:
-        with connect() as conn:
-            record_security_audit(
-                conn,
-                event_type,
-                outcome,
-                client_ip=client_ip,
-                detail=detail,
-            )
-        return True
-    except (OSError, sqlite3.Error, ValueError) as exc:
-        print(f"security_audit_failed event={event_type} error={type(exc).__name__}", flush=True)
-        return False

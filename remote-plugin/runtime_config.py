@@ -25,6 +25,9 @@ class ChannelRuntimeState:
     delivery_poll_seconds: int = 12
     notification_interval_seconds: int = 30
     actual_bot_id: str = ""
+    voice_transport_probe_enabled: bool = False
+    voice_input_fetch_enabled: bool = False
+    voice_input_enabled: bool = False
     last_sync_error: str = "runtime_config_not_loaded"
 
     @staticmethod
@@ -68,6 +71,15 @@ class ChannelRuntimeState:
         notification_interval_seconds = self._bounded(
             payload, "notification_interval_seconds", 10, 3600,
         )
+        probe_enabled = payload.get("voice_transport_probe_enabled", False)
+        if not isinstance(probe_enabled, bool):
+            raise ValueError("runtime_voice_transport_probe_enabled_invalid")
+        fetch_enabled = payload.get("voice_input_fetch_enabled", False)
+        if not isinstance(fetch_enabled, bool):
+            raise ValueError("runtime_voice_input_fetch_enabled_invalid")
+        input_enabled = payload.get("voice_input_enabled", False)
+        if not isinstance(input_enabled, bool):
+            raise ValueError("runtime_voice_input_enabled_invalid")
         changed = version != self.version or etag != self.etag
         self.version = version
         self.etag = etag.lower()
@@ -76,6 +88,9 @@ class ChannelRuntimeState:
         self.reply_max_chars = reply_max_chars
         self.delivery_poll_seconds = delivery_poll_seconds
         self.notification_interval_seconds = notification_interval_seconds
+        self.voice_transport_probe_enabled = probe_enabled
+        self.voice_input_fetch_enabled = fetch_enabled
+        self.voice_input_enabled = input_enabled
         self.ready = True
         self.last_sync_error = ""
         return changed
@@ -162,6 +177,9 @@ class ChannelRuntimeClient:
                             "heartbeat": True,
                             "delivery_claim": True,
                             "actual_bot_discovery": bool(actual_bot_id),
+                            "voice_transport_probe": True,
+                            "voice_input_fetch": True,
+                            "voice_input": True,
                         },
                     },
                 )
