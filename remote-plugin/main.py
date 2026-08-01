@@ -23,6 +23,8 @@ from .participation_metadata import (
     event_visual_media_payloads,
 )
 from .runtime_config import ChannelRuntimeClient, ChannelRuntimeState
+from .voice_transport_probe import handle_owner_private_voice_transport_probe
+from .voice_input_fetch import handle_owner_private_voice
 
 
 BRIDGE_URL = os.environ.get("ASSISTANT_PLATFORM_BRIDGE_URL", "").rstrip("/")
@@ -1459,6 +1461,35 @@ class CodexAgentPlugin(Star):
             event.should_call_llm(True)
             event.stop_event()
             return
+
+        if RUNTIME_STATE.voice_transport_probe_enabled:
+            handled, probe_reply = await handle_owner_private_voice_transport_probe(
+                event,
+                external_message_id=event_external_message_id(event),
+                call_bridge=_call_bridge,
+                logger=logger,
+            )
+            if handled:
+                event.should_call_llm(True)
+                event.stop_event()
+                yield event.plain_result(probe_reply)
+                return
+
+        if RUNTIME_STATE.voice_input_enabled or RUNTIME_STATE.voice_input_fetch_enabled:
+            handled, voice_reply = await handle_owner_private_voice(
+                event,
+                input_enabled=RUNTIME_STATE.voice_input_enabled,
+                external_message_id=event_external_message_id(event),
+                session=_event_session(event),
+                call_bridge=_call_bridge,
+                logger=logger,
+            )
+            if handled:
+                event.should_call_llm(True)
+                event.stop_event()
+                if voice_reply:
+                    yield event.plain_result(voice_reply)
+                return
 
         visual_media = (
             await event_visual_media_payloads(event)

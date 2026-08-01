@@ -13,6 +13,7 @@ from typing import Mapping
 from bridge_assistant_identity_schema import DEFAULT_OWNER_ACTOR_ID
 from bridge_conversation_memory_schema import MEMORY_SCOPE_FEATURE_FLAG
 from bridge_migrations import utc_after, utc_now
+from bridge_inbound_context import current_inbound_exchange_context
 
 
 def _rows(cursor: sqlite3.Cursor) -> list[dict]:
@@ -208,12 +209,17 @@ def record_conversation(
     reply_to_external_message_id: str = "",
     directed_to_assistant: bool = False,
     message_kind: str = "text",
+    source_type_override: str = "",
     metadata: Mapping[str, object] | None = None,
 ) -> str | None:
     content = str(content or "").strip()
     if not content:
         return None
     legacy_key = str(legacy_user_id or "default").strip()
+    inbound = current_inbound_exchange_context() if role == "user" else {}
+    external_message_id = external_message_id or str(inbound.get("_external_message_id") or "")
+    message_kind = message_kind if message_kind != "text" else str(inbound.get("message_kind") or "text")
+    source_type_override = source_type_override or str(inbound.get("source_type_override") or "")
     created_at = utc_now()
     cursor = conn.execute(
         "INSERT INTO conversations(user_id,role,content,created_at) VALUES(?,?,?,?)",
@@ -222,6 +228,10 @@ def record_conversation(
     if not _has_v2(conn):
         return None
     thread = resolve_thread(conn, legacy_key, source=source, project_id=project_id)
+    source_type = str(source_type_override or "").strip()
+    if source_type and source_type not in {"qq_voice_transcript"}:
+        raise ValueError("conversation_source_type_override_invalid")
+    source_type = source_type or str(thread["channel_type"])
     message_id = "message-" + uuid.uuid4().hex
     conn.execute(
         """
@@ -233,7 +243,7 @@ def record_conversation(
         """,
         (
             message_id, thread["id"], str(role or ""), content[-6000:],
-            thread["channel_type"], int(cursor.lastrowid), created_at,
+            source_type, int(cursor.lastrowid), created_at,
             str(external_message_id or "")[:300],
             str(reply_to_external_message_id or "")[:300],
             1 if directed_to_assistant else 0,

@@ -70,6 +70,9 @@ _CHANNEL_POST_ROUTES = frozenset(
     {
         "/qq/access/check",
         "/qq/channel/heartbeat",
+        "/qq/voice/transport-probe",
+        "/qq/voice/fetch",
+        "/qq/voice/input",
         "/qq/events",
         "/deliveries/claim",
         "/projects",

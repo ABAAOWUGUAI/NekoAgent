@@ -12,6 +12,11 @@ import sqlite3
 from bridge_migrations import utc_now
 from bridge_qq_access_schema import QQ_CHANNEL_ID
 from bridge_qq_runtime_schema import require_qq_runtime_schema
+from bridge_voice_transport_probe_schema import VOICE_TRANSPORT_PROBE_FEATURE_FLAG
+from bridge_voice_message_schema import (
+    VOICE_INPUT_FEATURE_FLAG,
+    VOICE_INPUT_FETCH_FEATURE_FLAG,
+)
 
 
 QQ_ID_PATTERN = re.compile(r"^[1-9][0-9]{4,19}$")
@@ -23,6 +28,9 @@ CAPABILITY_KEYS = frozenset(
         "heartbeat",
         "delivery_claim",
         "actual_bot_discovery",
+        "voice_transport_probe",
+        "voice_input_fetch",
+        "voice_input",
     },
 )
 
@@ -138,6 +146,21 @@ def get_runtime_settings(conn: sqlite3.Connection) -> dict:
         raise ValueError("qq_channel_settings_missing")
     settings = runtime_settings_from_row(row)
     settings.update({"version": int(row[6]), "updated_at": str(row[7] or "")})
+    probe_flag = conn.execute(
+        "SELECT enabled FROM assistant_feature_flags WHERE name=?",
+        (VOICE_TRANSPORT_PROBE_FEATURE_FLAG,),
+    ).fetchone()
+    settings["voice_transport_probe_enabled"] = bool(probe_flag and probe_flag[0])
+    fetch_flag = conn.execute(
+        "SELECT enabled FROM assistant_feature_flags WHERE name=?",
+        (VOICE_INPUT_FETCH_FEATURE_FLAG,),
+    ).fetchone()
+    settings["voice_input_fetch_enabled"] = bool(fetch_flag and fetch_flag[0])
+    input_flag = conn.execute(
+        "SELECT enabled FROM assistant_feature_flags WHERE name=?",
+        (VOICE_INPUT_FEATURE_FLAG,),
+    ).fetchone()
+    settings["voice_input_enabled"] = bool(input_flag and input_flag[0])
     etag_payload = {key: value for key, value in settings.items() if key != "updated_at"}
     settings["etag"] = hashlib.sha256(
         _canonical_json(etag_payload).encode("utf-8"),
@@ -158,6 +181,9 @@ def channel_runtime_config(conn: sqlite3.Connection) -> dict:
         "reply_max_chars": settings["reply_max_chars"],
         "delivery_poll_seconds": settings["delivery_poll_seconds"],
         "notification_interval_seconds": settings["notification_interval_seconds"],
+        "voice_transport_probe_enabled": settings["voice_transport_probe_enabled"],
+        "voice_input_fetch_enabled": settings["voice_input_fetch_enabled"],
+        "voice_input_enabled": settings["voice_input_enabled"],
     }
 
 

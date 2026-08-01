@@ -34,6 +34,10 @@ from bridge_interaction_repository import (
     create_interaction_plan,
     interaction_plan_feature_enabled,
 )
+from bridge_inbound_context import (
+    current_inbound_exchange_context,
+    inbound_exchange_context,
+)
 
 
 class InteractionPersistenceRuntime:
@@ -93,7 +97,8 @@ class InteractionPersistenceRuntime:
         """Atomically record one exchange and bind its exact inbound message."""
 
         plan_record = mode_decision.get("interaction_plan_record") or {}
-        inbound = dict(inbound_context or {})
+        inbound = current_inbound_exchange_context()
+        inbound.update(dict(inbound_context or {}))
         metadata = {
             key: inbound.get(key)
             for key in ("reply_text_sha256", "reply_text_length")
@@ -106,7 +111,11 @@ class InteractionPersistenceRuntime:
                 external_message_id=str(inbound.get("_external_message_id") or ""),
                 reply_to_external_message_id=str(inbound.get("reply_to_external_message_id") or ""),
                 directed_to_assistant=bool(inbound.get("reply_to_assistant")),
-                message_kind="attachment" if inbound.get("attachments") else "text",
+                message_kind=str(
+                    inbound.get("message_kind")
+                    or ("attachment" if inbound.get("attachments") else "text")
+                ),
+                source_type_override=str(inbound.get("source_type_override") or ""),
                 metadata=metadata,
             )
             record_conversation(
@@ -268,4 +277,9 @@ class InteractionPlannerRuntime:
         return decision, saved_session
 
 
-__all__ = ["InteractionPersistenceRuntime", "InteractionPlannerRuntime"]
+__all__ = [
+    "InteractionPersistenceRuntime",
+    "InteractionPlannerRuntime",
+    "current_inbound_exchange_context",
+    "inbound_exchange_context",
+]

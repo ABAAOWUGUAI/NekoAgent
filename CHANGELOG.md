@@ -6,6 +6,33 @@ semantic version tags after the first public release.
 
 ## Unreleased
 
+## [0.2.0] - 2026-08-02
+
+### Added
+
+- Optional Owner-private QQ voice-message input through the AstrBot adapter,
+  bounded Bridge fetch, local `ffmpeg` decoding and local `whisper.cpp`
+  transcription. The signed media URL and transcript are not copied into
+  receipt metadata, and source audio is deleted after processing.
+- A fail-closed voice-input cutover command that requires an explicit
+  text-reply-only confirmation and validates the local ASR executable, model
+  digest and decoder before enabling the capability.
+
+### Fixed
+
+- Terminal Continuity outcomes now settle their bound Interaction Plan instead
+  of leaving a confirmed turn in `dispatched`.
+- Turns that selected no Skill now finish as `not_applied`; reconciliation can
+  repair historical empty Skill Plans and terminal Interaction Plans only when
+  final evidence exists.
+
+### Security
+
+- Voice input is disabled by default, accepts only authenticated Owner-private
+  record events, enforces HTTPS host allowlists, DNS/peer-IP checks, size and
+  duration limits, one ASR concurrency slot and ephemeral media retention.
+- Voice output and native QQ voice calls remain outside this release.
+
 ## [0.1.1] - 2026-08-01
 
 ### Fixed

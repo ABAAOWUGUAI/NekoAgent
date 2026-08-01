@@ -94,3 +94,56 @@ def test_automation_followup_actions_are_context_bound_and_fail_closed() -> None
     assert action_gate.planned_automation_action_types(
         {"interaction_plan": {"actions": [{"type": "automation.schedule.run_now"}]}},
     ) == ["automation.schedule.run_now"]
+
+
+def test_owner_private_voice_input_is_local_bounded_and_opt_in() -> None:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    schema = importlib.import_module("bridge_voice_message_schema")
+    source = importlib.import_module("bridge_voice_message_source")
+
+    assert schema.VOICE_INPUT_FEATURE_FLAG == "voice_input_v1"
+    assert source.MAX_QQ_VOICE_BYTES == 10 * 1024 * 1024
+    validated = source.validate_qq_private_record_source(
+        {
+            "schema_version": 1,
+            "source_kind": "llbot_onebot_record",
+            "channel_type": "qq",
+            "scope_type": "private",
+            "external_message_id": "public-smoke-message",
+            "attachment_index": 0,
+            "file_handle_sha256": "a" * 64,
+            "transport_url": "https://media.example.test/voice.amr?signature=ephemeral",
+        },
+        allowed_host_suffixes=("example.test",),
+    )
+    receipt = source.qq_record_receipt_metadata(validated)
+    assert validated["transport_url"].startswith("https://")
+    assert "transport_url" not in receipt
+    for relative in (
+        "bridge_voice_dispatch.py",
+        "bridge_voice_input.py",
+        "bridge_voice_input_http.py",
+        "bridge_voice_input_runtime.py",
+        "bridge_voice_media_fetch.py",
+        "remote-plugin/voice_input_fetch.py",
+        "remote-plugin/voice_message_source.py",
+        "tools/set_voice_input.py",
+        "docs/VOICE_INPUT.md",
+        "docs/zh-CN/VOICE_INPUT.md",
+    ):
+        path = ROOT / relative
+        if not path.is_file():
+            path = ROOT / "open-source-template" / relative
+        assert path.is_file(), f"missing_voice_input_file:{relative}"
+
+
+def test_continuity_terminal_outcomes_settle_plan_and_empty_skill_state() -> None:
+    kernel_source = (ROOT / "bridge_continuity_kernel.py").read_text(encoding="utf-8")
+    outcome_source = (ROOT / "bridge_continuity_outcomes.py").read_text(encoding="utf-8")
+    reconciliation_source = (ROOT / "bridge_continuity_reconciliation.py").read_text(encoding="utf-8")
+
+    assert 'else "not_applied"' in kernel_source
+    assert '"succeeded": "completed"' in outcome_source
+    assert "_settle_interaction_plan" in outcome_source
+    assert "projection_reconciled" in reconciliation_source
