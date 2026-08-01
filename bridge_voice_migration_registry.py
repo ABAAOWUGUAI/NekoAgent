@@ -10,6 +10,16 @@ from bridge_voice_message_schema import (
     require_voice_input_schema,
     require_voice_message_schema,
 )
+from bridge_voice_output_schema import (
+    VOICE_OUTPUT_MIGRATION_CHECKSUM,
+    apply_voice_output_v1,
+    require_voice_output_schema,
+)
+from bridge_voice_response_policy_schema import (
+    VOICE_RESPONSE_POLICY_MIGRATION_CHECKSUM,
+    apply_voice_response_policy_v1,
+    require_voice_response_policy_schema,
+)
 
 
 VOICE_MIGRATIONS = (
@@ -25,6 +35,18 @@ VOICE_MIGRATIONS = (
         apply=apply_voice_input_v1,
         checksum=VOICE_INPUT_MIGRATION_CHECKSUM,
     ),
+    Migration(
+        34,
+        "qq_voice_output_v1",
+        apply=apply_voice_output_v1,
+        checksum=VOICE_OUTPUT_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        35,
+        "assistant_voice_response_policy_v1",
+        apply=apply_voice_response_policy_v1,
+        checksum=VOICE_RESPONSE_POLICY_MIGRATION_CHECKSUM,
+    ),
 )
 
 
@@ -32,6 +54,8 @@ def require_voice_schemas(conn, versions):
     return (
         require_voice_message_schema(conn) if 32 in versions else None,
         require_voice_input_schema(conn) if 33 in versions else None,
+        require_voice_output_schema(conn) if 34 in versions else None,
+        require_voice_response_policy_schema(conn) if 35 in versions else None,
     )
 
 

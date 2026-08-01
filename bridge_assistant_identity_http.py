@@ -21,6 +21,10 @@ from bridge_assistant_resources import (
     create_assistant,
     create_voice_pack,
 )
+from bridge_voice_response_policy import (
+    active_voice_response_policy,
+    update_active_voice_response_policy,
+)
 
 
 def _error_status(message: str) -> int:
@@ -63,6 +67,7 @@ class AssistantIdentityHttpApi:
             "/assistant/instances/current": current_assistant,
             "/assistant/identity/resources": identity_resources,
             "/assistant/identity/cutover-plan": identity_cutover_plan,
+            "/assistant/voice-response-policy": active_voice_response_policy,
         }
         handler = handlers.get(path)
         if handler is None:
@@ -106,6 +111,9 @@ class AssistantIdentityHttpApi:
                         conn,
                         str(payload.get("voice_pack_id") or "").strip(),
                     )
+                    status = 200
+                elif path == "/assistant/voice-response-policy":
+                    result = update_active_voice_response_policy(conn, payload)
                     status = 200
                 else:
                     return False

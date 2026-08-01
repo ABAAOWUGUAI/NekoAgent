@@ -6,6 +6,27 @@ semantic version tags after the first public release.
 
 ## Unreleased
 
+## [0.3.0] - 2026-08-02
+
+### Added
+
+- Optional Owner-private voice replies through a locally managed VoicePack,
+  offline TTS, immutable Audio Artifacts and the existing Delivery/ACK chain.
+- An Assistant-level response-modality policy with `text_only`,
+  `explicit_only`, `emotion_auto` and `always` modes, configurable affect
+  types, confidence threshold, cooldown and daily automatic-voice budget.
+- An Admin console editor for the response-modality policy with optimistic
+  version checks.
+
+### Security
+
+- Voice selection is enforced server-side and fails closed outside an
+  authenticated Owner-private chat. Explicit opt-out, non-chat work, missing
+  VoicePack/TTS state and policy-budget failures fall back to text.
+- TTS models and voice assets are not included. Deployers must provide,
+  license, hash and validate their own local VoicePack; native QQ calls remain
+  excluded.
+
 ## [0.2.0] - 2026-08-02
 
 ### Added
@@ -31,7 +52,7 @@ semantic version tags after the first public release.
 - Voice input is disabled by default, accepts only authenticated Owner-private
   record events, enforces HTTPS host allowlists, DNS/peer-IP checks, size and
   duration limits, one ASR concurrency slot and ephemeral media retention.
-- Voice output and native QQ voice calls remain outside this release.
+- Native QQ voice calls remain outside this release.
 
 ## [0.1.1] - 2026-08-01
 

@@ -1,0 +1,32 @@
+.voice-response-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 1rem;
+}
+
+.voice-emotion-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: .65rem 1rem;
+  margin: 1rem 0;
+}
+
+.voice-emotion-options label {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+}
+
+.voice-policy-boundary {
+  margin-block: 1rem;
+  padding: .85rem 1rem;
+  border-inline-start: .25rem solid var(--accent, #5377dc);
+  background: color-mix(in srgb, var(--panel, #fff) 88%, var(--accent, #5377dc));
+}
+
+@media (forced-colors: active) {
+  .voice-policy-boundary {
+    border: 1px solid CanvasText;
+    border-inline-start-width: .25rem;
+  }
+}

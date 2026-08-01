@@ -29,7 +29,14 @@ server address, user-specific Assistant instance or private PetPack is bundled.
 This project ships no default character identity. After bootstrap, create your
 own Assistant in the console or explicitly apply an optional Starter Pack.
 
-Version `0.2.0` adds optional Owner-private QQ voice-message input. Audio is
+Version `0.3.0` adds optional Owner-private voice replies. The server-owned
+response-modality policy can keep replies in text, require an explicit voice
+request, allow bounded automatic voice for affective conversation, or prefer
+voice for ordinary Owner-private chat. Selected replies are rendered by a
+deployer-supplied local VoicePack and delivered through immutable Audio
+Artifacts and the existing ACK path. No TTS model or voice asset is bundled.
+
+Version `0.2.0` added optional Owner-private QQ voice-message input. Audio is
 fetched through a bounded channel path, transcribed by a deployer-supplied local
 `whisper.cpp` runtime, dispatched into the same Continuity chain as text, and
 answered through normal text Delivery/ACK. It also settles terminal Interaction
@@ -83,6 +90,8 @@ After local startup:
    [Integration Guide](docs/INTEGRATIONS.md).
    Owner-private voice messages require the separate, opt-in
    [Voice Input Guide](docs/VOICE_INPUT.md).
+   Voice replies require a separately configured VoicePack and the
+   [Voice Output Guide](docs/VOICE_OUTPUT.md).
 3. Run the dependency-free public source Gate at any time:
 
 ```powershell
@@ -139,6 +148,7 @@ the presence of a workflow file alone does not protect `main`.
 - [Operations and recovery guide](docs/OPERATIONS.md)
 - [Repository protection guide](docs/REPOSITORY_PROTECTION.md)
 - [Owner-private voice input](docs/VOICE_INPUT.md)
+- [Owner-private voice output](docs/VOICE_OUTPUT.md)
 - [Privacy boundary](PRIVACY.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Changelog](CHANGELOG.md)

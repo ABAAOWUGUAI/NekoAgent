@@ -90,6 +90,7 @@ _CHANNEL_POST_ROUTES = frozenset(
 _CHANNEL_ROUTE_PATTERNS = {
     "GET": (
         re.compile(r"^/tasks/[^/]+$"),
+        re.compile(r"^/deliveries/[^/]+/media$"),
     ),
     "POST": (
         re.compile(r"^/deliveries/[^/]+/(?:send-start|ack|retry|ambiguous)$"),

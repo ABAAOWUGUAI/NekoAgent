@@ -26,7 +26,7 @@
       automations: ['views-automation.js'],
       projects: ['admin-projects.css', 'views-workspace.js', 'views-projects.js'],
       assistant: ['views-workspace.js', 'views-persona.js', 'admin-knowledge.css', 'views-knowledge.js'],
-      brain: ['admin-persona.css', 'admin-projects.css', 'views-workspace.js', 'views-persona.js', 'views-projects.js'],
+      brain:['admin-persona.css','admin-voice.css','views-workspace.js','views-persona.js','views-voice.js'],
       relationship: ['admin-gate8.css', 'views-gate8.js', 'admin-social-virtual.css', 'views-social-virtual.js'],
       social: ['views-workspace.js', 'views-persona.js', 'views-catalog.js'],
       models: ['views-model-playground.js', 'model-validation-diagnostics.js', 'model-discovery-validation-state.js', 'views-models.js', 'admin-gate8.css', 'views-gate8.js'],

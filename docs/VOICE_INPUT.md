@@ -97,5 +97,6 @@ Service health, adapter load, transcription success, a queued Delivery or
 `sent` alone does not pass this Gate. Stop at the first missing evidence and
 repair that boundary before enabling more channels or voice capabilities.
 
-Voice synthesis, voice replies, group voice participation and native QQ voice
-calls are intentionally excluded from version 0.2.0.
+Voice replies are a separate, explicitly configured capability documented in
+[Voice Output](VOICE_OUTPUT.md). Group voice participation and native QQ voice
+calls remain excluded.

@@ -50,6 +50,7 @@ _ADMIN_CSS_NAMES = (
     "admin-knowledge.css",
     "admin-persona.css",
     "admin-social-virtual.css",
+    "admin-voice.css",
 )
 _ADMIN_JS_NAMES = (
     "motion.js",
@@ -63,6 +64,7 @@ _ADMIN_JS_NAMES = (
     "views-artifacts.js",
     "views-workspace.js",
     "views-persona.js",
+    "views-voice.js",
     "views-knowledge.js",
     "views-projects.js",
     "views-automation.js",

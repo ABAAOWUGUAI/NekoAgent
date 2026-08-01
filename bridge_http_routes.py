@@ -40,6 +40,7 @@ BRIDGE_POST_ROUTES = frozenset(
         "/assistant/instances/archive",
         "/assistant/voice-packs",
         "/assistant/voice-packs/archive",
+        "/assistant/voice-response-policy",
         "/assistant/proactive/plans",
         "/assistant/proactive/mark",
         "/assistant/relationship",

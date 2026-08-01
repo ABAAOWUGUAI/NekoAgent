@@ -13,6 +13,7 @@ from bridge_sqlite_commit_hooks import CommitMutationConnection
 ASSISTANT_HOME_ASSISTANT_TABLES = frozenset({
     "assistant_feature_flags",
     "assistant_instances",
+    "assistant_voice_response_policies",
     "continuity_turns",
     "conversation_messages",
     "conversation_threads",

@@ -62,6 +62,7 @@ class VoiceDispatchRuntime:
             "session": session,
             "trace_id": trace_id,
             "external_message_id": external_message_id,
+            "message": transcript,
         }
         transport = self.transport_metadata(
             safe_payload,

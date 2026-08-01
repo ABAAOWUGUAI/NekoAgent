@@ -51,14 +51,35 @@ def reserve_qq_response(outbox, transport: dict, *, scope: str) -> dict:
     return prepared
 
 
-def dispatch_qq_response(outbox, operation, transport: dict, *, scope: str, enabled: bool) -> dict:
+def dispatch_qq_response(
+    outbox,
+    operation,
+    transport: dict,
+    *,
+    scope: str,
+    enabled: bool,
+    voice_output=None,
+) -> dict:
     if not enabled:
         return operation()
     prepared = reserve_qq_response(outbox, transport, scope=scope)
-    return enqueue_qq_response(outbox, operation(), prepared, scope=scope)
+    return enqueue_qq_response(
+        outbox,
+        operation(),
+        prepared,
+        scope=scope,
+        voice_output=voice_output,
+    )
 
 
-def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) -> dict:
+def enqueue_qq_response(
+    outbox,
+    result: dict,
+    transport: dict,
+    *,
+    scope: str,
+    voice_output=None,
+) -> dict:
     """Attach exactly one logical response to the existing Delivery Outbox."""
 
     if scope == "group":
@@ -104,6 +125,14 @@ def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) ->
         or ""
     ).strip()
     content = _text(result)
+    voice_media = None
+    voice_error = ""
+    if callable(voice_output):
+        try:
+            voice_media = voice_output(result, transport, scope=scope)
+        except Exception as exc:
+            voice_error = str(exc).split(":", 1)[0][:120] or "voice_output_failed"
+            content = content.rstrip() + "\n\n（语音生成未完成，本次先保留文字回复。）"
     meme = result.get("meme") if isinstance(result.get("meme"), dict) else None
     automation_job = result.get("automation_job") if isinstance(result.get("automation_job"), dict) else {}
     automation_job_id = str(result.get("automation_job_id") or automation_job.get("id") or "").strip()
@@ -119,7 +148,7 @@ def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) ->
         channel="qq",
         destination=session,
         payload={
-            "kind": "assistant_reply",
+            "kind": "assistant_voice_reply" if voice_media else "assistant_reply",
             "logical_response_id": response_id,
             "source_message_id": source_message_id,
             "thread_ref": thread_ref,
@@ -128,6 +157,7 @@ def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) ->
             "send_session": session,
             "content": content,
             "meme": meme,
+            "voice_media": voice_media,
             "selection_id": str((meme or {}).get("selection_id") or ""),
             "response_kind": dispatch,
             "assistant_name": str(result.get("assistant_name") or ""),
@@ -147,7 +177,7 @@ def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) ->
         supersede_pending_social=delivery_class == "social",
         response_sequence=int(transport.get("_response_sequence") or 0),
     )
-    return {
+    response = {
         **result,
         "delivery_queued": True,
         "logical_response_id": response_id,
@@ -158,6 +188,22 @@ def enqueue_qq_response(outbox, result: dict, transport: dict, *, scope: str) ->
             "sequence": delivery.get("response_sequence") or 0,
         },
     }
+    if voice_media:
+        response["voice_output"] = {
+            "requested": True,
+            "prepared": True,
+            "artifact_id": voice_media["artifact_id"],
+            "artifact_version_id": voice_media["artifact_version_id"],
+            "sha256": voice_media["sha256"],
+            "duration_ms": voice_media["duration_ms"],
+        }
+    elif voice_error:
+        response["voice_output"] = {
+            "requested": True,
+            "prepared": False,
+            "error_kind": voice_error,
+        }
+    return response
 
 
 def bind_qq_response_decision(outbox, result: dict, observation: dict | None) -> dict | None:

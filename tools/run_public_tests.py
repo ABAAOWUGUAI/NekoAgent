@@ -60,7 +60,8 @@ def main() -> int:
         smoke_tests.test_automation_followup_actions_are_context_bound_and_fail_closed()
         smoke_tests.test_owner_private_voice_input_is_local_bounded_and_opt_in()
         smoke_tests.test_continuity_terminal_outcomes_settle_plan_and_empty_skill_state()
-        tests = 7
+        smoke_tests.test_owner_private_voice_output_is_policy_owned_and_opt_in()
+        tests = 8
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")
