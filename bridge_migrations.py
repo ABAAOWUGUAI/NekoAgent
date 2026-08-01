@@ -392,6 +392,7 @@ def _migration_v10_artifact_revision_binding() -> Migration:
         checksum=ARTIFACT_REVISION_BINDING_MIGRATION_CHECKSUM,
     )
 
+
 def _agent_platform_migrations() -> list[Migration]:
     """Build the registry lazily so schema modules can import migration errors.
 

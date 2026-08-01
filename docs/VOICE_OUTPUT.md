@@ -70,6 +70,9 @@ inside the final unit namespace before enabling voice delivery.
 - The Audio Artifact is immutable and readable by the Adapter only through the
   current Delivery lease. Local storage paths and lease material are not sent
   to QQ.
+- The WAV is stored under the registered generic `file` Artifact kind; its
+  audio identity is the canonical `audio/wav` version-file media type plus the
+  Delivery payload and hash. Do not invent an unregistered Artifact kind.
 - Failed synthesis or delivery falls back to truthful text. It must not claim
   that voice was sent.
 - Ambiguous sends use the existing reconciliation path and must not be retried

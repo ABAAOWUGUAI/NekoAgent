@@ -29,6 +29,7 @@ from bridge_voice_response_policy import (
 MAX_SPOKEN_CHARS = 600
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_SECONDS = 120.0
+VOICE_ARTIFACT_KIND = "file"
 
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}")
 
@@ -255,7 +256,7 @@ class VoiceOutputRuntime:
                     source_goal_id=str(result.get("goal_id") or task.get("goal_id") or ""),
                     source_run_id=str(result.get("run_id") or task.get("run_id") or ""),
                     title="QQ 语音回复",
-                    kind="audio",
+                    kind=VOICE_ARTIFACT_KIND,
                     summary="Owner 私聊回复媒介策略生成的受控语音回复。",
                     file_names=("reply.wav",),
                     retention_days=1,
@@ -296,6 +297,7 @@ class VoiceOutputRuntime:
 
 __all__ = [
     "MAX_AUDIO_BYTES",
+    "VOICE_ARTIFACT_KIND",
     "VoiceOutputError",
     "VoiceOutputRuntime",
     "explicit_voice_request",

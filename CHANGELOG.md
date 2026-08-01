@@ -18,6 +18,9 @@ semantic version tags after the first public release.
 - Hardened systemd deployments now document the required procfs boundary for
   Piper/ONNX: retain `ProtectProc=invisible` while using `ProcSubset=all`, so
   CPU topology remains readable without exposing other users' processes.
+- Voice WAV output now uses the existing registered `file` Artifact kind and a
+  canonical `audio/wav` file media type, keeping Artifact storage and
+  lease-bound QQ Delivery on one deterministic contract.
 
 ## [0.3.0] - 2026-08-02
 

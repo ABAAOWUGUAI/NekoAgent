@@ -58,6 +58,8 @@ Piper 与 ONNX Runtime 必须能读取 `/proc/cpuinfo` 等非进程 CPU 拓扑�
   哈希或执行状态；
 - Audio Artifact 不可变，Adapter 只能凭当前 Delivery lease 读取；本地路径和
   lease 材料不得发往 QQ；
+- WAV 使用已注册的通用 `file` Artifact kind；音频身份由版本文件的规范
+  `audio/wav` 媒体类型、Delivery payload 与哈希共同表达，不能发明未注册 kind；
 - 合成或投递失败时诚实回退文字，不得声称语音已发送；
 - 不确定发送进入既有 reconciliation，不能在无证据时再次发送第二条语音。
 

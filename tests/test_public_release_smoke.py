@@ -157,11 +157,15 @@ def test_owner_private_voice_output_is_policy_owned_and_opt_in() -> None:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     output_schema = importlib.import_module("bridge_voice_output_schema")
+    artifact_service = importlib.import_module("bridge_artifact_service")
+    output = importlib.import_module("bridge_voice_output")
     policy = importlib.import_module("bridge_voice_response_policy")
     tts = importlib.import_module("bridge_voice_tts")
 
     assert output_schema.VOICE_OUTPUT_FEATURE_FLAG == "voice_output_v1"
     assert output_schema.VOICE_DELIVERY_FEATURE_FLAG == "voice_delivery_v1"
+    assert output.VOICE_ARTIFACT_KIND == "file"
+    assert artifact_service.CANONICAL_MEDIA_TYPES[".wav"] == "audio/wav"
     assert policy.VOICE_RESPONSE_MODES == {
         "text_only", "explicit_only", "emotion_auto", "always",
     }
