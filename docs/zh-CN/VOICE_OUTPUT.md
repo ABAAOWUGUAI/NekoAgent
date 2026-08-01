@@ -43,6 +43,14 @@ Adapter 和适合使用场景的许可，固定运行资源与精确 SHA256，�
 管理台可以修改模式、情绪类型、最低置信度、冷却时间和每日上限；保存时携带
 expected version，过期写入会被拒绝。
 
+### systemd 硬化部署
+
+Piper 与 ONNX Runtime 必须能读取 `/proc/cpuinfo` 等非进程 CPU 拓扑元数据。Bridge
+使用 systemd hardening 时，应保留 `ProtectProc=invisible` 以隐藏其他用户的进程
+详情，同时设置 `ProcSubset=all`；`ProcSubset=pid` 会隐藏 CPU 元数据，导致同一模型
+在服务外正常、TTS 子进程在服务内却可能以 `SIGABRT` 终止。其余服务 hardening
+应继续保留，并在启用语音投递前从最终 unit namespace 内完成一次合成验证。
+
 ## 安全边界
 
 - 只有认证后的 Owner QQ 私聊 chat 可以选择语音；群聊和其他 Actor 回退文字；

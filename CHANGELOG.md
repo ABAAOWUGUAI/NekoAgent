@@ -15,6 +15,9 @@ semantic version tags after the first public release.
   response-modality cooldown and daily-budget reservation with a versioned
   compare-and-swap, so failed TTS or Artifact creation does not suppress the
   next eligible reply.
+- Hardened systemd deployments now document the required procfs boundary for
+  Piper/ONNX: retain `ProtectProc=invisible` while using `ProcSubset=all`, so
+  CPU topology remains readable without exposing other users' processes.
 
 ## [0.3.0] - 2026-08-02
 

@@ -173,6 +173,17 @@ def test_owner_private_voice_output_is_policy_owned_and_opt_in() -> None:
         model="model.onnx",
     )
     assert synthesizer.max_attempts == 2
+    voice_root = ROOT
+    if not (voice_root / "docs" / "VOICE_OUTPUT.md").is_file():
+        voice_root = ROOT / "open-source-template"
+    voice_output_en = (voice_root / "docs" / "VOICE_OUTPUT.md").read_text(encoding="utf-8")
+    voice_output_zh = (voice_root / "docs" / "zh-CN" / "VOICE_OUTPUT.md").read_text(
+        encoding="utf-8"
+    )
+    for source in (voice_output_en, voice_output_zh):
+        assert "ProtectProc=invisible" in source
+        assert "ProcSubset=all" in source
+        assert "ProcSubset=pid" in source
     for relative in (
         "bridge_voice_delivery.py",
         "bridge_voice_output.py",
