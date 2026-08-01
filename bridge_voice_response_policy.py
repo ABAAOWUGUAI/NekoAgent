@@ -225,7 +225,52 @@ def decide_and_reserve_voice_response(
         "trigger": "emotion" if policy["mode"] == "emotion_auto" else "always",
         "policy": policy,
         "affect": affect,
+        "reservation": {
+            "assistant_id": policy["assistant_id"],
+            "policy_version": policy["version"],
+            "reserved_at": now.isoformat(),
+            "reserved_day": day,
+            "reserved_count": count + 1,
+            "previous_last_auto_voice_at": str(row[7] or ""),
+            "previous_auto_voice_day": str(row[8] or ""),
+            "previous_auto_voice_count": int(row[9] or 0),
+        },
     }
+
+
+def release_voice_response_reservation(
+    conn: sqlite3.Connection,
+    decision: Mapping[str, object],
+) -> bool:
+    """Refund one failed automatic-voice reservation using a strict CAS."""
+
+    reservation = decision.get("reservation")
+    if not isinstance(reservation, Mapping):
+        return False
+    try:
+        cursor = conn.execute(
+            f"""
+            UPDATE {VOICE_RESPONSE_POLICY_TABLE}
+            SET last_auto_voice_at=?,auto_voice_day=?,auto_voice_count=?,updated_at=?
+            WHERE assistant_id=? AND version=?
+              AND last_auto_voice_at=? AND auto_voice_day=? AND auto_voice_count=?
+            """,
+            (
+                str(reservation.get("previous_last_auto_voice_at") or ""),
+                str(reservation.get("previous_auto_voice_day") or ""),
+                int(reservation.get("previous_auto_voice_count") or 0),
+                utc_now(),
+                str(reservation.get("assistant_id") or ""),
+                int(reservation.get("policy_version") or 0),
+                str(reservation.get("reserved_at") or ""),
+                str(reservation.get("reserved_day") or ""),
+                int(reservation.get("reserved_count") or 0),
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise VoiceResponsePolicyError("voice_response_reservation_invalid") from exc
+    conn.commit()
+    return cursor.rowcount == 1
 
 
 __all__ = [
@@ -237,5 +282,6 @@ __all__ = [
     "decide_and_reserve_voice_response",
     "explicit_voice_request",
     "negative_voice_request",
+    "release_voice_response_reservation",
     "update_active_voice_response_policy",
 ]

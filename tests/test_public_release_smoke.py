@@ -158,6 +158,7 @@ def test_owner_private_voice_output_is_policy_owned_and_opt_in() -> None:
         sys.path.insert(0, str(ROOT))
     output_schema = importlib.import_module("bridge_voice_output_schema")
     policy = importlib.import_module("bridge_voice_response_policy")
+    tts = importlib.import_module("bridge_voice_tts")
 
     assert output_schema.VOICE_OUTPUT_FEATURE_FLAG == "voice_output_v1"
     assert output_schema.VOICE_DELIVERY_FEATURE_FLAG == "voice_delivery_v1"
@@ -166,6 +167,12 @@ def test_owner_private_voice_output_is_policy_owned_and_opt_in() -> None:
     }
     assert policy.explicit_voice_request("请用语音回复我") is True
     assert policy.negative_voice_request("不要用语音") is True
+    assert callable(policy.release_voice_response_reservation)
+    synthesizer = tts.PiperSynthesizer(
+        command_prefix=("python", "-m", "piper"),
+        model="model.onnx",
+    )
+    assert synthesizer.max_attempts == 2
     for relative in (
         "bridge_voice_delivery.py",
         "bridge_voice_output.py",

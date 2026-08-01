@@ -22,6 +22,7 @@ from bridge_voice_output_schema import (
 from bridge_voice_response_policy import (
     decide_and_reserve_voice_response,
     explicit_voice_request,
+    release_voice_response_reservation,
 )
 
 
@@ -223,41 +224,51 @@ class VoiceOutputRuntime:
             )
         if response_decision is None:
             return None
-        voice = self._active_voice()
-        text = spoken_text(
-            result.get("reply") or result.get("output") or "",
-            limit=voice["max_chars"],
-        )
-        synthesizer = PiperSynthesizer(
-            command_prefix=(self.python, "-m", "piper"),
-            model=str(voice["model_path"]),
-            data_dir=str(self.model_root),
-            timeout_seconds=self.timeout_seconds,
-            temp_dir=str(self.temp_root),
-        )
-        self.temp_root.mkdir(parents=True, exist_ok=True)
         try:
-            audio = synthesizer.synthesize(text)
-        except (VoiceTtsError, OSError, ValueError) as exc:
-            kind = str(exc).split(":", 1)[0]
-            raise VoiceOutputError(kind or "voice_output_synthesis_failed") from exc
-        metadata = _validate_wav(audio)
-        task = result.get("task") if isinstance(result.get("task"), dict) else {}
-        with tempfile.TemporaryDirectory(prefix="qq-voice-artifact-", dir=self.temp_root) as directory:
-            source = Path(directory)
-            (source / "reply.wav").write_bytes(audio)
-            imported = self.artifact_service.import_from_directory(
-                source_root=source,
-                owner_id=voice["owner_id"],
-                origin_assistant_id=voice["assistant_id"],
-                source_goal_id=str(result.get("goal_id") or task.get("goal_id") or ""),
-                source_run_id=str(result.get("run_id") or task.get("run_id") or ""),
-                title="QQ 语音回复",
-                kind="audio",
-                summary="Owner 私聊回复媒介策略生成的受控语音回复。",
-                file_names=("reply.wav",),
-                retention_days=1,
+            voice = self._active_voice()
+            text = spoken_text(
+                result.get("reply") or result.get("output") or "",
+                limit=voice["max_chars"],
             )
+            synthesizer = PiperSynthesizer(
+                command_prefix=(self.python, "-m", "piper"),
+                model=str(voice["model_path"]),
+                data_dir=str(self.model_root),
+                timeout_seconds=self.timeout_seconds,
+                temp_dir=str(self.temp_root),
+            )
+            self.temp_root.mkdir(parents=True, exist_ok=True)
+            try:
+                audio = synthesizer.synthesize(text)
+            except (VoiceTtsError, OSError, ValueError) as exc:
+                kind = str(exc).split(":", 1)[0]
+                raise VoiceOutputError(kind or "voice_output_synthesis_failed") from exc
+            metadata = _validate_wav(audio)
+            task = result.get("task") if isinstance(result.get("task"), dict) else {}
+            with tempfile.TemporaryDirectory(prefix="qq-voice-artifact-", dir=self.temp_root) as directory:
+                source = Path(directory)
+                (source / "reply.wav").write_bytes(audio)
+                imported = self.artifact_service.import_from_directory(
+                    source_root=source,
+                    owner_id=voice["owner_id"],
+                    origin_assistant_id=voice["assistant_id"],
+                    source_goal_id=str(result.get("goal_id") or task.get("goal_id") or ""),
+                    source_run_id=str(result.get("run_id") or task.get("run_id") or ""),
+                    title="QQ 语音回复",
+                    kind="audio",
+                    summary="Owner 私聊回复媒介策略生成的受控语音回复。",
+                    file_names=("reply.wav",),
+                    retention_days=1,
+                )
+        except Exception as exc:
+            try:
+                with self.connect() as conn:
+                    release_voice_response_reservation(conn, response_decision)
+            except Exception as release_exc:
+                raise VoiceOutputError(
+                    "voice_output_failed_and_reservation_release_failed",
+                ) from release_exc
+            raise
         version = imported["version"]
         return {
             "kind": "tts_wav",
