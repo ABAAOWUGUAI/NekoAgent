@@ -8,7 +8,7 @@ import uuid
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Image, Plain
+from astrbot.api.message_components import Image, Plain, Record
 from astrbot.api.star import Context, Star
 from astrbot.core.star.filter.command import GreedyStr
 from .qq_access import actor_headers,event_access_allowed,last_access_decision
@@ -25,6 +25,7 @@ from .participation_metadata import (
 from .runtime_config import ChannelRuntimeClient, ChannelRuntimeState
 from .voice_transport_probe import handle_owner_private_voice_transport_probe
 from .voice_input_fetch import handle_owner_private_voice
+from .voice_media import fetch_delivery_voice
 
 
 BRIDGE_URL = os.environ.get("ASSISTANT_PLATFORM_BRIDGE_URL", "").rstrip("/")
@@ -583,7 +584,11 @@ def _meme_url(meme: dict | None) -> str:
     return url
 
 
-def _message_components(text: str, meme: dict | None = None) -> list:
+def _message_components(
+    text: str,
+    meme: dict | None = None,
+    voice_path: str = "",
+) -> list:
     """Build components for ``event.chain_result``.
 
     AstrBot's direct ``send_message`` API accepts ``MessageChain`` while
@@ -591,13 +596,15 @@ def _message_components(text: str, meme: dict | None = None) -> list:
     Keeping those contracts separate avoids nesting a MessageChain inside a
     MessageEventResult, which current AstrBot cannot decorate or send.
     """
-    parts = [Plain(text)]
+    parts = [Plain(text)] if text else []
     url = _meme_url(meme)
     if url:
         try:
             parts.append(Image.fromURL(url))
         except Exception:
             logger.exception("create meme image component failed url=%s", url)
+    if voice_path:
+        parts.append(Record(file=voice_path, url=voice_path))
     return parts
 
 
@@ -809,6 +816,11 @@ class CodexAgentPlugin(Star):
             format_task=_format_task,
             compact_output=_compact_output,
             message_components=_message_components,
+            fetch_voice_media=lambda delivery, lease_token: fetch_delivery_voice(
+                delivery,
+                lease_token,
+                BRIDGE_CLIENT.fetch_bytes,
+            ),
         )
 
     async def _delivery_loop(self):

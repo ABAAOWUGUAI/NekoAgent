@@ -28,11 +28,15 @@ def test_deployment_and_protection_documents_are_present() -> None:
         "docs/DEPLOYMENT.md",
         "docs/OPERATIONS.md",
         "docs/REPOSITORY_PROTECTION.md",
+        "docs/VOICE_INPUT.md",
+        "docs/VOICE_OUTPUT.md",
         "docs/zh-CN/ARCHITECTURE.md",
         "docs/zh-CN/INTEGRATIONS.md",
         "docs/zh-CN/DEPLOYMENT.md",
         "docs/zh-CN/OPERATIONS.md",
         "docs/zh-CN/REPOSITORY_PROTECTION.md",
+        "docs/zh-CN/VOICE_INPUT.md",
+        "docs/zh-CN/VOICE_OUTPUT.md",
         ".github/CODEOWNERS",
     )
 
@@ -147,3 +151,32 @@ def test_continuity_terminal_outcomes_settle_plan_and_empty_skill_state() -> Non
     assert '"succeeded": "completed"' in outcome_source
     assert "_settle_interaction_plan" in outcome_source
     assert "projection_reconciled" in reconciliation_source
+
+
+def test_owner_private_voice_output_is_policy_owned_and_opt_in() -> None:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    output_schema = importlib.import_module("bridge_voice_output_schema")
+    policy = importlib.import_module("bridge_voice_response_policy")
+
+    assert output_schema.VOICE_OUTPUT_FEATURE_FLAG == "voice_output_v1"
+    assert output_schema.VOICE_DELIVERY_FEATURE_FLAG == "voice_delivery_v1"
+    assert policy.VOICE_RESPONSE_MODES == {
+        "text_only", "explicit_only", "emotion_auto", "always",
+    }
+    assert policy.explicit_voice_request("请用语音回复我") is True
+    assert policy.negative_voice_request("不要用语音") is True
+    for relative in (
+        "bridge_voice_delivery.py",
+        "bridge_voice_output.py",
+        "bridge_voice_response_policy.py",
+        "bridge_voice_response_policy_schema.py",
+        "bridge_voice_tts.py",
+        "remote-plugin/voice_media.py",
+        "docs/VOICE_OUTPUT.md",
+        "docs/zh-CN/VOICE_OUTPUT.md",
+    ):
+        path = ROOT / relative
+        if not path.is_file():
+            path = ROOT / "open-source-template" / relative
+        assert path.is_file(), f"missing_voice_output_file:{relative}"

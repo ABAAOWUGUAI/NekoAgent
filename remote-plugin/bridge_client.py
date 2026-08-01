@@ -50,6 +50,8 @@ def policy_for(method: str, path: str, *, long_poll_seconds: int = 25) -> Reques
         return RequestPolicy("voice_fetch", 40, True)
     if route == "/qq/voice/input":
         return RequestPolicy("voice_input", 195, True)
+    if route.startswith("/deliveries/") and route.endswith("/media"):
+        return RequestPolicy("voice_delivery_media", 45, True)
     if route in {"/assistant/dispatch", "/assistant/group/dispatch"}:
         return INTERACTIVE
     if route in {
@@ -184,6 +186,82 @@ class BridgeClient:
                 async with self._long_slots:
                     return await asyncio.to_thread(self.request, method, path, payload)
             return await asyncio.to_thread(self.request, method, path, payload)
+
+    def request_bytes(
+        self,
+        path: str,
+        *,
+        headers: dict | None = None,
+        max_bytes: int = 10 * 1024 * 1024,
+    ) -> dict:
+        if not self._before_request():
+            return {"ok": False, "error": "circuit_open"}
+        policy = policy_for("GET", path, long_poll_seconds=self.long_poll_seconds)
+        request_headers = {
+            "X-Channel-Token": self.token_reader(),
+            **self.actor_headers(),
+            **(headers or {}),
+        }
+        request = urllib.request.Request(
+            self.base_url + path,
+            method="GET",
+            headers=request_headers,
+        )
+        limit = max(1, min(int(max_bytes), 10 * 1024 * 1024))
+        try:
+            with urllib.request.urlopen(request, timeout=policy.timeout_seconds) as response:
+                declared = int(response.headers.get("Content-Length") or 0)
+                if declared <= 0 or declared > limit:
+                    self._record_success()
+                    return {"ok": False, "error": "voice_media_size_invalid"}
+                body = response.read(limit + 1)
+                if len(body) != declared or len(body) > limit:
+                    self._record_success()
+                    return {"ok": False, "error": "voice_media_size_invalid"}
+                result = {
+                    "ok": True,
+                    "body": body,
+                    "content_type": str(response.headers.get("Content-Type") or ""),
+                    "etag": str(response.headers.get("ETag") or "").strip('"'),
+                }
+            self._record_success()
+            return result
+        except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                self._record_failure("bridge_http_5xx")
+            else:
+                self._record_success()
+            return {"ok": False, "status": exc.code, "error": "voice_media_http_error"}
+        except (TimeoutError, socket.timeout):
+            self._record_failure("bridge_timeout")
+            return {"ok": False, "error": "bridge_timeout"}
+        except (OSError, urllib.error.URLError, ValueError):
+            self._record_failure("transport_error")
+            return {"ok": False, "error": "transport_error"}
+
+    async def fetch_bytes(
+        self,
+        path: str,
+        *,
+        headers: dict | None = None,
+        max_bytes: int = 10 * 1024 * 1024,
+    ) -> dict:
+        policy = policy_for("GET", path, long_poll_seconds=self.long_poll_seconds)
+        async with self._all_slots:
+            if policy.long_running:
+                async with self._long_slots:
+                    return await asyncio.to_thread(
+                        self.request_bytes,
+                        path,
+                        headers=headers,
+                        max_bytes=max_bytes,
+                    )
+            return await asyncio.to_thread(
+                self.request_bytes,
+                path,
+                headers=headers,
+                max_bytes=max_bytes,
+            )
 
 
 __all__ = ["BridgeClient", "RequestPolicy", "policy_for", "public_failure_message"]

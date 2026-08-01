@@ -6,6 +6,7 @@ import asyncio
 import urllib.parse
 
 from astrbot.api.event import MessageChain
+from .voice_media import temporary_voice_file
 
 
 def _ambiguous_send_timeout(error: object) -> bool:
@@ -32,7 +33,7 @@ def _platform_message_id(send_result: object) -> str:
     return ""
 
 
-def _send_parts(delivery: dict, *, format_task, compact_output) -> tuple[str, str, dict | None]:
+def _send_parts(delivery: dict, *, format_task, compact_output) -> tuple[str, str, dict | None, dict | None]:
     payload = delivery.get("payload") if isinstance(delivery.get("payload"), dict) else {}
     task = payload.get("task") if isinstance(payload.get("task"), dict) else None
     if task is None and isinstance(delivery.get("task"), dict):
@@ -60,10 +61,11 @@ def _send_parts(delivery: dict, *, format_task, compact_output) -> tuple[str, st
                 or ""
             ).strip()
         )
-    if not session or not text or text == "(empty)":
+    voice_media = payload.get("voice_media") if isinstance(payload.get("voice_media"), dict) else None
+    if not session or (not text and not voice_media) or text == "(empty)":
         raise ValueError("outbox_delivery_session_or_text_missing")
     meme = payload.get("meme") if isinstance(payload.get("meme"), dict) else None
-    return session, text, meme
+    return session, text, meme, voice_media
 
 
 async def deliver_claimed_record(
@@ -75,6 +77,7 @@ async def deliver_claimed_record(
     format_task,
     compact_output,
     message_components,
+    fetch_voice_media,
 ) -> None:
     """Execute claim -> send-start -> QQ send -> ack/retry/ambiguous."""
 
@@ -89,12 +92,23 @@ async def deliver_claimed_record(
         logger.warning("outbox send-start failed delivery=%s error=%s", delivery_id, started.get("error"))
         return
     try:
-        session, text, meme = _send_parts(
+        session, text, meme, voice_media = _send_parts(
             delivery,
             format_task=format_task,
             compact_output=compact_output,
         )
-        sent = await context.send_message(session, MessageChain(message_components(text, meme)))
+        if voice_media:
+            audio, expected_hash = await fetch_voice_media(delivery, lease_token)
+            with temporary_voice_file(audio, expected_hash) as voice_path:
+                sent = await context.send_message(
+                    session,
+                    MessageChain(message_components(text, meme, voice_path)),
+                )
+        else:
+            sent = await context.send_message(
+                session,
+                MessageChain(message_components(text, meme)),
+            )
         if sent is False:
             raise RuntimeError("qq_delivery_platform_unavailable")
     except Exception as exc:

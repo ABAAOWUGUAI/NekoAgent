@@ -100,6 +100,8 @@ from bridge_http_responses import (
     redirect_response as _redirect_response,
 )
 from bridge_artifact_runtime import ArtifactRuntime
+from bridge_voice_delivery import VoiceDeliveryRuntime
+from bridge_voice_output import VoiceOutputRuntime
 from bridge_business_health import BusinessHealthService
 from bridge_executor_health import probe_executor
 from bridge_server_status import build_server_status
@@ -860,6 +862,7 @@ def _dispatch_qq_response_if_enabled(operation, transport: dict, *, scope: str) 
         enabled = unified_delivery_enabled(conn)
     result = dispatch_qq_response(
         _phase2_outbox(), operation, transport, scope=scope, enabled=enabled,
+        voice_output=VOICE_OUTPUT_RUNTIME.prepare,
     )
     CONTINUITY_KERNEL.bind_delivery(result)
     return result
@@ -7028,6 +7031,8 @@ GOAL_CONTINUITY_HTTP_API = GoalContinuityHttpApi(_db_connect, _json_response)
 ARTIFACT_RUNTIME = ArtifactRuntime(
     _assistant_db_connect, _db_connect, _json_response, _create_task, _safe_cwd,
 )
+VOICE_OUTPUT_RUNTIME = VoiceOutputRuntime(_assistant_db_connect, ARTIFACT_RUNTIME.service)
+VOICE_DELIVERY_RUNTIME = VoiceDeliveryRuntime(_phase2_outbox, ARTIFACT_RUNTIME.service)
 WORKER_HEALTH = WorkerHealthRegistry()
 for worker_id in ("approval_expiry","automation"):
     WORKER_HEALTH.register(worker_id,stale_after_seconds=180)
@@ -7195,6 +7200,20 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
             return
         if not self._request_authorized("GET", path):
             _json_response(self, 403, {"ok": False, "error": "forbidden"})
+            return
+        voice_media_match = re.fullmatch(r"/deliveries/([^/]+)/media", path)
+        if voice_media_match:
+            try:
+                payload, content_type, etag = VOICE_DELIVERY_RUNTIME.media(
+                    unquote(voice_media_match.group(1)),
+                    str(self.headers.get("X-Delivery-Lease-Token") or ""),
+                )
+            except Exception as exc:
+                error = str(exc).split(":", 1)[0] or "voice_delivery_media_failed"
+                status = 409 if error == "voice_delivery_lease_invalid" else 404
+                _json_response(self, status, {"ok": False, "error": error})
+                return
+            _binary_response(self, 200, payload, content_type, etag=etag)
             return
         if ASSISTANT_IDENTITY_HTTP_API.handle_get(self, path):
             return

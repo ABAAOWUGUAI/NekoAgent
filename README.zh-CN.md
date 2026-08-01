@@ -14,6 +14,8 @@ NekoAgent 是一个 Owner 优先、可自托管的私人 AI 助手平台。它�
 
 公开源码不包含生产数据库、聊天/媒体正文、Provider Key、QQ 凭据、服务器地址、用户专属 Assistant、关系和私有 PetPack。首次启动后，请自行创建 Assistant，或明确选择安装可选 Starter Pack。
 
+`0.3.0` 增加了可选的 Owner 私聊语音回复：服务端回复模态策略可选择只用文字、仅明确要求时用语音、在情绪交流中受限自动用语音，或在普通 Owner 私聊中优先语音。选中的回复由部署者自行提供的本地 VoicePack 渲染为不可变 Audio Artifact，再沿既有 Delivery/ACK 发送；仓库不包含 TTS 模型或音色资产。
+
 `0.2.0` 增加了可选的 Owner QQ 私聊语音消息输入：音频经受控渠道链获取，由部署者提供的本地 `whisper.cpp` 转写，再进入与文字消息相同的 Continuity 主链，并通过普通文字 Delivery/ACK 回复。本版本同时修复终态 Interaction Plan 与空 Skill Plan 未正确收口的问题。
 
 `0.1.1` 收口了“立即触发”的后续动作链：服务端先从引用回执或近期 Automation 上下文绑定对象，再执行已授权动作；未经服务端校验的模型动作会 fail-closed，不能退化成聊天中的虚假执行承诺；操作回执会保留后续引用所需的有限对象标识。
@@ -50,6 +52,7 @@ Copy-Item .\deploy\bridge.env.example .\deploy\bridge.env.local
 
 1. 在控制台添加一个模型连接，读取候选模型后对选中的模型做独立验证；模型目录不是“该令牌可用”的证明。
 2. 按需接入 AstrBot 或 Codex，见[中文集成说明](docs/zh-CN/INTEGRATIONS.md)。
+   Owner 私聊语音输入和回复需分别按[语音输入指南](docs/zh-CN/VOICE_INPUT.md)与[语音输出指南](docs/zh-CN/VOICE_OUTPUT.md)显式配置。
 3. 随时运行公开源码 Gate：
 
 ```powershell
@@ -79,6 +82,7 @@ python tools/install_starter_pack.py --pack-dir starter-packs/xiaofei --base-url
 - [中文运行与恢复指南](docs/zh-CN/OPERATIONS.md)
 - [中文仓库保护指南](docs/zh-CN/REPOSITORY_PROTECTION.md)
 - [Owner QQ 私聊语音消息输入](docs/zh-CN/VOICE_INPUT.md)
+- [Owner QQ 私聊语音消息输出](docs/zh-CN/VOICE_OUTPUT.md)
 - [安全政策](SECURITY.zh-CN.md)
 - [隐私边界](PRIVACY.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)

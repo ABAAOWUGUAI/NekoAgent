@@ -86,4 +86,5 @@ python tools/set_voice_input.py --assistant-db <assistant-db-path> --disable
 service health、插件加载、转写成功、Delivery 入队或单独的 `sent` 都不代表 Gate
 通过。任一证据缺失就停在该边界修复，不能继续扩大渠道或语音能力。
 
-语音合成、语音回复、群语音参与和 QQ 原生语音电话不属于 0.2.0。
+语音回复是独立、显式配置的能力，见[语音输出指南](VOICE_OUTPUT.md)。群语音参与和
+QQ 原生语音电话仍不在范围内。

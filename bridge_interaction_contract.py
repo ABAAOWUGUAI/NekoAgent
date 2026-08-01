@@ -24,11 +24,15 @@ PLAN_TOP_LEVEL_FIELDS = {
     "primary_intent",
     "confidence",
     "reason",
+    "affect",
     "intents",
     "reply_parts",
     "actions",
     "approval_requests",
     "memory_candidates",
+}
+AFFECT_KINDS = {
+    "neutral", "happy", "sad", "tired", "annoyed", "playful", "curious", "comfort",
 }
 INTENT_TYPES = {
     "chat",
@@ -84,7 +88,7 @@ def _intent_candidates(message: str, primary: str, mode: str, emotion: str) -> l
             "开心", "高兴", "陪我", "聊聊", "哈哈", "笑死",
         ),
     )
-    if mode == "mixed" or (social and primary in WORK_INTENTS):
+    if social:
         result.append("emotional_support")
 
     rules = (
@@ -133,6 +137,8 @@ def fallback_interaction_plan(message: str, mode_decision: Mapping[str, object])
     if primary not in INTENT_TYPES:
         primary = "analysis" if mode != "daily" else "chat"
     emotion = _clip(mode_decision.get("emotion") or "neutral", 24).lower()
+    if emotion not in AFFECT_KINDS:
+        emotion = "neutral"
     intent_names = _intent_candidates(message, primary, mode, emotion)
     intents = []
     actions = []
@@ -196,6 +202,15 @@ def fallback_interaction_plan(message: str, mode_decision: Mapping[str, object])
         "primary_intent": primary,
         "confidence": _safe_confidence(mode_decision.get("confidence"), 0.68),
         "reason": _clip(mode_decision.get("reason") or "compatibility fallback", 500),
+        "affect": {
+            "expression_present": emotion != "neutral",
+            "kind": emotion,
+            "confidence": _safe_confidence(
+                mode_decision.get("emotion_confidence"),
+                _safe_confidence(mode_decision.get("confidence"), 0.68),
+            ),
+            "intensity": "medium" if emotion != "neutral" else "low",
+        },
         "intents": intents,
         "reply_parts": reply_parts,
         "actions": actions[:12],
@@ -226,8 +241,11 @@ def build_interaction_plan_messages(
             "content": (
                 "你是私人助手的交互规划器，只输出一个 JSON 对象。"
                 "一条消息可以同时包含多个意图，禁止把聊天与办事强制二选一。\n"
-                "顶层字段必须且只能是 schema_version, summary_mode, primary_intent, confidence, reason, "
+                "顶层字段必须且只能是 schema_version, summary_mode, primary_intent, confidence, reason, affect, "
                 "intents, reply_parts, actions, approval_requests, memory_candidates。schema_version 固定为 2。\n"
+                "affect 只描述用户本轮明确表达的情绪，字段必须为 expression_present,kind,confidence,intensity；"
+                "kind 只能是 neutral/happy/sad/tired/annoyed/playful/curious/comfort，"
+                "intensity 只能是 low/medium/high。没有明确情绪时 expression_present=false 且 kind=neutral。\n"
                 "summary_mode 只能是 daily/work/mixed；primary_intent 必须等于某个 intents.type。\n"
                 "intents 最多 8 项；type 只能是 chat/emotional_support/ops/code/research/analysis/memory/automation/meta。"
                 "每项字段为 id,type,confidence,objective,requires_tools,risk_level。\n"
@@ -308,6 +326,26 @@ def _normalize_intents(items: object) -> list[dict]:
     if not result:
         raise ValueError("interaction_plan_intents_required")
     return result
+
+
+def _normalize_affect(value: object) -> dict:
+    if not isinstance(value, dict) or set(value) != {
+        "expression_present", "kind", "confidence", "intensity",
+    }:
+        raise ValueError("interaction_plan_affect_invalid")
+    kind = _clip(value.get("kind") or "neutral", 24).lower()
+    intensity = _clip(value.get("intensity") or "low", 16).lower()
+    if kind not in AFFECT_KINDS or intensity not in {"low", "medium", "high"}:
+        raise ValueError("interaction_plan_affect_invalid")
+    present = bool(value.get("expression_present"))
+    if not present:
+        kind = "neutral"
+    return {
+        "expression_present": present,
+        "kind": kind,
+        "confidence": _safe_confidence(value.get("confidence")),
+        "intensity": intensity,
+    }
 
 
 def _normalize_reply_parts(items: object) -> list[dict]:
@@ -392,9 +430,14 @@ def _normalize_metadata_list(items: object, allowed: set[str], limit: int) -> li
 
 
 def normalize_interaction_plan(data: Mapping[str, object]) -> dict:
+    try:
+        source_version = int(data.get("schema_version") or 0)
+    except (TypeError, ValueError):
+        source_version = 0
     unknown = set(data) - PLAN_TOP_LEVEL_FIELDS
-    missing = PLAN_TOP_LEVEL_FIELDS - set(data)
-    if unknown or missing or int(data.get("schema_version") or 0) not in {1, PLAN_SCHEMA_VERSION}:
+    required = PLAN_TOP_LEVEL_FIELDS - ({"affect"} if source_version in {1, 2} else set())
+    missing = required - set(data)
+    if unknown or missing or source_version not in {1, 2, PLAN_SCHEMA_VERSION}:
         raise ValueError("interaction_plan_schema_invalid")
     mode = _clip(data.get("summary_mode"), 16).lower()
     primary = _clip(data.get("primary_intent"), 40).lower()
@@ -405,12 +448,21 @@ def normalize_interaction_plan(data: Mapping[str, object]) -> dict:
     if primary not in {item["type"] for item in intents}:
         raise ValueError("interaction_plan_primary_missing")
     actions = _normalize_actions(data.get("actions"), intent_ids)
+    affect = data.get("affect")
+    if affect is None:
+        affect = {
+            "expression_present": False,
+            "kind": "neutral",
+            "confidence": 0.0,
+            "intensity": "low",
+        }
     return {
         "schema_version": PLAN_SCHEMA_VERSION,
         "summary_mode": mode,
         "primary_intent": primary,
         "confidence": _safe_confidence(data.get("confidence")),
         "reason": _clip(data.get("reason"), 500),
+        "affect": _normalize_affect(affect),
         "intents": intents,
         "reply_parts": _normalize_reply_parts(data.get("reply_parts")),
         "actions": actions,
@@ -447,6 +499,7 @@ def mode_decision_from_interaction_plan(plan: Mapping[str, object], fallback: Ma
     mode = str(plan.get("summary_mode") or result.get("mode") or "daily")
     primary = str(plan.get("primary_intent") or result.get("intent") or "chat")
     actions = list(plan.get("actions") or [])
+    affect = plan.get("affect") if isinstance(plan.get("affect"), dict) else {}
     result.update(
         {
             "mode": mode,
@@ -457,6 +510,9 @@ def mode_decision_from_interaction_plan(plan: Mapping[str, object], fallback: Ma
             "end_work": any(item.get("type") == "finish_work" for item in actions),
             "source": "interaction_plan",
             "interaction_plan": dict(plan),
+            "emotion": str(affect.get("kind") or result.get("emotion") or "neutral"),
+            "emotion_confidence": _safe_confidence(affect.get("confidence"), 0.0),
+            "emotion_expression_present": bool(affect.get("expression_present")),
         },
     )
     return result

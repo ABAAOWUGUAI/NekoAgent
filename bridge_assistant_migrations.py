@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Versioned migration and drift checks for ``assistant.sqlite3``.
-
-Gate 1 registers the legacy schema and security audit storage. Gate 2 adds the
-Assistant Identity ownership model through an additive, reversible cutover:
-legacy settings remain the compatibility mirror until a separately verified
-feature flag is enabled. Gate 4 registers the Daily Assistant Home read path
-without adding a second workflow state store.
-"""
+"""Versioned migrations and drift checks for ``assistant.sqlite3``."""
 
 from __future__ import annotations
 
@@ -558,6 +551,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     voice_transport_probe_schema = None
     voice_message_schema = None
     voice_input_schema = None
+    voice_output_schema = None
     if 3 in versions:
         identity_schema = require_identity_schema(conn)
         if 4 in versions:
@@ -610,7 +604,12 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         automation_conversation_schema = require_automation_conversation_schema(conn)
     if 31 in versions:
         voice_transport_probe_schema = require_voice_transport_probe_schema(conn)
-    voice_message_schema, voice_input_schema = require_voice_schemas(conn, versions)
+    (
+        voice_message_schema,
+        voice_input_schema,
+        voice_output_schema,
+        voice_response_policy_schema,
+    ) = require_voice_schemas(conn, versions)
     pending = [
         {"version": item.version, "name": item.name, "checksum": item.resolved_checksum()}
         for item in ASSISTANT_CORE_MIGRATIONS
@@ -649,6 +648,8 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         "voice_transport_probe_schema": voice_transport_probe_schema,
         "voice_message_schema": voice_message_schema,
         "voice_input_schema": voice_input_schema,
+        "voice_output_schema": voice_output_schema,
+        "voice_response_policy_schema": voice_response_policy_schema,
         "applied": applied,
         "pending": pending,
         "would_apply": [item["version"] for item in pending],
@@ -734,7 +735,12 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
     voice_transport_probe_schema = (
         require_voice_transport_probe_schema(conn) if 31 in versions else None
     )
-    voice_message_schema, voice_input_schema = require_voice_schemas(conn, versions)
+    (
+        voice_message_schema,
+        voice_input_schema,
+        voice_output_schema,
+        voice_response_policy_schema,
+    ) = require_voice_schemas(conn, versions)
     return {
         "registered": True,
         "applied": applied,
@@ -765,6 +771,8 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
         "voice_transport_probe_schema": voice_transport_probe_schema,
         "voice_message_schema": voice_message_schema,
         "voice_input_schema": voice_input_schema,
+        "voice_output_schema": voice_output_schema,
+        "voice_response_policy_schema": voice_response_policy_schema,
     }
 
 

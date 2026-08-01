@@ -374,6 +374,7 @@ def fallback_mode_decision(
         "need_tools": intent in TOOL_DEFAULT_INTENTS,
         "response_style": "structured" if mode == "work" else "casual",
         "emotion": emotion,
+        "emotion_confidence": 0.86 if emotion != "neutral" else 0.0,
         "reply_length": "medium" if mode == "work" else "short",
         "meme_intent": "strong" if explicit_meme else "none",
         "engagement": "respond",

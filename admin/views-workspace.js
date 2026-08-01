@@ -283,6 +283,7 @@
         const [, settingsResult] = await Promise.all([
           loadPersonaWorkspace({ force }),
           bridge('/assistant/settings'),
+          loadVoiceResponsePolicy({ force }),
         ]);
         state.assistantSettings = settingsResult.settings || {};
         renderAgentPolicy(state.assistantSettings);
