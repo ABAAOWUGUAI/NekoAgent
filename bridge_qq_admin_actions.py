@@ -27,7 +27,7 @@ _ENABLE_HINTS = ("开放", "加入", "添加", "允许", "启用")
 _DISABLE_HINTS = ("移出", "移除", "删除", "撤销", "取消", "关闭", "禁用")
 _STATUS_HINTS = ("查询", "查看", "检查", "状态", "是否", "好了吗", "好了么", "生效")
 _DIAGNOSTIC_HINTS = ("查日志", "看日志", "直接查", "排查", "没有回复", "没回复", "不回复")
-_POLICY_CLONE_HINTS = ("对齐", "保持一致", "复制", "同步")
+_POLICY_CLONE_HINTS = ("对齐", "保持一致", "复制", "同步", "一样", "相同")
 _GROUP_POLICY_COPY_FIELDS = (
     "participation_mode", "enabled", "mention_only", "active_reply", "reply_probability",
     "cooldown_seconds", "quiet_start", "quiet_end", "timezone", "max_context",
@@ -103,6 +103,16 @@ def _clone_target_group_id(
     return history_target or _candidate_group_id(message, history, current_group_id=current_group_id)
 
 
+def _clone_requested(text: str) -> bool:
+    """Recognise an imperative clone, never a bare comparison question."""
+
+    if not any(hint in text for hint in _POLICY_CLONE_HINTS):
+        return False
+    if any(hint in text for hint in _ENABLE_HINTS):
+        return True
+    return any(hint in text for hint in ("把", "将", "请", "给"))
+
+
 def parse_qq_admin_action(
     message: str,
     history: list[dict] | None = None,
@@ -120,7 +130,7 @@ def parse_qq_admin_action(
         history,
         current_group_id=current_group_id,
     )
-    if group_context and any(hint in text for hint in _POLICY_CLONE_HINTS):
+    if group_context and _clone_requested(text):
         group_id = _clone_target_group_id(message, history, current_group_id=current_group_id)
         source_group_id = _clone_source_group_id(message, history, target_group_id=group_id)
         if group_id and source_group_id:
