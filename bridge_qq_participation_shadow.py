@@ -16,6 +16,7 @@ from bridge_conversation_participation import (
     record_conversation_event,
     record_participation_decision,
     retention_for_decision,
+    transition_participation_decision,
 )
 from bridge_conversation_participation_contract import GroupParticipationMode, ParticipationAction, group_mode_from_legacy
 from bridge_conversation_participation_engine import (
@@ -24,6 +25,7 @@ from bridge_conversation_participation_engine import (
     participation_state,
 )
 from bridge_group_participation_policy import (
+    group_active_topic_window_seconds,
     group_final_action_gate,
     natural_group_participation_enabled,
     natural_group_preflight,
@@ -236,6 +238,21 @@ def finalize_group_shadow(
         return
     settings = classifier_settings or {}
     if decision_override is None:
+        existing = conn.execute(
+            "SELECT id FROM engagement_decisions WHERE event_id=? ORDER BY created_at DESC LIMIT 1",
+            (str(event.event_id or ""),),
+        ).fetchone()
+        if existing:
+            transition_group_participation(
+                conn,
+                decision_id=str(existing[0]),
+                stage="delivery_queued" if allowed else "model_declined",
+                action="contextual_participation" if allowed else "silent",
+                reason_code=str(reason or "model_engagement_declined"),
+                model_role="conversation_engagement" if settings else None,
+                model_id=str(settings.get("chat_model") or "") if settings else None,
+            )
+            return
         record_group_shadow_decision(
             conn,
             event,
@@ -261,6 +278,33 @@ def finalize_group_shadow(
         retention_class=retention,
         conversation_frame=conversation_frame,
         interaction_decision=interaction_decision,
+    )
+
+
+def transition_group_participation(
+    conn: sqlite3.Connection,
+    *,
+    decision_id: str,
+    stage: str,
+    action: str | None = None,
+    reason_code: str | None = None,
+    model_role: str | None = None,
+    model_id: str | None = None,
+    confidence: float | None = None,
+    superseded_by: str = "",
+) -> dict | None:
+    """Keep deferred natural-group candidates in their original decision record."""
+
+    return transition_participation_decision(
+        conn,
+        decision_id=decision_id,
+        stage=stage,
+        action=action,
+        reason_code=reason_code,
+        model_role=model_role,
+        model_id=model_id,
+        confidence=confidence,
+        superseded_by=superseded_by,
     )
 
 
@@ -371,6 +415,7 @@ def prepare_group_dispatch(
             quiet_gap_seconds=int(
                 8 if policy.get("quiet_gap_seconds") in {None, ""} else policy["quiet_gap_seconds"]
             ),
+            active_topic_window_seconds=group_active_topic_window_seconds(policy),
         )
         allowed = False
         reason = "natural_deferred"
@@ -413,6 +458,30 @@ def prepare_group_dispatch(
             conversation_frame=conversation_frame,
             interaction_decision=decision,
         )
+        if natural_guard and natural_guard.get("queue"):
+            current_decision_id = str(current.get("engagement_decision_id") or "")
+            transition_group_participation(
+                conn,
+                decision_id=current_decision_id,
+                stage="deferred",
+                action="silent",
+                reason_code="natural_deferred",
+            )
+            replaced_message_id = int(natural_guard["queue"].get("replaced_message_id") or 0)
+            if replaced_message_id:
+                replaced = conn.execute(
+                    "SELECT engagement_decision_id FROM group_messages WHERE id=? AND group_id=?",
+                    (replaced_message_id, group_id),
+                ).fetchone()
+                if replaced and str(replaced[0] or ""):
+                    transition_group_participation(
+                        conn,
+                        decision_id=str(replaced[0]),
+                        stage="superseded",
+                        action="silent",
+                        reason_code="candidate_superseded",
+                        superseded_by=current_decision_id,
+                    )
         mark_group_decision(
             conn,
             message_id=int(current["id"]),
@@ -629,6 +698,13 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
         replied_at=now,
         count_towards_budget=bool(payload.get("uninvited_group_action")),
     )
+    transition_group_participation(
+        conn,
+        decision_id=str(delivery.get("engagement_decision_id") or ""),
+        stage="ack_confirmed",
+        action="contextual_participation",
+        reason_code="delivery_confirmed",
+    )
     message_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
     return {"projected": True, "group_message_id": message_id, "delivery_id": delivery_id}
 
@@ -693,6 +769,7 @@ __all__ = [
     "prepare_group_dispatch",
     "record_group_inbound",
     "finalize_group_shadow",
+    "transition_group_participation",
     "record_conversation_event",
     "record_group_shadow_decision",
     "retention_for_decision",

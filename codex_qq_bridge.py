@@ -138,10 +138,7 @@ from bridge_conversation_memory import (
     record_conversation as scoped_record_conversation,
 )
 from bridge_conversation_memory_http import ConversationMemoryHttpApi
-from bridge_qq_participation_shadow import (
-    complete_group_dispatch, finalize_group_shadow, observe_group_access_denied, observe_private_participation,
-    prepare_group_dispatch, with_qq_transport_metadata,
-)
+from bridge_qq_participation_shadow import complete_group_dispatch,finalize_group_shadow,observe_group_access_denied,observe_private_participation,prepare_group_dispatch,transition_group_participation,with_qq_transport_metadata
 from bridge_inbound_media import inbound_media_notice, inbound_media_retry_notice
 from bridge_conversation_model_runtime import run_conversation_model_reply
 import bridge_visual_context as visual
@@ -5726,7 +5723,7 @@ def _assistant_group_dispatch(
             assistant_name=str(fallback_settings.get("display_name") or "助手"),
             conversation_frame=conversation_frame,
         )
-    # Delivery receives the authoritative ID/name from ``complete_group_dispatch``
+    # Delivery receives authoritative IDs from completion.
     # only when a reply was actually planned.  Never reintroduce the AC-1 ID here.
     result.update(should_reply=replied, group=policy, group_decision=decision)
     return result
