@@ -263,6 +263,8 @@ def decision_from_legacy(
         "low_score": ParticipationReason.ENGAGEMENT_BELOW_THRESHOLD,
         "participation_threshold": ParticipationReason.ENGAGEMENT_BELOW_THRESHOLD,
         "engagement_below_threshold": ParticipationReason.ENGAGEMENT_BELOW_THRESHOLD,
+        "natural_deferred": ParticipationReason.NATURAL_DEFERRED,
+        "candidate_superseded": ParticipationReason.CANDIDATE_SUPERSEDED,
     }
     reason = reason_map.get(reason_text)
     if reason is None and not allowed:
@@ -436,6 +438,76 @@ def record_participation_decision(
     return {"created": True, **payload}
 
 
+_PARTICIPATION_LIFECYCLE_STAGES = {
+    "deferred", "superseded", "preflight_blocked", "model_declined",
+    "delivery_queued", "delivery_failed", "ack_confirmed",
+}
+
+
+def transition_participation_decision(
+    conn: sqlite3.Connection,
+    *,
+    decision_id: str,
+    stage: str,
+    action: str | None = None,
+    reason_code: str | None = None,
+    model_role: str | None = None,
+    model_id: str | None = None,
+    confidence: float | None = None,
+    superseded_by: str = "",
+) -> dict | None:
+    """Advance one existing decision without creating a parallel fact store."""
+
+    normalized_stage = str(stage or "").strip()
+    if normalized_stage not in _PARTICIPATION_LIFECYCLE_STAGES:
+        raise ValueError("participation_lifecycle_stage_invalid")
+    normalized_id = str(decision_id or "").strip()
+    if not normalized_id:
+        return None
+    row = conn.execute(
+        """SELECT action,reason_code,model_role,model_id,confidence,decision_json,
+                  superseded_by FROM engagement_decisions WHERE id=?""",
+        (normalized_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        payload = json.loads(str(row[5] or "{}"))
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    lifecycle = payload.get("participation_lifecycle")
+    lifecycle = dict(lifecycle) if isinstance(lifecycle, dict) else {}
+    history = list(lifecycle.get("history") or [])
+    current_reason = str(reason_code or row[1] or "")[:120]
+    current_action = str(action or row[0] or "silent")[:80]
+    current_model_role = str(model_role if model_role is not None else row[2] or "")[:80]
+    current_model_id = str(model_id if model_id is not None else row[3] or "")[:160]
+    current_confidence = max(0.0, min(float(row[4] if confidence is None else confidence), 1.0))
+    event = {"stage": normalized_stage, "reason_code": current_reason, "action": current_action, "at": utc_now()}
+    if current_model_role:
+        event["model_role"] = current_model_role
+    if current_model_id:
+        event["model_id"] = current_model_id
+    if confidence is not None:
+        event["confidence"] = current_confidence
+    history.append(event)
+    lifecycle.update({"schema_version": 1, "stage": normalized_stage, "history": history[-8:]})
+    payload["participation_lifecycle"] = lifecycle
+    conn.execute(
+        """UPDATE engagement_decisions
+           SET action=?,reason_code=?,model_role=?,model_id=?,confidence=?,
+               decision_json=?,superseded_by=? WHERE id=?""",
+        (
+            current_action, current_reason, current_model_role, current_model_id,
+            current_confidence, _canonical(payload),
+            str(superseded_by or row[6] or "")[:160], normalized_id,
+        ),
+    )
+    return {"decision_id": normalized_id, **lifecycle}
+
+
 def observe_legacy_decision(
     conn: sqlite3.Connection,
     event: ConversationEvent,
@@ -503,4 +575,5 @@ __all__ = [
     "set_participation_shadow_feature",
     "stable_decision_id",
     "stable_event_id",
+    "transition_participation_decision",
 ]

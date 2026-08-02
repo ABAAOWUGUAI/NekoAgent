@@ -7,10 +7,50 @@ credential storage, and usage persistence stay in the bridge runtime.
 
 from __future__ import annotations
 
-from urllib.parse import quote
+import hashlib
+from urllib.parse import quote, urlparse
 
 
 MODEL_CLIENT_USER_AGENT = "PrivateAIAssistant/1.0"
+
+
+def _deepseek_cache_scope(settings: dict) -> str:
+    """Return a stable, opaque DeepSeek KV-cache namespace for one Assistant.
+
+    The provider's `user_id` controls cache isolation.  Never place a QQ id or
+    other channel identifier in that field; it must not become a provider-side
+    copy of a user identifier.  A scope is emitted only for known DeepSeek
+    routes and only when the Assistant Instance authority is available.
+    """
+
+    route = " ".join(
+        str(settings.get(key) or "").lower()
+        for key in ("chat_model", "chat_provider_preset", "model_registry_provider_id")
+    )
+    host = (urlparse(str(settings.get("chat_base_url") or "")).hostname or "").lower()
+    assistant_id = str(settings.get("assistant_id") or "").strip()
+    if host != "api.deepseek.com" or "deepseek" not in route or not assistant_id:
+        return ""
+    role = str(settings.get("model_role") or "conversation").strip() or "conversation"
+    return "pai-" + hashlib.sha256(
+        f"assistant-cache-v1:{assistant_id}:{role}".encode("utf-8"),
+    ).hexdigest()[:48]
+
+
+def _deepseek_role_controls(settings: dict) -> dict:
+    """Return only documented controls for the official DeepSeek V4 route."""
+
+    host = (urlparse(str(settings.get("chat_base_url") or "")).hostname or "").lower()
+    model = str(settings.get("chat_model") or "").lower()
+    if host != "api.deepseek.com" or not model.startswith("deepseek-v4-"):
+        return {}
+    role = str(settings.get("model_role") or "").strip()
+    if role not in {"conversation_engagement", "interaction_classifier", "conversation_reply"}:
+        return {}
+    controls: dict[str, object] = {"thinking": {"type": "disabled"}}
+    if role in {"conversation_engagement", "interaction_classifier"}:
+        controls["response_format"] = {"type": "json_object"}
+    return controls
 
 
 def _temperature(settings: dict) -> float:
@@ -138,6 +178,10 @@ def prepare_model_request(settings: dict, messages: list[dict]) -> dict:
         }
 
     payload["model"] = model
+    payload.update(_deepseek_role_controls(settings))
+    cache_scope = _deepseek_cache_scope(settings)
+    if cache_scope:
+        payload["user_id"] = cache_scope
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return {

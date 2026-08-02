@@ -15,6 +15,7 @@ from bridge_conversation_participation_contract import GroupParticipationMode, g
 from bridge_group_participation_queue import (
     claim_due_group_candidates,
     finish_group_candidate,
+    group_candidate_is_current,
     reschedule_group_candidate,
 )
 from bridge_group_participation_policy import (
@@ -52,6 +53,7 @@ BRIDGE_SERVICE_NAMES = {
     "apply_group_turn_policy": "apply_group_turn_policy",
     "participation_confidence_floor": "group_participation_confidence_floor",
     "mark_group_decision": "mark_group_decision",
+    "transition_participation": "transition_group_participation",
     "assistant_chat": "_assistant_chat",
     "agent_policy": "_agent_policy",
     "dispatch_response": "dispatch_qq_response",
@@ -73,6 +75,8 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
         candidates = claim_due_group_candidates(conn, limit=3)
     for candidate in candidates:
         group_id = str(candidate.get("group_id") or "")
+        latest_message_id = int(candidate.get("latest_message_id") or 0)
+        decision_id = ""
         try:
             access = services["group_access"](
                 db_connect,
@@ -81,7 +85,7 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
             )
             if not access.get("allowed"):
                 with db_connect() as conn:
-                    finish_group_candidate(conn, group_id, state="cancelled")
+                    finish_group_candidate(conn, group_id, state="cancelled", latest_message_id=latest_message_id)
                 continue
             with db_connect() as conn:
                 policy = services["get_group_policy"](conn, group_id) or {}
@@ -89,7 +93,7 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     not natural_group_participation_enabled(conn)
                     or group_mode_from_legacy(policy) is not GroupParticipationMode.NATURAL_PARTICIPATION
                 ):
-                    finish_group_candidate(conn, group_id, state="cancelled")
+                    finish_group_candidate(conn, group_id, state="cancelled", latest_message_id=latest_message_id)
                     continue
                 latest = conn.execute(
                     "SELECT * FROM group_messages WHERE id=? AND group_id=?",
@@ -100,9 +104,10 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                 )
             if not latest:
                 with db_connect() as conn:
-                    finish_group_candidate(conn, group_id, state="cancelled")
+                    finish_group_candidate(conn, group_id, state="cancelled", latest_message_id=latest_message_id)
                 continue
             latest = dict(latest)
+            decision_id = str(latest.get("engagement_decision_id") or "")
             # The latest candidate must remain available to this one worker
             # decision even when its transient retention window has elapsed
             # before the quiet-gap claim (for example after delayed delivery
@@ -138,7 +143,14 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                         decision=guard,
                         replied=False,
                     )
-                    finish_group_candidate(conn, group_id)
+                    services["transition_participation"](
+                        conn,
+                        decision_id=decision_id,
+                        stage="preflight_blocked",
+                        action="silent",
+                        reason_code=str(guard.get("reason") or "preflight_blocked"),
+                    )
+                    finish_group_candidate(conn, group_id, latest_message_id=latest_message_id)
                     continue
             social_context = None
             with db_connect() as conn:
@@ -217,7 +229,10 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
             provider = str(classifier_settings.get("chat_provider") or "codex")
             if provider == "openai-compatible":
                 classifier_settings = dict(classifier_settings)
-                classifier_settings["chat_temperature"] = "0"
+                # JSON remains schema-checked server-side.  A small non-zero
+                # value avoids deterministic over-selection of silence while
+                # keeping the engagement decision reproducible enough to audit.
+                classifier_settings["chat_temperature"] = "0.2"
                 classifier_settings["chat_max_tokens"] = str(
                     STRUCTURED_SOCIAL_DECISION_MAX_TOKENS,
                 )
@@ -314,8 +329,28 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                         conn, message_id=int(latest["id"]), group_id=group_id,
                         decision=decision, replied=False,
                     )
-                    finish_group_candidate(conn, group_id)
+                    services["transition_participation"](
+                        conn,
+                        decision_id=decision_id,
+                        stage="model_declined",
+                        action="silent",
+                        reason_code=str(decision.get("reason") or "model_engagement_declined"),
+                        model_role="conversation_engagement",
+                        model_id=str(classifier_settings.get("chat_model") or ""),
+                        confidence=float(decision.get("confidence") or 0),
+                    )
+                    finish_group_candidate(conn, group_id, latest_message_id=latest_message_id)
                 continue
+            with db_connect() as conn:
+                if not group_candidate_is_current(conn, group_id, latest_message_id):
+                    services["transition_participation"](
+                        conn,
+                        decision_id=decision_id,
+                        stage="superseded",
+                        action="silent",
+                        reason_code="candidate_superseded",
+                    )
+                    continue
             message = str(latest.get("content") or "").strip()
             history = group_model_history(
                 context_items[:-1],
@@ -392,6 +427,16 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     str(queued.get("error") or "natural_group_delivery_not_queued"),
                 )
             with db_connect() as conn:
+                services["transition_participation"](
+                    conn,
+                    decision_id=decision_id,
+                    stage="delivery_queued",
+                    action="contextual_participation",
+                    reason_code="model_engagement_approved",
+                    model_role="conversation_engagement",
+                    model_id=str(classifier_settings.get("chat_model") or ""),
+                    confidence=float(decision.get("confidence") or 0),
+                )
                 services["complete_group_dispatch"](
                     conn, event=None, deterministic_decision=None,
                     decision=decision, group_id=group_id, payload=transport,
@@ -400,7 +445,7 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     assistant_name=str(fallback_settings.get("display_name") or "助手"),
                     conversation_frame=conversation_frame,
                 )
-                finish_group_candidate(conn, group_id)
+                finish_group_candidate(conn, group_id, latest_message_id=latest_message_id)
         except Exception as exc:
             error_text = str(exc)
             if (
@@ -414,10 +459,14 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                 failure_reason = "group_participation_worker_failed"
             with db_connect() as conn:
                 if int(candidate.get("attempt") or 0) < 3:
-                    reschedule_group_candidate(conn, group_id, seconds=15)
+                    reschedule_group_candidate(
+                        conn,
+                        group_id,
+                        seconds=15,
+                        latest_message_id=latest_message_id,
+                    )
                 else:
-                    finish_group_candidate(conn, group_id, state="failed")
-                    latest_message_id = int(candidate.get("latest_message_id") or 0)
+                    finish_group_candidate(conn, group_id, state="failed", latest_message_id=latest_message_id)
                     if latest_message_id:
                         services["mark_group_decision"](
                             conn,
@@ -425,6 +474,13 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                             group_id=group_id,
                             decision={"should_reply": False, "reason": failure_reason},
                             replied=False,
+                        )
+                        services["transition_participation"](
+                            conn,
+                            decision_id=decision_id,
+                            stage="delivery_failed",
+                            action="silent",
+                            reason_code=failure_reason,
                         )
             print(
                 "natural_group_candidate_failed "

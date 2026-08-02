@@ -617,7 +617,9 @@ def build_group_decision_messages(
             "content": (
                 "你是 QQ 群聊发言决策器，只输出 JSON。决定 AI 此刻是否应该发言，而不是判断能不能回答。[助手/self] 是你自己以前说过的话，绝不能把它误判为群成员之间的对话。"
                 "被明确 @ 时通常应该回复。未被 @ 时，助手仍可参与当前群话题，但必须先找到可追溯的切入点和新增价值。"
-                "成员正常互聊不是自动沉默理由，也不是插话理由；没有新增价值、会打断敏感交流、已经有人接住、连续刷存在感、纯确认词或只能泛泛回应时，选择 silent。"
+                "成员正常互聊不是自动沉默理由，也不是插话理由。这个候选已通过服务端节奏筛选："
+                "若存在具体话题锚点且能用一句话接住、补一个小观点或问一个贴题问题，优先选择非 silent。"
+                "只有敏感交流、纯确认词、无可读锚点、会重复已有人接住的内容或只能泛泛回应时，选择 silent。"
                 "统一会话框架的 active_continuation 只是候选，不是回复义务；它同样要受时效、连续轮数、密度、预算和当前价值约束。"
                 "主动参与强度只调节同等候选的证据门槛，绝不能绕过这些规则。"
                 "先选择 social_action：silent/ack/ack_add/follow_up/reply/bridge_topic/topic_start/repair。"
@@ -633,7 +635,7 @@ def build_group_decision_messages(
             "content": "\n".join(
                 [
                     f"群：{policy.get('group_name') or policy.get('group_id')}",
-                    f"主动参与强度（仅影响证据门槛）：{float(policy.get('reply_probability') or 0.2):.2f}",
+                    f"主动参与强度（影响候选节奏和证据门槛，不是逐条回复概率）：{float(policy.get('reply_probability') or 0.2):.2f}",
                     f"是否被 @：{bool(current.get('is_mention'))}",
                     f"最近 8 条中助手已发言：{assistant_turns} 次；参与者：{unique_speakers} 人",
                     f"统一群会话框架：{json.dumps(frame, ensure_ascii=False, sort_keys=True)}",

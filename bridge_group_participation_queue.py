@@ -33,13 +33,31 @@ def enqueue_group_candidate(
     sender_name: str,
     external_message_id: str,
     quiet_gap_seconds: int,
+    active_topic_window_seconds: int,
 ) -> dict:
     now = _parse(current.get("created_at"))
     gap_seconds = 8 if quiet_gap_seconds is None else int(quiet_gap_seconds)
-    due = now + timedelta(seconds=max(0, gap_seconds))
+    quiet_due = now + timedelta(seconds=max(0, gap_seconds))
     group = str(group_id or "").strip()
     if not group:
         raise ValueError("group_participation_group_required")
+    existing = conn.execute(
+        f"SELECT * FROM {GROUP_PARTICIPATION_QUEUE_TABLE} WHERE group_id=?", (group,)
+    ).fetchone()
+    first = (
+        _parse(existing["first_message_at"])
+        if existing and str(existing["state"]) not in {"completed", "failed", "cancelled"}
+        else now
+    )
+    topic_window = max(max(0, gap_seconds), min(int(active_topic_window_seconds or 45), 600))
+    due = min(quiet_due, first + timedelta(seconds=topic_window))
+    replaced_message_id = (
+        int(existing["latest_message_id"] or 0)
+        if existing
+        and str(existing["state"]) in {"pending", "claimed"}
+        and int(existing["latest_message_id"] or 0) != int(current.get("id") or 0)
+        else 0
+    )
     conn.execute(
         f"""
         INSERT INTO {GROUP_PARTICIPATION_QUEUE_TABLE}(
@@ -74,7 +92,10 @@ def enqueue_group_candidate(
     row = conn.execute(
         f"SELECT * FROM {GROUP_PARTICIPATION_QUEUE_TABLE} WHERE group_id=?", (group,)
     ).fetchone()
-    return dict(row)
+    result = dict(row)
+    result["replaced_message_id"] = replaced_message_id
+    result["candidate_due_reason"] = "quiet_gap" if due == quiet_due else "active_topic_window"
+    return result
 
 
 def claim_due_group_candidates(
@@ -112,26 +133,60 @@ def claim_due_group_candidates(
     return claimed
 
 
-def finish_group_candidate(conn: sqlite3.Connection, group_id: str, *, state: str = "completed") -> None:
+def finish_group_candidate(
+    conn: sqlite3.Connection,
+    group_id: str,
+    *,
+    state: str = "completed",
+    latest_message_id: int | None = None,
+) -> bool:
     if state not in {"completed", "failed", "cancelled"}:
         raise ValueError("group_participation_queue_state_invalid")
-    conn.execute(
-        f"UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE} SET state=?, lease_expires_at='', updated_at=? WHERE group_id=?",
-        (state, utc_now(), str(group_id or "").strip()),
+    sql = f"UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE} SET state=?, lease_expires_at='', updated_at=? WHERE group_id=?"
+    values: list[object] = [state, utc_now(), str(group_id or "").strip()]
+    if latest_message_id is not None:
+        sql += " AND latest_message_id=?"
+        values.append(int(latest_message_id))
+    cursor = conn.execute(sql, values)
+    return bool(cursor.rowcount)
+
+
+def group_candidate_is_current(conn: sqlite3.Connection, group_id: str, latest_message_id: int) -> bool:
+    row = conn.execute(
+        f"SELECT latest_message_id,state FROM {GROUP_PARTICIPATION_QUEUE_TABLE} WHERE group_id=?",
+        (str(group_id or "").strip(),),
+    ).fetchone()
+    return bool(
+        row
+        and int(row["latest_message_id"] or 0) == int(latest_message_id)
+        and str(row["state"]) == "claimed"
     )
 
 
-def reschedule_group_candidate(conn: sqlite3.Connection, group_id: str, *, seconds: int = 15) -> None:
+def reschedule_group_candidate(
+    conn: sqlite3.Connection,
+    group_id: str,
+    *,
+    seconds: int = 15,
+    latest_message_id: int | None = None,
+) -> bool:
     due = datetime.now(timezone.utc) + timedelta(seconds=max(5, int(seconds)))
-    conn.execute(
-        f"UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE} SET state='pending', due_at=?, lease_expires_at='', updated_at=? WHERE group_id=?",
-        (due.isoformat(), utc_now(), str(group_id or "").strip()),
+    sql = (
+        f"UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE} SET state='pending', due_at=?, "
+        "lease_expires_at='', updated_at=? WHERE group_id=?"
     )
+    values: list[object] = [due.isoformat(), utc_now(), str(group_id or "").strip()]
+    if latest_message_id is not None:
+        sql += " AND latest_message_id=?"
+        values.append(int(latest_message_id))
+    cursor = conn.execute(sql, values)
+    return bool(cursor.rowcount)
 
 
 __all__ = [
     "claim_due_group_candidates",
     "enqueue_group_candidate",
     "finish_group_candidate",
+    "group_candidate_is_current",
     "reschedule_group_candidate",
 ]

@@ -20,7 +20,7 @@ from bridge_delivery_continuity import unified_delivery_enabled
 from bridge_migrations import utc_now
 
 
-POLICY_VERSION = "group-social-action-plan-v1"
+POLICY_VERSION = "group-social-action-plan-v2"
 
 
 def group_participation_confidence_floor(policy: dict) -> float:
@@ -34,6 +34,16 @@ def group_participation_confidence_floor(policy: dict) -> float:
     except (TypeError, ValueError):
         strength = 0.2
     return max(0.35, min(0.65 - 0.30 * strength, 0.65))
+
+
+def group_active_topic_window_seconds(policy: dict) -> int:
+    """Bound busy-topic deferral using the existing participation-strength control."""
+
+    try:
+        strength = max(0.0, min(float(policy.get("reply_probability") or 0.2), 1.0))
+    except (TypeError, ValueError):
+        strength = 0.2
+    return max(30, min(90, int(round(90 - 60 * strength))))
 
 
 def natural_group_participation_enabled(conn: sqlite3.Connection) -> bool:
@@ -321,6 +331,7 @@ def group_final_action_gate(
 
 __all__ = [
     "POLICY_VERSION",
+    "group_active_topic_window_seconds",
     "group_participation_confidence_floor",
     "group_final_action_gate",
     "natural_group_cutover_plan",

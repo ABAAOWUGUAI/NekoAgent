@@ -89,6 +89,8 @@ def call_openai_conversation_reply(
         user_id=user_id,
         call_model=call_model,
         record_model=record_model,
+        request=request,
+        recent_replies=recent_group_replies,
     )
 
 
@@ -102,10 +104,18 @@ def call_openai_group_style_retry(
     user_id: str,
     call_model: Callable[..., dict],
     record_model: Callable[..., None],
+    request: str = "",
+    recent_replies: list[str] | None = None,
 ) -> dict:
     """Regenerate one group draft that failed the server-side naturalness gate."""
 
-    if not issues or not result.get("ok"):
+    if not result.get("ok"):
+        return result
+    if not issues:
+        result.update({
+            "group_style_gate": "passed",
+            "group_style_final_issues": [],
+        })
         return result
     record_model(
         settings,
@@ -132,11 +142,20 @@ def call_openai_group_style_retry(
             "group_style_retry_attempted": True,
             "group_style_retry_failed": True,
             "group_style_retry_error_kind": retry.get("error_kind") or "",
+            "group_style_gate": "degraded",
+            "group_style_final_issues": list(issues),
         })
         return result
+    final_issues = group_reply_style_issues(
+        request,
+        retry.get("reply") or retry.get("output") or "",
+        recent_replies=recent_replies or [],
+    )
     retry.update({
         "group_style_retry_attempted": True,
         "group_style_initial_issues": list(issues),
+        "group_style_final_issues": list(final_issues),
+        "group_style_gate": "passed" if not final_issues else "degraded",
     })
     return retry
 

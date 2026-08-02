@@ -64,6 +64,8 @@ class ParticipationReason(_TextEnum):
     CLASSIFIER_FAILED = "classifier_failed"
     ENGAGEMENT_BELOW_THRESHOLD = "engagement_below_threshold"
     MODEL_ENGAGEMENT_APPROVED = "model_engagement_approved"
+    NATURAL_DEFERRED = "natural_deferred"
+    CANDIDATE_SUPERSEDED = "candidate_superseded"
     EMPTY_EVENT = "empty_event"
     UNSUPPORTED_EVENT = "unsupported_event"
 

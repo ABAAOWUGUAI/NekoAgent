@@ -35,7 +35,7 @@
                   <label>工作发起人 QQ<input id="groupWorkSenders" type="text"></label>
                 </div>
                 <fieldset id="groupNaturalGuardFields" class="policy-grid"><legend>自然参与与自动续聊 Gate</legend><label>突发窗口（秒）<input id="groupBurstWindowSeconds" type="number" value="12"></label><label>窗口消息上限<input id="groupBurstMaxMessages" type="number" value="6"></label><label>每日主动上限<input id="groupDailyReplyBudget" type="number" value="20"></label><label>安静间隔（秒）<input id="groupQuietGapSeconds" type="number" value="8"></label><label>无 @ 续聊窗口（秒）<input id="groupContinuationWindowSeconds" type="number" value="120" aria-describedby="groupContinuationHelp"></label><label>无 @ 接话上限<input id="groupMaxAutoContinuations" type="number" value="2" aria-describedby="groupContinuationHelp"></label><span id="groupContinuationHelp" class="compact-note">普通群聊、无 @ 续聊都先过这里；@ 与引用优先。</span><label class="checkbox-line"><input id="groupNaturalGuardEnabled" type="checkbox">启用自然参与</label><button class="secondary" type="button" data-group-natural-cutover>应用总开关</button></fieldset>
-                <p id="groupContextHelp" class="compact-note">仅 Delivery confirmed ACK 计入回复、上下文与节奏预算。</p>
+                <p id="groupContextHelp" class="compact-note">强度影响候选节奏，不是逐条回复概率。</p>
                 <label>群聊参与模式<select id="groupParticipationMode"><option value="disabled">关闭</option><option value="mentions_only" selected>仅明确 @</option><option value="directed_context">@、回复助手或续接</option><option value="natural_participation">允许自然参与</option></select></label>
                 <div class="policy-switches">
                   <label class="checkbox-line"><input id="groupAllowWork" type="checkbox">允许授权成员发起工作</label>
