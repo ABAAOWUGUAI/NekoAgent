@@ -64,6 +64,11 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
         "result", "Enable QQ group access without granting work execution.",
     ),
     ActionDefinition(
+        "qq_group_allowlist_list", "ops", "qq.group.allowlist.list",
+        "", "low", False, True, "owner_private",
+        "result", "Read the current QQ group access allowlist.",
+    ),
+    ActionDefinition(
         "action.followup.verify", "ops", "action.followup.verify",
         "", "low", False, True, "existing_receipt",
         "result", "Verify a recent server action through its owning domain.",
