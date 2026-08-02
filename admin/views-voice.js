@@ -1,6 +1,9 @@
     let voiceResponsePolicy = null;
     let voiceResponsePolicyLoadedAt = 0;
     let voiceResponseEventsBound = false;
+    let voicePackTuning = null;
+    let voicePackTuningLoadedAt = 0;
+    let voicePackTuningEventsBound = false;
 
     const VOICE_EMOTION_LABELS = Object.freeze({
       happy: '开心与庆祝',
@@ -46,6 +49,73 @@
       </form></div>`;
     }
 
+    function ensureVoicePackTuningForm() {
+      if ($('voicePackTuningPanel')) return;
+      const panel = document.createElement('section');
+      panel.id = 'voicePackTuningPanel';
+      panel.className = 'panel';
+      panel.setAttribute('aria-labelledby', 'voicePackTuningTitle');
+      panel.setAttribute('aria-busy', 'true');
+      panel.innerHTML = `<div class="panel-header"><div><h2 id="voicePackTuningTitle">VoicePack 声音调校</h2>
+        <span id="voicePackTuningVersion" class="meta">正在读取当前 VoicePack</span></div>
+        <button id="reloadVoicePackTuningBtn" class="secondary" type="button">重新载入</button></div>
+        <div class="panel-body"><form id="voicePackTuningForm" class="form-stack">
+        <div class="voice-response-grid">
+          <label for="voiceTuningPreset">调校预设<select id="voiceTuningPreset" required></select></label>
+          <label for="voiceLengthScale">语速长度<input id="voiceLengthScale" type="number" min="0.75" max="1.5" step="0.01" required><span class="field-help">数值越大越慢。</span></label>
+          <label for="voiceNoiseScale">音色变化度<input id="voiceNoiseScale" type="number" min="0" max="1.5" step="0.01" required></label>
+          <label for="voiceNoiseWScale">节奏变化度<input id="voiceNoiseWScale" type="number" min="0" max="1.5" step="0.01" required></label>
+          <label for="voiceSentenceSilence">句间停顿（秒）<input id="voiceSentenceSilence" type="number" min="0" max="1" step="0.01" required></label>
+          <label for="voiceVolume">音量<input id="voiceVolume" type="number" min="0.2" max="2" step="0.05" required></label>
+        </div>
+        <div class="voice-tuning-toggle"><input id="voiceEmotionVariation" type="checkbox"><label for="voiceEmotionVariation">按本轮情绪对语速、变化度和停顿做小幅调整</label></div>
+        <p class="voice-policy-boundary">这些参数保存在当前 Assistant 绑定的 VoicePack 中，不修改 Persona。Piper 调校能改善节奏，但不能把基础模型变成另一位可识别说话者；更换或复刻声线必须通过独立音源授权与 Voice Executor Gate。</p>
+        <div class="button-row"><button id="saveVoicePackTuningBtn" class="primary" type="submit">保存为当前默认声音</button>
+          <span id="voicePackTuningStatus" class="provider-status pending" role="status" aria-live="polite">尚未载入。</span></div>
+        </form></div>`;
+      $('voiceResponsePolicyPanel')?.after(panel);
+    }
+
+    function renderVoicePackTuning(tuning) {
+      voicePackTuning = tuning;
+      const select = $('voiceTuningPreset');
+      const options = [...(tuning.presets || []), { id: 'custom', label: '自定义' }];
+      select.innerHTML = options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
+      const synthesis = tuning.synthesis || {};
+      select.value = synthesis.preset || 'warm_natural_v1';
+      $('voiceLengthScale').value = String(synthesis.length_scale ?? 1.04);
+      $('voiceNoiseScale').value = String(synthesis.noise_scale ?? 0.72);
+      $('voiceNoiseWScale').value = String(synthesis.noise_w_scale ?? 0.85);
+      $('voiceSentenceSilence').value = String(synthesis.sentence_silence ?? 0.16);
+      $('voiceVolume').value = String(synthesis.volume ?? 1);
+      $('voiceEmotionVariation').checked = synthesis.emotion_variation !== false;
+      $('voicePackTuningVersion').textContent = `${tuning.voice_pack_name || '当前 VoicePack'} · ${tuning.engine || ''}`;
+      $('voicePackTuningStatus').className = 'provider-status ok';
+      $('voicePackTuningStatus').textContent = '声音调校已载入；保存后用于后续新生成的语音。';
+    }
+
+    async function loadVoicePackTuning({ force = false } = {}) {
+      ensureVoicePackTuningForm();
+      bindVoicePackTuningEvents();
+      if (!force && voicePackTuning && Date.now() - voicePackTuningLoadedAt < 300000) {
+        renderVoicePackTuning(voicePackTuning);
+        return voicePackTuning;
+      }
+      $('voicePackTuningPanel')?.setAttribute('aria-busy', 'true');
+      try {
+        const result = await bridge('/assistant/voice-pack/tuning');
+        renderVoicePackTuning(result.result || {});
+        voicePackTuningLoadedAt = Date.now();
+        return result.result;
+      } catch (error) {
+        $('voicePackTuningStatus').className = 'provider-status error';
+        $('voicePackTuningStatus').textContent = error.message || String(error);
+        throw error;
+      } finally {
+        $('voicePackTuningPanel')?.setAttribute('aria-busy', 'false');
+      }
+    }
+
     function renderVoiceResponsePolicy(policy) {
       voiceResponsePolicy = policy;
       $('voiceResponseMode').value = policy.mode || 'explicit_only';
@@ -74,6 +144,7 @@
         const result = await bridge('/assistant/voice-response-policy');
         renderVoiceResponsePolicy(result.policy || result.result || {});
         voiceResponsePolicyLoadedAt = Date.now();
+        await loadVoicePackTuning({ force });
         return result.policy || result.result;
       } catch (error) {
         $('voiceResponsePolicyStatus').className = 'provider-status error';
@@ -129,5 +200,65 @@
       $('voiceResponsePolicyForm')?.addEventListener('submit', saveVoiceResponsePolicy);
       $('reloadVoiceResponsePolicyBtn')?.addEventListener('click', () => {
         loadVoiceResponsePolicy({ force: true }).catch(() => {});
+      });
+    }
+
+    function applyVoiceTuningPreset() {
+      const preset = (voicePackTuning?.presets || []).find((item) => item.id === $('voiceTuningPreset').value);
+      if (!preset) return;
+      $('voiceLengthScale').value = String(preset.length_scale);
+      $('voiceNoiseScale').value = String(preset.noise_scale);
+      $('voiceNoiseWScale').value = String(preset.noise_w_scale);
+      $('voiceSentenceSilence').value = String(preset.sentence_silence);
+      $('voiceVolume').value = String(preset.volume);
+    }
+
+    async function saveVoicePackTuning(event) {
+      event.preventDefault();
+      const form = $('voicePackTuningForm');
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+      const button = $('saveVoicePackTuningBtn');
+      button.disabled = true;
+      $('voicePackTuningStatus').className = 'provider-status pending';
+      $('voicePackTuningStatus').textContent = '正在保存当前 VoicePack 默认调校。';
+      try {
+        const result = await bridge('/assistant/voice-pack/tuning', {
+          method: 'POST',
+          body: JSON.stringify({
+            expected_updated_at: voicePackTuning?.updated_at,
+            synthesis: {
+              preset: $('voiceTuningPreset').value,
+              length_scale: Number($('voiceLengthScale').value),
+              noise_scale: Number($('voiceNoiseScale').value),
+              noise_w_scale: Number($('voiceNoiseWScale').value),
+              sentence_silence: Number($('voiceSentenceSilence').value),
+              volume: Number($('voiceVolume').value),
+              emotion_variation: $('voiceEmotionVariation').checked,
+            },
+          }),
+        });
+        renderVoicePackTuning(result.result || {});
+        voicePackTuningLoadedAt = Date.now();
+      } catch (error) {
+        $('voicePackTuningStatus').className = 'provider-status error';
+        $('voicePackTuningStatus').textContent = error.message || String(error);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function bindVoicePackTuningEvents() {
+      if (voicePackTuningEventsBound) return;
+      voicePackTuningEventsBound = true;
+      $('voicePackTuningForm')?.addEventListener('submit', saveVoicePackTuning);
+      $('reloadVoicePackTuningBtn')?.addEventListener('click', () => {
+        loadVoicePackTuning({ force: true }).catch(() => {});
+      });
+      $('voiceTuningPreset')?.addEventListener('change', applyVoiceTuningPreset);
+      ['voiceLengthScale', 'voiceNoiseScale', 'voiceNoiseWScale', 'voiceSentenceSilence', 'voiceVolume'].forEach((id) => {
+        $(id)?.addEventListener('input', () => { $('voiceTuningPreset').value = 'custom'; });
       });
     }

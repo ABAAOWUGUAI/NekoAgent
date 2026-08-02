@@ -13,6 +13,8 @@ from bridge_migrations import MigrationError
 from bridge_relationship_service import get_relationship_state
 from bridge_social_engine import build_voice_contract, normalize_social_cues, plan_expression
 from bridge_social_experience import hydrate_expression_context
+from bridge_qq_access_runtime import super_admin_ids
+from bridge_response_modality import attach_voice_response_prompt_context
 
 
 def merge_shared_knowledge(
@@ -144,6 +146,13 @@ def build_social_context(
         "budget": 1200,
         "applied": bool(context.get("habits")),
     }
+    attach_voice_response_prompt_context(
+        context,
+        db_connect,
+        message,
+        scope="group" if group else "private",
+        owner_authorized=user_id in super_admin_ids(db_connect),
+    )
     return cues, context
 
 

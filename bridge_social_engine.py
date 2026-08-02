@@ -46,6 +46,7 @@ from bridge_social_identity import (
     PUBLIC_IDENTITY_PROMPT_LINES,
 )
 from bridge_social_reply import normalize_social_reply
+from bridge_response_modality import voice_modality_prompt_lines
 
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
@@ -401,7 +402,7 @@ def attachment_capability_lines(context: dict | None) -> list[str]:
 
     item = context or {}
     if not item.get("requested") and not item.get("planned"):
-        return []
+        return voice_modality_prompt_lines(item.get("response_modality"))
     if item.get("planned"):
         label = _clip(item.get("asset_label") or "已审核本地表情包", 120)
         emotion = _clip(item.get("emotion") or "日常", 40)
@@ -410,12 +411,12 @@ def attachment_capability_lines(context: dict | None) -> list[str]:
             "- 发送层将在这段文字后附加一张已审核的本地表情包。",
             f"- 可用元数据：名称“{label}”，情绪标签“{emotion}”；你没有查看图片像素，不得描述未提供的视觉细节。",
             "- 只写一句与附件协调的自然配文；不得声称发不了图、只能发文字，或正在现画、现打、生成图片。",
-        ]
+        ] + voice_modality_prompt_lines(item.get("response_modality"))
     return [
         "本轮附件事实：",
         "- 用户请求了图片，但发送层没有找到当前可用的已审核本地表情包，本轮不会附图。",
         "- 不得声称已经发图或正在现画、现打、生成图片；应简短说明暂时没有合适的已审核表情包。",
-    ]
+    ] + voice_modality_prompt_lines(item.get("response_modality"))
 
 
 def build_daily_system_prompt(

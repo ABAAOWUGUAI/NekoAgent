@@ -17,6 +17,29 @@
   gap: .55rem;
 }
 
+.voice-tuning-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: .65rem;
+}
+
+.voice-tuning-toggle label {
+  display: inline;
+  margin: 0;
+}
+
+.voice-tuning-toggle input[type="checkbox"] {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.field-help {
+  display: block;
+  margin-block-start: .35rem;
+  color: var(--muted, #5f6675);
+  font-size: .875rem;
+}
+
 .voice-policy-boundary {
   margin-block: 1rem;
   padding: .85rem 1rem;

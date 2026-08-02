@@ -14,6 +14,7 @@ from pathlib import Path
 
 from bridge_artifact_service import ArtifactService
 from bridge_qq_access_runtime import super_admin_ids
+from bridge_response_modality import reconcile_voice_capability_claims
 from bridge_voice_tts import PiperSynthesizer, VoiceTtsError
 from bridge_voice_output_schema import (
     VOICE_DELIVERY_FEATURE_FLAG,
@@ -22,12 +23,15 @@ from bridge_voice_output_schema import (
 from bridge_voice_response_policy import (
     decide_and_reserve_voice_response,
     explicit_voice_request,
+    release_voice_response_reservation,
 )
+from bridge_voice_pack_tuning import normalize_piper_synthesis, resolve_piper_synthesis
 
 
 MAX_SPOKEN_CHARS = 600
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_SECONDS = 120.0
+VOICE_ARTIFACT_KIND = "file"
 
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}")
 
@@ -204,6 +208,7 @@ class VoiceOutputRuntime:
             "model_path": model_path,
             "license": license_name,
             "max_chars": int(config.get("max_chars") or MAX_SPOKEN_CHARS),
+            "synthesis": normalize_piper_synthesis(config.get("synthesis")),
         }
 
     def prepare(self, result: dict, transport: dict, *, scope: str) -> dict | None:
@@ -223,41 +228,60 @@ class VoiceOutputRuntime:
             )
         if response_decision is None:
             return None
-        voice = self._active_voice()
-        text = spoken_text(
-            result.get("reply") or result.get("output") or "",
-            limit=voice["max_chars"],
-        )
-        synthesizer = PiperSynthesizer(
-            command_prefix=(self.python, "-m", "piper"),
-            model=str(voice["model_path"]),
-            data_dir=str(self.model_root),
-            timeout_seconds=self.timeout_seconds,
-            temp_dir=str(self.temp_root),
-        )
-        self.temp_root.mkdir(parents=True, exist_ok=True)
         try:
-            audio = synthesizer.synthesize(text)
-        except (VoiceTtsError, OSError, ValueError) as exc:
-            kind = str(exc).split(":", 1)[0]
-            raise VoiceOutputError(kind or "voice_output_synthesis_failed") from exc
-        metadata = _validate_wav(audio)
-        task = result.get("task") if isinstance(result.get("task"), dict) else {}
-        with tempfile.TemporaryDirectory(prefix="qq-voice-artifact-", dir=self.temp_root) as directory:
-            source = Path(directory)
-            (source / "reply.wav").write_bytes(audio)
-            imported = self.artifact_service.import_from_directory(
-                source_root=source,
-                owner_id=voice["owner_id"],
-                origin_assistant_id=voice["assistant_id"],
-                source_goal_id=str(result.get("goal_id") or task.get("goal_id") or ""),
-                source_run_id=str(result.get("run_id") or task.get("run_id") or ""),
-                title="QQ 语音回复",
-                kind="audio",
-                summary="Owner 私聊回复媒介策略生成的受控语音回复。",
-                file_names=("reply.wav",),
-                retention_days=1,
+            voice = self._active_voice()
+            delivery_text, capability_truth_guarded = reconcile_voice_capability_claims(
+                result.get("reply") or result.get("output") or "",
+                prepared=True,
             )
+            text = spoken_text(
+                delivery_text,
+                limit=voice["max_chars"],
+            )
+            synthesis = resolve_piper_synthesis(
+                voice.get("synthesis"),
+                response_decision["affect"]["kind"],
+            )
+            synthesizer = PiperSynthesizer(
+                command_prefix=(self.python, "-m", "piper"),
+                model=str(voice["model_path"]),
+                data_dir=str(self.model_root),
+                timeout_seconds=self.timeout_seconds,
+                temp_dir=str(self.temp_root),
+                synthesis=synthesis,
+            )
+            self.temp_root.mkdir(parents=True, exist_ok=True)
+            try:
+                audio = synthesizer.synthesize(text)
+            except (VoiceTtsError, OSError, ValueError) as exc:
+                kind = str(exc).split(":", 1)[0]
+                raise VoiceOutputError(kind or "voice_output_synthesis_failed") from exc
+            metadata = _validate_wav(audio)
+            task = result.get("task") if isinstance(result.get("task"), dict) else {}
+            with tempfile.TemporaryDirectory(prefix="qq-voice-artifact-", dir=self.temp_root) as directory:
+                source = Path(directory)
+                (source / "reply.wav").write_bytes(audio)
+                imported = self.artifact_service.import_from_directory(
+                    source_root=source,
+                    owner_id=voice["owner_id"],
+                    origin_assistant_id=voice["assistant_id"],
+                    source_goal_id=str(result.get("goal_id") or task.get("goal_id") or ""),
+                    source_run_id=str(result.get("run_id") or task.get("run_id") or ""),
+                    title="QQ 语音回复",
+                    kind=VOICE_ARTIFACT_KIND,
+                    summary="Owner 私聊回复媒介策略生成的受控语音回复。",
+                    file_names=("reply.wav",),
+                    retention_days=1,
+                )
+        except Exception as exc:
+            try:
+                with self.connect() as conn:
+                    release_voice_response_reservation(conn, response_decision)
+            except Exception as release_exc:
+                raise VoiceOutputError(
+                    "voice_output_failed_and_reservation_release_failed",
+                ) from release_exc
+            raise
         version = imported["version"]
         return {
             "kind": "tts_wav",
@@ -270,6 +294,12 @@ class VoiceOutputRuntime:
             "sha256": metadata["sha256"],
             "duration_ms": metadata["duration_ms"],
             "voice_pack_id": voice["voice_pack_id"],
+            "delivery_text": delivery_text,
+            "capability_truth_guarded": capability_truth_guarded,
+            "synthesis": {
+                "preset": synthesis["preset"],
+                "emotion_variation": synthesis["emotion_variation"],
+            },
             "response_policy": {
                 "mode": response_decision["policy"]["mode"],
                 "version": response_decision["policy"]["version"],
@@ -285,6 +315,7 @@ class VoiceOutputRuntime:
 
 __all__ = [
     "MAX_AUDIO_BYTES",
+    "VOICE_ARTIFACT_KIND",
     "VoiceOutputError",
     "VoiceOutputRuntime",
     "explicit_voice_request",

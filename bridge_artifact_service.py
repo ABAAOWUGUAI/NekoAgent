@@ -29,6 +29,10 @@ MAX_PATH_LENGTH = 240
 MANIFEST_NAME = ".agent-artifact-manifest.json"
 INTERNAL_MANIFEST = ".artifact-internal-manifest.json"
 
+CANONICAL_MEDIA_TYPES = {
+    ".wav": "audio/wav",
+}
+
 ALLOWED_PREVIEW_MEDIA = {
     ".html": "text/html; charset=utf-8",
     ".htm": "text/html; charset=utf-8",
@@ -168,7 +172,7 @@ def _media_type(path: str, payload: bytes, *, preview: bool) -> str:
         if suffix == ".webp" and not (payload.startswith(b"RIFF") and payload[8:12] == b"WEBP"):
             raise ArtifactError("artifact_signature_mismatch")
         return media
-    guessed = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    guessed = CANONICAL_MEDIA_TYPES.get(suffix) or mimetypes.guess_type(path)[0] or "application/octet-stream"
     return guessed + ("; charset=utf-8" if guessed.startswith("text/") else "")
 
 

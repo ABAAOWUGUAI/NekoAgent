@@ -51,6 +51,16 @@ The Admin console exposes the active Assistant's response-modality mode,
 allowed affect kinds, minimum confidence, cooldown and daily limit. Updates use
 an expected policy version and reject stale writes.
 
+### Hardened systemd deployments
+
+Piper and ONNX Runtime must be able to read non-process CPU topology such as
+`/proc/cpuinfo`. If the Bridge runs in a hardened systemd unit, keep
+`ProtectProc=invisible` to hide other users' process details, but use
+`ProcSubset=all`; `ProcSubset=pid` hides the CPU metadata and can make the TTS
+subprocess terminate with `SIGABRT` even though the same model works outside
+the service. Preserve the remaining service hardening and verify synthesis
+inside the final unit namespace before enabling voice delivery.
+
 ## Safety boundary
 
 - Only authenticated Owner-private QQ chat can select voice; group chat and
@@ -60,6 +70,9 @@ an expected policy version and reject stale writes.
 - The Audio Artifact is immutable and readable by the Adapter only through the
   current Delivery lease. Local storage paths and lease material are not sent
   to QQ.
+- The WAV is stored under the registered generic `file` Artifact kind; its
+  audio identity is the canonical `audio/wav` version-file media type plus the
+  Delivery payload and hash. Do not invent an unregistered Artifact kind.
 - Failed synthesis or delivery falls back to truthful text. It must not claim
   that voice was sent.
 - Ambiguous sends use the existing reconciliation path and must not be retried

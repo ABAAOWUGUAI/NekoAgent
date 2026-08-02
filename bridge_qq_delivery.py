@@ -6,6 +6,7 @@ from __future__ import annotations
 import sqlite3
 
 from bridge_delivery_continuity import logical_response_id
+from bridge_response_modality import reconcile_voice_capability_claims
 
 
 _ERROR_TEXT = {
@@ -130,8 +131,11 @@ def enqueue_qq_response(
     if callable(voice_output):
         try:
             voice_media = voice_output(result, transport, scope=scope)
+            if voice_media:
+                content = str(voice_media.pop("delivery_text", "") or content).strip()
         except Exception as exc:
             voice_error = str(exc).split(":", 1)[0][:120] or "voice_output_failed"
+            content, _ = reconcile_voice_capability_claims(content, prepared=False)
             content = content.rstrip() + "\n\n（语音生成未完成，本次先保留文字回复。）"
     meme = result.get("meme") if isinstance(result.get("meme"), dict) else None
     automation_job = result.get("automation_job") if isinstance(result.get("automation_job"), dict) else {}

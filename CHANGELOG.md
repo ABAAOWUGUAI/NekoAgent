@@ -6,6 +6,22 @@ semantic version tags after the first public release.
 
 ## Unreleased
 
+### Fixed
+
+- Local Piper synthesis retries one transient nonzero process exit before a
+  safe text fallback, while timeouts and operating-system failures remain
+  bounded and fail closed.
+- Failed automatic emotional voice preparation now refunds the exact
+  response-modality cooldown and daily-budget reservation with a versioned
+  compare-and-swap, so failed TTS or Artifact creation does not suppress the
+  next eligible reply.
+- Hardened systemd deployments now document the required procfs boundary for
+  Piper/ONNX: retain `ProtectProc=invisible` while using `ProcSubset=all`, so
+  CPU topology remains readable without exposing other users' processes.
+- Voice WAV output now uses the existing registered `file` Artifact kind and a
+  canonical `audio/wav` file media type, keeping Artifact storage and
+  lease-bound QQ Delivery on one deterministic contract.
+
 ## [0.3.0] - 2026-08-02
 
 ### Added
