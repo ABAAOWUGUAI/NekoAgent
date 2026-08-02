@@ -128,6 +128,7 @@ from bridge_persona_runtime_http import PersonaRuntimeHttpApi
 from bridge_assistant_home import AssistantHomeService
 from bridge_assistant_home_http import AssistantHomeHttpApi
 from bridge_continuity_kernel import ContinuityKernel
+from bridge_action_followup import dispatch_action_followup_context
 from bridge_pet_http import PetHttpApi
 from bridge_pet_service import ensure_pet_tables
 from bridge_conversation_memory import (
@@ -5094,6 +5095,12 @@ def _assistant_dispatch_impl(
             inbound_context, _conversation_history, followup_conversation_ref,
             followup_channel, ASSISTANT_HISTORY_LIMIT,
         )
+    action_followup = dispatch_action_followup_context(_assistant_db_connect, CONTINUITY_KERNEL, {
+        "user_id": user_id, "source": source, "trace_id": trace_id, "message": message,
+        "inbound_context": inbound_context, "delivery_recipient_id": delivery_recipient_id,
+    })
+    if action_followup is not None:
+        return action_followup
 
     settings = _assistant_settings(include_secrets=True)
     visual_context = visual.prepare(inbound_context, "qq_private", user_id, inbound_context.get("_external_message_id") or trace_id, message, settings)

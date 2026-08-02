@@ -223,6 +223,19 @@ class ContinuityKernel:
 
     @staticmethod
     def _action(result: Mapping[str, object], plan: Mapping[str, object]) -> tuple[str, str]:
+        receipts = result.get("action_receipts")
+        if isinstance(receipts, list):
+            for item in receipts:
+                if not isinstance(item, Mapping):
+                    continue
+                status = _clip(item.get("status"), 40).lower()
+                action_type = _clip(item.get("action_type"), 100)
+                if status in {"completed", "no_op", "running", "waiting_approval"} and action_type:
+                    try:
+                        definition = action_definition(action_type)
+                    except KeyError:
+                        definition = action_definition("invoke_capability")
+                    return action_type, _clip(definition.capability_id, 160)
         actions = plan.get("actions") if isinstance(plan.get("actions"), list) else []
         action = next((dict(item) for item in actions if isinstance(item, Mapping)), {})
         action_type = _clip(action.get("action_type") or action.get("type"), 100)
@@ -384,6 +397,39 @@ class ContinuityKernel:
                     {"action_type": action_type, "capability_id": capability},
                     key="dispatch-settled",
                 )
+                receipts = result.get("action_receipts")
+                if isinstance(receipts, list):
+                    for index, receipt in enumerate(receipts[:8]):
+                        if not isinstance(receipt, Mapping):
+                            continue
+                        receipt_status = _clip(receipt.get("status"), 40)
+                        receipt_action = _clip(receipt.get("action_type"), 100)
+                        if not receipt_action:
+                            continue
+                        facts = receipt.get("facts")
+                        facts = facts if isinstance(facts, Mapping) else {}
+                        safe_facts = {}
+                        for key in (
+                            "policy_aligned", "config_version", "source_group_id", "target_id",
+                            "target_revision", "job_id", "run_id", "task_id", "goal_id",
+                            "delivery_id", "reason",
+                        ):
+                            if key in facts and isinstance(facts[key], (str, int, float, bool)):
+                                safe_facts[key] = str(facts[key])[:160]
+                        self._event(
+                            conn,
+                            turn_id,
+                            "action_receipt",
+                            receipt_status,
+                            {
+                                "action_type": receipt_action,
+                                "receipt_id": _clip(receipt.get("receipt_id"), 160),
+                                "target_type": _clip(receipt.get("target_type"), 80),
+                                "target_id": _clip(receipt.get("target_id"), 160),
+                                "facts": safe_facts,
+                            },
+                            key=f"action-receipt:{index}:{_clip(receipt.get('receipt_id'), 160)}",
+                        )
                 self._goal_feedback_signal(conn, turn, result, turn_id)
         except (sqlite3.Error, ValueError, TypeError):
             return
@@ -498,6 +544,55 @@ class ContinuityKernel:
         from bridge_continuity_outcomes import settle_delivery
 
         settle_delivery(self, delivery_id, outcome, error_kind)
+
+    def recent_action_context(self, kwargs: Mapping[str, object], *, limit: int = 8) -> list[dict]:
+        """Return bounded, receipt-backed action metadata for natural-language follow-ups."""
+
+        try:
+            with self._connect() as conn:
+                if not self._enabled(conn):
+                    return []
+                assistant = current_assistant(conn)
+                if not assistant:
+                    return []
+                actor, thread = self._thread(kwargs)
+                rows = conn.execute(
+                    """
+                    SELECT id,action_type,capability_id,dispatch,status,goal_id,run_id,
+                           task_id,delivery_id,updated_at
+                    FROM continuity_turns
+                    WHERE assistant_id=? AND actor_ref=? AND thread_ref=?
+                      AND status IN ('succeeded','running','waiting_approval','waiting_delivery')
+                    ORDER BY updated_at DESC LIMIT ?
+                    """,
+                    (assistant["id"], actor, thread, max(1, min(int(limit or 8), 20))),
+                ).fetchall()
+                result = []
+                for row in rows:
+                    item = dict(row)
+                    receipt = conn.execute(
+                        """
+                        SELECT outcome,detail_json,created_at
+                        FROM continuity_events
+                        WHERE turn_id=? AND event_type='action_receipt'
+                        ORDER BY created_at DESC,id DESC LIMIT 1
+                        """,
+                        (row["id"],),
+                    ).fetchone()
+                    if receipt:
+                        try:
+                            detail = json.loads(str(receipt["detail_json"] or "{}"))
+                        except json.JSONDecodeError:
+                            detail = {}
+                        item["receipt"] = {
+                            "status": str(receipt["outcome"] or ""),
+                            **(detail if isinstance(detail, dict) else {}),
+                            "created_at": receipt["created_at"],
+                        }
+                    result.append(item)
+                return result
+        except (sqlite3.Error, ValueError, TypeError):
+            return []
 
 
 def settle_delivery_link(

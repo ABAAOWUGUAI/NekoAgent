@@ -54,6 +54,21 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
         "result", "Queue one immediate run without changing its schedule.",
     ),
     ActionDefinition(
+        "qq_group_policy_clone", "ops", "qq.group.policy.clone",
+        "", "medium", True, True, "owner_private",
+        "result", "Add a QQ group and atomically align its policy with a referenced group.",
+    ),
+    ActionDefinition(
+        "qq_group_allowlist_enable", "ops", "qq.group.allowlist.enable",
+        "", "medium", True, True, "owner_private",
+        "result", "Enable QQ group access without granting work execution.",
+    ),
+    ActionDefinition(
+        "action.followup.verify", "ops", "action.followup.verify",
+        "", "low", False, True, "existing_receipt",
+        "result", "Verify a recent server action through its owning domain.",
+    ),
+    ActionDefinition(
         "workspace_task", "coding", "workspace_task", "codex.sandbox", "high", True, True,
         "risk_based", "required", "Execute bounded workspace work.",
     ),
