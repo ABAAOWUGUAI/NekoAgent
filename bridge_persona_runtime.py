@@ -38,6 +38,10 @@ _ENUMS = {
     "group_length": {"brief", "short", "balanced"},
     "work_length": {"compact", "structured_compact", "detailed"},
     "meme_policy": {"never", "contextual", "frequent"},
+    "group_stance": {"observant", "quick_witted", "direct_playful"},
+    "group_reaction_style": {"specific", "dry", "playful"},
+    "group_sentence_rhythm": {"one_beat", "two_beats", "varied"},
+    "group_ending_policy": {"drop", "contextual_hook", "varied"},
 }
 _EXAMPLE_LIMITS = {
     "scenario": 180,
@@ -73,6 +77,10 @@ def safe_voice_contract() -> dict:
         "work_length": "structured_compact",
         "work_continuity": "区分计划、执行中、完成和失败；只有可验证结果才能表述为已完成。",
         "meme_policy": "contextual",
+        "group_stance": "observant",
+        "group_reaction_style": "specific",
+        "group_sentence_rhythm": "one_beat",
+        "group_ending_policy": "drop",
         "preferred_phrases": [],
         "avoid_phrases": [],
         "prohibited_patterns": ["客服式开场", "无请求长清单", "连续追问", "伪造执行过程"],
@@ -218,7 +226,15 @@ def compile_voice_contract(
         "tone": tone,
         "scenarios": [
             {"mode": "private", "length": normalized["private_length"], "priority": "relationship_then_expression"},
-            {"mode": "group", "length": normalized["group_length"], "priority": "group_scope_then_expression"},
+            {
+                "mode": "group",
+                "length": normalized["group_length"],
+                "priority": "group_scope_then_expression",
+                "expression_signature": {
+                    key: normalized[key]
+                    for key in ("group_stance", "group_reaction_style", "group_sentence_rhythm", "group_ending_policy")
+                },
+            },
             {"mode": "work", "length": normalized["work_length"], "priority": "action_truth_then_persona"},
         ],
         "work_continuity": normalized["work_continuity"],
