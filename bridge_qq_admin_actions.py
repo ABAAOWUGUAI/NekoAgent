@@ -22,12 +22,23 @@ from bridge_social_engine import get_group_policy, upsert_group_policy
 
 
 _GROUP_ID_PATTERN = re.compile(r"(?<!\d)([1-9][0-9]{4,19})(?!\d)")
-_GROUP_CONTEXT_HINTS = ("qq群", "qq 群", "群聊", "群白名单", "群准入", "这个群", "该群")
+_GROUP_CONTEXT_HINTS = (
+    "qq群",
+    "qq 群",
+    "群聊",
+    "群白名单",
+    "群准入",
+    "这个群",
+    "该群",
+    "目标群",
+    "模板群",
+    "参考群",
+)
 _ENABLE_HINTS = ("开放", "加入", "添加", "允许", "启用")
 _DISABLE_HINTS = ("移出", "移除", "删除", "撤销", "取消", "关闭", "禁用")
 _STATUS_HINTS = ("查询", "查看", "检查", "状态", "是否", "好了吗", "好了么", "生效")
 _DIAGNOSTIC_HINTS = ("查日志", "看日志", "直接查", "排查", "没有回复", "没回复", "不回复")
-_POLICY_CLONE_HINTS = ("对齐", "保持一致", "复制", "同步", "一样", "相同")
+_POLICY_CLONE_HINTS = ("对齐", "保持一致", "一致", "复制", "同步", "一样", "相同")
 _GROUP_POLICY_COPY_FIELDS = (
     "participation_mode", "enabled", "mention_only", "active_reply", "reply_probability",
     "cooldown_seconds", "quiet_start", "quiet_end", "timezone", "max_context",
