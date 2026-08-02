@@ -32,10 +32,9 @@ from bridge_group_message_store import (
 )
 from bridge_group_context_frame import (
     acknowledgement_only,
-    audit_group_conversation_frame,
-    group_context_lines,
-    normalize_group_context_limit,
 )
+from bridge_group_expression import choose_group_reply_shape, group_expression_signature
+from bridge_group_engagement_prompt import build_group_decision_messages
 from bridge_group_policy_store import get_group_policy, list_group_policies, upsert_group_policy
 from bridge_conversation_participation_contract import (
     GroupParticipationMode,
@@ -228,6 +227,7 @@ def plan_expression(
     mode_decision: dict | None = None,
     group_context: dict | None = None,
     voice_contract: dict | None = None,
+    recent_expression_shapes: list[str] | None = None,
 ) -> dict:
     """Return a bounded per-turn expression plan used by prompts and QA."""
 
@@ -327,6 +327,17 @@ def plan_expression(
         }.get(social_action)
         if group_action_plan:
             purpose, sentence_limit, structure, follow_up = group_action_plan
+        signature = group_expression_signature(contract)
+        reply_shape, shape_instruction = choose_group_reply_shape(
+            social_action=social_action,
+            signature=signature,
+            recent_shapes=recent_expression_shapes,
+        )
+        if reply_shape == "two_short_beats" and social_action in {"ack_add", "reply", "bridge_topic"}:
+            sentence_limit = max(sentence_limit, 2)
+        structure = [*structure, shape_instruction]
+    else:
+        signature, reply_shape = {}, ""
     return {
         "purpose": purpose,
         "tone": tone,
@@ -335,6 +346,8 @@ def plan_expression(
         "follow_up": follow_up,
         "group_turn": "回应后停下，不抢下一轮" if group else "允许自然结束，不强行续聊",
         "social_action": social_action,
+        "group_expression_signature": signature,
+        "reply_shape": reply_shape,
         "meme_intent": cues["meme_intent"],
     }
 
@@ -393,7 +406,9 @@ def expression_plan_lines(plan: dict) -> list[str]:
         f"- 收尾：{plan.get('group_turn')}。",
     ]
     if plan.get("social_action"):
-        lines.insert(0, f"- 群聊动作：{plan.get('social_action')}。");
+        lines.insert(0, f"- 群聊动作：{plan.get('social_action')}。")
+    if plan.get("reply_shape"):
+        lines.insert(1, f"- 本轮表达形态：{plan.get('reply_shape')}；不要重复最近相同形态。")
     return lines
 
 
@@ -412,11 +427,12 @@ def attachment_capability_lines(context: dict | None) -> list[str]:
             f"- 可用元数据：名称“{label}”，情绪标签“{emotion}”；你没有查看图片像素，不得描述未提供的视觉细节。",
             "- 只写一句与附件协调的自然配文；不得声称发不了图、只能发文字，或正在现画、现打、生成图片。",
         ] + voice_modality_prompt_lines(item.get("response_modality"))
-    return [
+    base_messages = [
         "本轮附件事实：",
         "- 用户请求了图片，但发送层没有找到当前可用的已审核本地表情包，本轮不会附图。",
         "- 不得声称已经发图或正在现画、现打、生成图片；应简短说明暂时没有合适的已审核表情包。",
     ] + voice_modality_prompt_lines(item.get("response_modality"))
+    return base_messages
 
 
 def build_daily_system_prompt(
@@ -596,58 +612,6 @@ def group_hard_gate(
         return False, "cooldown"
     return True, "model_decision_required"
 
-def build_group_decision_messages(
-    policy: dict, history: list[dict], current: dict,
-    conversation_frame: dict | None = None,
-) -> list[dict[str, str]]:
-    current_id = current.get("id")
-    prior_history = [
-        item for item in history
-        if current_id is None or item.get("id") != current_id
-    ]
-    recent = prior_history[-8:]
-    assistant_turns = sum(1 for item in recent if str(item.get("sender_id") or "") == "bot")
-    unique_speakers = len({str(item.get("sender_id") or "") for item in recent if item.get("sender_id")})
-    context_limit = normalize_group_context_limit(policy.get("max_context"))
-    context_lines = group_context_lines(prior_history, limit=context_limit)
-    frame = audit_group_conversation_frame(conversation_frame)
-    return [
-        {
-            "role": "system",
-            "content": (
-                "你是 QQ 群聊发言决策器，只输出 JSON。决定 AI 此刻是否应该发言，而不是判断能不能回答。[助手/self] 是你自己以前说过的话，绝不能把它误判为群成员之间的对话。"
-                "被明确 @ 时通常应该回复。未被 @ 时，助手仍可参与当前群话题，但必须先找到可追溯的切入点和新增价值。"
-                "成员正常互聊不是自动沉默理由，也不是插话理由。这个候选已通过服务端节奏筛选："
-                "若存在具体话题锚点且能用一句话接住、补一个小观点或问一个贴题问题，优先选择非 silent。"
-                "只有敏感交流、纯确认词、无可读锚点、会重复已有人接住的内容或只能泛泛回应时，选择 silent。"
-                "统一会话框架的 active_continuation 只是候选，不是回复义务；它同样要受时效、连续轮数、密度、预算和当前价值约束。"
-                "主动参与强度只调节同等候选的证据门槛，绝不能绕过这些规则。"
-                "先选择 social_action：silent/ack/ack_add/follow_up/reply/bridge_topic/topic_start/repair。"
-                "ack 只简短承接；ack_add 承接后只补一个新点；follow_up 只问一个锚定问题；reply 只回应当前一件事；"
-                "bridge_topic 必须说清与当前话题的关联；topic_start 只可基于当前群已有共同上下文且话题明显停住；repair 直接修正自己刚才的具体误解。"
-                "输出字段：should_reply(boolean), confidence(0-1), reason, social_action, emotion, reply_length(short/medium), "
-                "meme_intent(none/optional/strong), mode(daily/work/mixed), intent(chat/analysis/research/code/ops), "
-                "why_now, topic_candidate_id。"
-            ),
-        },
-        {
-            "role": "user",
-            "content": "\n".join(
-                [
-                    f"群：{policy.get('group_name') or policy.get('group_id')}",
-                    f"主动参与强度（影响候选节奏和证据门槛，不是逐条回复概率）：{float(policy.get('reply_probability') or 0.2):.2f}",
-                    f"是否被 @：{bool(current.get('is_mention'))}",
-                    f"最近 8 条中助手已发言：{assistant_turns} 次；参与者：{unique_speakers} 人",
-                    f"统一群会话框架：{json.dumps(frame, ensure_ascii=False, sort_keys=True)}",
-                    "最近群聊：",
-                    *(context_lines or ["(无上下文)"]),
-                    f"当前消息：{current.get('sender_name') or current.get('sender_id')}: {current.get('content')}",
-                ],
-            ),
-        },
-    ]
-
-
 def apply_group_turn_policy(
     policy: dict, history: list[dict], current: dict, decision: dict,
     conversation_frame: dict | None = None,
@@ -699,10 +663,12 @@ def apply_group_turn_policy(
         if int(frame.get("continuation_assistant_turns") or 0) >= max_auto_continuations:
             result.update({"should_reply": False, "reason": "auto_continuation_limit", "turn_policy": signals})
             return result
-    if (
-        assistant_turns >= 2
-        and float(result.get("confidence") or 0) < 0.9
-    ):
+    try:
+        strength = max(0.0, min(float(policy.get("reply_probability") or 0.2), 1.0))
+    except (TypeError, ValueError):
+        strength = 0.2
+    density_floor = max(0.70, min(0.95, 0.95 - 0.20 * strength))
+    if assistant_turns >= 2 and float(result.get("confidence") or 0) < density_floor:
         result.update({"should_reply": False, "reason": "assistant_turn_density", "turn_policy": signals})
         return result
     result["turn_policy"] = signals

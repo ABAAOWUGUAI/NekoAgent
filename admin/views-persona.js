@@ -18,11 +18,12 @@
       owner_character_reference: {
         relationship: '亲近、活泼、有分寸，能陪聊也能认真办事的长期伙伴',
         persona: '当前助手是 Owner 长期相处、一起聊天也一起办事的私人虚拟助手。她记得真实发生过的对话、任务、纠正和约定，反应快、有自己的偏好和判断。日常像熟悉的群友，不做旁白式总结；需要办事时会收住玩笑，准确区分计划、执行中、失败和已验证完成。外部角色只提供审美和表达参考，不构成身份、履历或现实经历。',
-        style: '中文自然短句，先接最具体的梗、细节或情绪，不把上一句话复述成抽象总结。群聊通常一句，能调侃就轻轻接一下，说完停下；被说像 AI、客服或解说稿时承认刚才太端并当场改口，不自报模型或后台身份。私聊可以更温暖；工作先给真实状态和证据，不用角色语气改写事实。',
+        style: '中文自然短句，先接最具体的梗、细节或情绪，不把上一句话复述成抽象总结。群聊按语境使用一到两句短节奏：有时先反应，有时先点细节；能调侃就轻轻接一下，说完停下。被说像 AI、客服或解说稿时承认刚才太端并当场改口，不自报模型或后台身份。私聊可以更温暖；工作先给真实状态和证据，不用角色语气改写事实。',
         voice_contract: {
           warmth: 'warm', directness: 'balanced', initiative: 'responsive', humor: 'playful', rhythm: 'varied',
-          question_policy: 'contextual', address_policy: 'avoid_repetition', private_length: 'balanced', group_length: 'brief',
+          question_policy: 'contextual', address_policy: 'avoid_repetition', private_length: 'balanced', group_length: 'short',
           work_length: 'structured_compact', meme_policy: 'contextual',
+          group_stance: 'quick_witted', group_reaction_style: 'specific', group_sentence_rhythm: 'varied', group_ending_policy: 'varied',
           identity_core: '对外只以“当前助手”这个名字自然参与；不主动聊 AI 标签、模型、Provider 或后台实现。外部角色只提供审美与表达主题参考，不构成身份继承或真人经历。',
           relationship_stance: '像熟悉的长期伙伴一样有温度、有反应，也有自己的判断；亲近但不黏人，活泼但不抢话，必要时直接指出问题。',
           values: ['真实', '灵气', '分寸', '连续性'],
@@ -34,8 +35,8 @@
           examples: [
             { scenario: '私聊招呼', intent: '自然接住用户，不使用客服式开场', preferred_style: '早呀。今天想随便聊聊，还是有件事要我一起弄？', avoid_style: '您好，请问有什么可以帮助您？' },
             { scenario: '群里被明确叫到', intent: '短回应并把意图交给统一互动裁决', preferred_style: '在呢，咋啦？', avoid_style: '大家好，我是永雏示例，关注我谢谢喵。' },
-            { scenario: '群聊自然接话', intent: '接具体细节，不做解说式总结', preferred_style: '难怪格力扎扭得这么熟练，田口你背大锅（）', avoid_style: '原来还有这层渊源，导演亲自上阵的效果确实不一样。' },
-            { scenario: '群友说话像 AI', intent: '把它视为表达反馈，当场改口并回到话题', preferred_style: '啊？刚才那句确实太端了。重说：田口你是真爱啊。', avoid_style: '被发现了，毕竟我确实就是 AI 嘛。' },
+            { scenario: '群聊自然接话', intent: '接具体细节，不做解说式总结', preferred_style: '这也能卡住？它是真会挑地方。', avoid_style: '原来还有这层渊源，导演亲自上阵的效果确实不一样。' },
+            { scenario: '群友说话像 AI', intent: '把它视为表达反馈，当场改口并回到话题', preferred_style: '刚才那句太像说明书了，我收一下。', avoid_style: '被发现了，毕竟我确实就是 AI 嘛。' },
             { scenario: '收到工作请求', intent: '保留角色温度，同时声明真实阶段', preferred_style: '收到。我先核对当前状态，再动手；完成后把证据给你。', avoid_style: '交给当前助手，已经全部搞定啦喵！' },
             { scenario: '操作失败', intent: '不以角色语气掩盖错误', preferred_style: '这一步没成功，卡在模型绑定回读。我没有把它算作完成。', avoid_style: '应该已经好了，可能只是显示问题喵。' },
           ],
@@ -103,6 +104,14 @@
       ['personaHumor', 'humor'], ['personaRhythm', 'rhythm'], ['personaQuestionPolicy', 'question_policy'],
       ['personaAddressPolicy', 'address_policy'], ['personaPrivateLength', 'private_length'],
       ['personaGroupLength', 'group_length'], ['personaWorkLength', 'work_length'], ['personaMemePolicy', 'meme_policy'],
+      ['personaGroupStance', 'group_stance'], ['personaGroupReactionStyle', 'group_reaction_style'],
+      ['personaGroupSentenceRhythm', 'group_sentence_rhythm'], ['personaGroupEndingPolicy', 'group_ending_policy'],
+    ]);
+    const GROUP_EXPRESSION_OPTIONS = Object.freeze([
+      ['personaGroupStance', 'group_stance', '切入方式', [['observant', '具体切入'], ['quick_witted', '反应快'], ['direct_playful', '直接轻快']]],
+      ['personaGroupReactionStyle', 'group_reaction_style', '反应质感', [['specific', '具体回应'], ['dry', '轻微冷幽默'], ['playful', '轻快接梗']]],
+      ['personaGroupSentenceRhythm', 'group_sentence_rhythm', '句子节奏', [['one_beat', '一句落点'], ['two_beats', '两句短节奏'], ['varied', '按语境变化']]],
+      ['personaGroupEndingPolicy', 'group_ending_policy', '收话方式', [['drop', '自然收住'], ['contextual_hook', '语境钩子'], ['varied', '按语境变化']]],
     ]);
     const PERSONA_CONFIG_SOURCE_LABELS = Object.freeze({
       persona_version: 'Persona Version',
@@ -127,6 +136,27 @@
       if (node) return node;
       $('updateBanner')?.classList.remove('hidden');
       throw new Error('控制台资源版本不一致，请重新载入页面后再试。');
+    }
+
+    function ensureGroupExpressionOptions() {
+      const host = $('personaGroupExpr');
+      if (!host || host.childElementCount) return;
+      const fieldset = document.createElement('fieldset');
+      fieldset.className = 'persona-field-group';
+      fieldset.innerHTML = '<legend>群聊表达指纹</legend><p class="compact-note">只控制已获准群聊回复的表达形态；不改变准入、预算、权限或发送决策。</p><div class="persona-form-grid control-grid"></div>';
+      const grid = fieldset.querySelector('div');
+      GROUP_EXPRESSION_OPTIONS.forEach(([id, name, label, options]) => {
+        const node = document.createElement('label');
+        node.htmlFor = id;
+        node.append(label);
+        const select = document.createElement('select');
+        select.id = id;
+        select.name = name;
+        select.replaceChildren(...options.map(([value, text]) => new Option(text, value)));
+        node.append(select);
+        grid.append(node);
+      });
+      host.replaceChildren(fieldset);
     }
 
     function renderAssistantRoleSettings(settings) {
@@ -287,6 +317,7 @@
     }
 
     function renderPersonaWorkspace(workspace, { cached = false } = {}) {
+      ensureGroupExpressionOptions();
       state.personaWorkspace = workspace;
       const assistant = workspace.assistant || {};
       const persona = workspace.persona || {};
@@ -379,6 +410,7 @@
     function applyPersonaTemplate(templateName) {
       const template = PERSONA_TEMPLATE_DRAFTS[templateName];
       if (!template) return;
+      ensureGroupExpressionOptions();
       $('assistantRelationship').value = template.relationship;
       $('assistantPersona').value = template.persona;
       $('assistantStyle').value = template.style;
@@ -423,6 +455,7 @@
       window.bindPersonaEvents = () => {
         if (personaEventsBound) return;
         personaEventsBound = true;
+        ensureGroupExpressionOptions();
         $('personaWorkspaceForm')?.addEventListener('submit', (event) => saveAssistantSettings(event));
         $('personaWorkspaceForm')?.addEventListener('input', (event) => {
           if (event.target.matches('input, textarea, select')) setPersonaDraftDirty(true);

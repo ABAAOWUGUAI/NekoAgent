@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 
+from bridge_group_expression import repeated_reply_shape_issue
 from bridge_social_identity import (
     guard_casual_identity_reply,
     has_casual_identity_self_disclosure,
@@ -50,6 +51,9 @@ _GROUP_STOCK_OPENERS = (
 _UNINVITED_TARGETED_JUDGEMENT_RE = re.compile(
     r"(?:你|你们).{0,16}(?:跟不上|看不懂|没看懂|不懂|不会|太慢|菜|离谱)",
 )
+_GENERIC_ASSISTANT_FRAME_RE = re.compile(
+    r"^(?:我理解|听起来|感谢(?:你)?(?:的)?分享|很高兴|作为(?:一个)?(?:AI|助手)|希望(?:这些|这).{0,12}(?:有帮助|帮到你))",
+)
 
 
 def _reply_opener(value: object) -> str:
@@ -90,6 +94,10 @@ def group_reply_style_issues(
     }
     if opener and opener in recent_openers:
         issues.append("repeated_stock_opener")
+    if _GENERIC_ASSISTANT_FRAME_RE.search(text):
+        issues.append("generic_assistant_frame")
+    if repeated_reply_shape_issue(text, recent_replies):
+        issues.append("repeated_reply_shape")
     if uninvited and _UNINVITED_TARGETED_JUDGEMENT_RE.search(text):
         issues.append("uninvited_targeted_judgement")
     if is_style_feedback(request) and (

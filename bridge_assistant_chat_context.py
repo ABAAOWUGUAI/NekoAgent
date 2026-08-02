@@ -9,6 +9,7 @@ from typing import Callable
 from bridge_knowledge_service import search_published
 from bridge_interaction_contract import persona_response_blocks
 from bridge_group_context_frame import group_expression_rhythm
+from bridge_group_expression import recent_reply_shapes
 from bridge_migrations import MigrationError
 from bridge_relationship_service import get_relationship_state
 from bridge_social_engine import build_voice_contract, normalize_social_cues, plan_expression
@@ -58,6 +59,7 @@ def build_social_context(
     group_info = dict(group or {})
     if group_info:
         group_info["expression_rhythm"] = group_expression_rhythm(history or [])
+        group_info["recent_reply_shapes"] = recent_reply_shapes(history or [])
         group = group_info
     cues = normalize_social_cues(mode_decision, message)
     contract = build_voice_contract(
@@ -108,6 +110,7 @@ def build_social_context(
             mode_decision=mode_decision,
             group_context=group,
             voice_contract=contract,
+            recent_expression_shapes=group_info.get("recent_reply_shapes") if group_info else None,
         ),
         "relationship": relationship,
         "context_blocks": {
