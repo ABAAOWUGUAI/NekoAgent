@@ -5096,18 +5096,6 @@ def _assistant_dispatch_impl(
             inbound_context, _conversation_history, followup_conversation_ref,
             followup_channel, ASSISTANT_HISTORY_LIMIT,
         )
-    routed, route_decision = dispatch_deterministic_route(
-        assistant_connect=_assistant_db_connect, store=INTERACTION_STORE, actor_id=user_id,
-        message=message, history=history, trace_id=trace_id, source=source,
-        inbound_context=inbound_context, automation_preflight=_automation_execution_preflight,
-        resolve_automation_target=_resolve_automation_conversation_target,
-        get_fallback=lambda: _assistant_settings(include_secrets=True),
-        get_role_settings=_settings_for_model_role, readiness_check=_assistant_provider_ready,
-    )
-    if routed is not None:
-        if routed.get("intent") == "automation":
-            AUTOMATION_EVENT.set()
-        return routed
     action_followup = dispatch_action_followup_context(_assistant_db_connect, CONTINUITY_KERNEL, {
         "user_id": user_id, "source": source, "trace_id": trace_id, "message": message,
         "inbound_context": inbound_context, "delivery_recipient_id": delivery_recipient_id,
@@ -5131,6 +5119,19 @@ def _assistant_dispatch_impl(
             source=followup_channel,
         )
         return media_retry
+
+    routed, route_decision = dispatch_deterministic_route(
+        assistant_connect=_assistant_db_connect, store=INTERACTION_STORE, actor_id=user_id,
+        message=message, history=history, trace_id=trace_id, source=source,
+        inbound_context=inbound_context, automation_preflight=_automation_execution_preflight,
+        resolve_automation_target=_resolve_automation_conversation_target,
+        get_fallback=lambda: _assistant_settings(include_secrets=True),
+        get_role_settings=_settings_for_model_role, readiness_check=_assistant_provider_ready,
+    )
+    if routed is not None:
+        if routed.get("intent") == "automation":
+            AUTOMATION_EVENT.set()
+        return routed
 
     work_followup = None
     if not approved and not _new_task_requested(message) and active_qq_task(TASKS, TASK_LOCK, QQ_TASK_SOURCE, user_id) is None:
