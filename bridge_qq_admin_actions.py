@@ -37,6 +37,7 @@ _GROUP_CONTEXT_HINTS = (
 _ENABLE_HINTS = ("开放", "加入", "添加", "允许", "启用")
 _DISABLE_HINTS = ("移出", "移除", "删除", "撤销", "取消", "关闭", "禁用")
 _STATUS_HINTS = ("查询", "查看", "检查", "状态", "是否", "好了吗", "好了么", "生效")
+_ALLOWLIST_LIST_HINTS = ("准入列表", "白名单列表", "哪些群", "多少个群", "几个群", "所有准入群", "已加入的群")
 _DIAGNOSTIC_HINTS = ("查日志", "看日志", "直接查", "排查", "没有回复", "没回复", "不回复")
 _POLICY_CLONE_HINTS = ("对齐", "保持一致", "一致", "复制", "同步", "一样", "相同")
 _GROUP_POLICY_COPY_FIELDS = (
@@ -124,6 +125,12 @@ def _clone_requested(text: str) -> bool:
     return any(hint in text for hint in ("把", "将", "请", "给"))
 
 
+def _allowlist_list_requested(text: str) -> bool:
+    return any(hint in text for hint in _ALLOWLIST_LIST_HINTS) and any(
+        hint in text for hint in ("多少", "几个", "哪些", "查询", "查看", "当前", "现在", "有")
+    )
+
+
 def parse_qq_admin_action(
     message: str,
     history: list[dict] | None = None,
@@ -156,6 +163,8 @@ def parse_qq_admin_action(
         return {"action_type": "qq_group_allowlist_enable", "group_id": group_id}
     if group_context and access_context and any(hint in text for hint in _DISABLE_HINTS):
         return {"action_type": "qq_group_allowlist_disable", "group_id": group_id}
+    if group_context and access_context and not group_id and _allowlist_list_requested(text):
+        return {"action_type": "qq_group_allowlist_list"}
     if group_id and any(hint in text for hint in _DIAGNOSTIC_HINTS):
         return {"action_type": "qq_group_diagnose", "group_id": group_id}
     if group_id and (
@@ -335,12 +344,21 @@ def execute_qq_admin_action(
             "reply": "我已识别到要对齐群配置，但缺少作为模板的 QQ 群号；本轮没有修改任何配置。",
             "action_receipts": [_receipt(action_type, "not_started", "", reason="source_group_required")],
         }
-    if not group_id:
+    if not group_id and action_type != "qq_group_allowlist_list":
         return None
 
     try:
         with connect() as conn:
             _authorise(conn, actor_id)
+            if action_type == "qq_group_allowlist_list":
+                current = get_qq_access_settings(conn)
+                groups = [dict(item) for item in current.get("group_allowlist") or [] if item.get("enabled")]
+                group_ids = [str(item.get("group_id") or "") for item in groups if item.get("group_id")]
+                receipt = _receipt(action_type, "completed", "", config_version=int(current["settings"].get("config_version") or 0), group_allowlist_count=len(group_ids), group_ids=group_ids)
+                lines = [f"已通过 Bridge 只读查询，当前 QQ 群准入列表共 {len(group_ids)} 个群。"]
+                lines.extend(f"- {group_id}" for group_id in group_ids) if group_ids else lines.append("- 当前没有已启用的准入群。")
+                lines.append(f"- 配置版本：{receipt['facts']['config_version']}")
+                return {"ok": True, "dispatch": "control_status", "reply": "\n".join(lines), "action_receipts": [receipt]}
             if action_type in {"qq_group_status_read", "qq_group_diagnose"}:
                 state = _group_access_state(conn, group_id)
                 diagnostic = None
