@@ -94,6 +94,13 @@ _CLAIM_MARKERS = _CLAIM_MARKERS + (
     "\u68c0\u67e5\u8fc7\u4e86",
     "\u6838\u5bf9\u8fc7\u4e86",
     "\u7edf\u8ba1\u8fc7\u4e86",
+    # A promise to re-run a control-plane workflow is not an execution state.
+    # Keep this server-side so a conversational model cannot leave the Owner
+    # waiting for a background job that was never created.
+    "我可以现在",
+    "我会重新",
+    "我来重新",
+    "重新走一遍",
 )
 
 
