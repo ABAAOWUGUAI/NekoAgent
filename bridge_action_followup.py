@@ -44,7 +44,7 @@ def verify_recent_action(connect: Callable[[], sqlite3.Connection], *, message: 
             "ok": True,
             "dispatch": "action_followup_status",
             "reply": "已识别为上一动作的后续请求，并找到服务端完成回执；当前领域的专用验证器尚未接入，本轮没有冒充执行新的验证动作。",
-            "action_receipts": [{"action_type": "action.followup.verify", "status": "completed", "facts": {"bound_action_type": action_type, "source": "continuity_receipt"}}],
+            "action_receipts": [{"action_type": "action.followup.verify", "status": "failed", "facts": {"bound_action_type": action_type, "source": "continuity_receipt", "reason": "domain_verifier_unavailable"}}],
             "verified_action": receipt,
         }
     target_group_id = str(receipt.get("target_id") or "")
