@@ -87,6 +87,10 @@ def _context_text(message: str, history: list[dict] | None = None) -> str:
     return "\n".join([*recent, str(message or "")]).lower()
 
 
+def _normalize_access_terms(text: str) -> str:
+    return str(text or "").replace("准人", "准入")
+
+
 def _group_ids_in_text(message: str) -> list[str]:
     return list(dict.fromkeys(_GROUP_ID_PATTERN.findall(str(message or ""))))
 
@@ -137,10 +141,10 @@ def parse_qq_admin_action(
     *,
     current_group_id: str = "",
 ) -> dict | None:
-    text = str(message or "").strip().lower()
+    text = _normalize_access_terms(str(message or "").strip().lower())
     if not text:
         return None
-    context_text = _context_text(message, history)
+    context_text = _normalize_access_terms(_context_text(message, history))
     group_context = any(hint in context_text for hint in _GROUP_CONTEXT_HINTS)
     access_context = "白名单" in context_text or "准入" in context_text
     group_id = _candidate_group_id(
