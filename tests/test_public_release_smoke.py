@@ -21,6 +21,27 @@ def test_bridge_imports_without_runtime_bootstrap() -> None:
     assert bridge.LISTEN_PORT == 18777
 
 
+def test_group_engagement_candidates_are_append_only_for_provider_cache() -> None:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    prompt = importlib.import_module("bridge_group_engagement_prompt")
+    policy = {"group_id": "public-smoke-group", "max_context": 40, "reply_probability": 0.2}
+    first_current = {
+        "id": 1, "sender_id": "member-1", "sender_name": "Member 1",
+        "content": "First topic message", "created_at": "2026-08-03T00:01:00+00:00",
+    }
+    first = prompt.build_group_decision_messages(policy, [first_current], first_current, {})
+    second_current = {
+        "id": 2, "sender_id": "member-2", "sender_name": "Member 2",
+        "content": "Second message on the topic", "created_at": "2026-08-03T00:02:00+00:00",
+    }
+    second = prompt.build_group_decision_messages(
+        policy, [first_current, second_current], second_current, {},
+    )
+    assert first == second[:len(first)]
+    assert second[-1]["content"] == "[成员] Second message on the topic"
+
+
 def test_deployment_and_protection_documents_are_present() -> None:
     expected_documents = (
         "README.zh-CN.md",

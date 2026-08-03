@@ -8,6 +8,9 @@ semantic version tags after the first public release.
 
 ### Fixed
 
+- Group-engagement model messages now preserve each member turn in one
+  append-only canonical form, allowing a Provider to reuse the prior decision
+  request prefix instead of rewriting the former candidate as different history.
 - Local Piper synthesis retries one transient nonzero process exit before a
   safe text fallback, while timeouts and operating-system failures remain
   bounded and fail closed.
