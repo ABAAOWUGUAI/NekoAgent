@@ -64,9 +64,24 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
         "result", "Enable QQ group access without granting work execution.",
     ),
     ActionDefinition(
+        "qq_group_allowlist_disable", "ops", "qq.group.allowlist.disable",
+        "", "medium", True, True, "owner_private",
+        "result", "Disable QQ group access while retaining its audit history.",
+    ),
+    ActionDefinition(
         "qq_group_allowlist_list", "ops", "qq.group.allowlist.list",
         "", "low", False, True, "owner_private",
         "result", "Read the current QQ group access allowlist.",
+    ),
+    ActionDefinition(
+        "qq_group_status_read", "ops", "qq.group.status.read",
+        "", "low", False, True, "owner_private",
+        "result", "Read one QQ group status from the owning domain.",
+    ),
+    ActionDefinition(
+        "qq_group_diagnose", "ops", "qq.group.diagnose",
+        "", "medium", True, True, "owner_private",
+        "result", "Diagnose a QQ group through the owning domain.",
     ),
     ActionDefinition(
         "action.followup.verify", "ops", "action.followup.verify",

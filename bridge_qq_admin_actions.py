@@ -37,6 +37,13 @@ _GROUP_CONTEXT_HINTS = (
 _ENABLE_HINTS = ("开放", "加入", "添加", "允许", "启用")
 _DISABLE_HINTS = ("移出", "移除", "删除", "撤销", "取消", "关闭", "禁用")
 _STATUS_HINTS = ("查询", "查看", "检查", "状态", "是否", "好了吗", "好了么", "生效")
+# Generic words such as “是否” also occur in unrelated requests (for example
+# weather forecasts). Only bounded phrases may carry a status question across
+# turns without repeating the group reference.
+_STATUS_FOLLOWUP_HINTS = (
+    "生效了吗", "生效了么", "好了吗", "好了么", "成功了吗", "完成了吗",
+    "配置怎么样", "状态怎么样", "确认一下状态", "查一下状态",
+)
 _ALLOWLIST_LIST_HINTS = ("准入列表", "白名单列表", "哪些群", "多少个群", "几个群", "所有准入群", "已加入的群")
 _DIAGNOSTIC_HINTS = ("查日志", "看日志", "直接查", "排查", "没有回复", "没回复", "不回复")
 _POLICY_CLONE_HINTS = ("对齐", "保持一致", "一致", "复制", "同步", "一样", "相同")
@@ -85,6 +92,33 @@ def _context_text(message: str, history: list[dict] | None = None) -> str:
 
     recent = [str(item.get("content") or "") for item in (history or [])[-12:]]
     return "\n".join([*recent, str(message or "")]).lower()
+
+
+def _current_group_reference(text: str) -> bool:
+    """Whether the current turn itself names or points at a QQ group."""
+
+    value = str(text or "").lower()
+    return bool(_GROUP_ID_PATTERN.search(value)) or any(
+        hint in value for hint in _GROUP_CONTEXT_HINTS
+    )
+
+
+def _status_followup_reference(text: str, history: list[dict] | None) -> bool:
+    """Allow only explicit, bounded status continuations to use group history."""
+
+    value = str(text or "").strip().lower()
+    if not value or len(value) > 80:
+        return False
+    if not any(hint in value for hint in _STATUS_FOLLOWUP_HINTS):
+        return False
+    recent = "\n".join(
+        str(item.get("content") or "")
+        for item in (history or [])[-4:]
+        if isinstance(item, dict)
+    ).lower()
+    return any(hint in recent for hint in _GROUP_CONTEXT_HINTS) and bool(
+        _GROUP_ID_PATTERN.search(recent)
+    )
 
 
 def _normalize_access_terms(text: str) -> str:
@@ -146,6 +180,7 @@ def parse_qq_admin_action(
         return None
     context_text = _normalize_access_terms(_context_text(message, history))
     group_context = any(hint in context_text for hint in _GROUP_CONTEXT_HINTS)
+    current_group_context = any(hint in text for hint in _GROUP_CONTEXT_HINTS)
     access_context = "白名单" in context_text or "准入" in context_text
     group_id = _candidate_group_id(
         message,
@@ -167,16 +202,17 @@ def parse_qq_admin_action(
         return {"action_type": "qq_group_allowlist_enable", "group_id": group_id}
     if group_context and access_context and any(hint in text for hint in _DISABLE_HINTS):
         return {"action_type": "qq_group_allowlist_disable", "group_id": group_id}
-    if group_context and access_context and not group_id and _allowlist_list_requested(text):
+    if current_group_context and access_context and not group_id and _allowlist_list_requested(text):
         return {"action_type": "qq_group_allowlist_list"}
     if group_id and any(hint in text for hint in _DIAGNOSTIC_HINTS):
         return {"action_type": "qq_group_diagnose", "group_id": group_id}
     if group_id and (
-        (group_context and any(hint in text for hint in _STATUS_HINTS))
+        ((_current_group_reference(text) or _status_followup_reference(text, history))
+         and any(hint in text for hint in _STATUS_HINTS))
         or any(hint in text for hint in ("好了吗", "好了么", "没有回复", "没回复", "不回复"))
     ):
         return {"action_type": "qq_group_status_read", "group_id": group_id}
-    if group_context and access_context and not group_id:
+    if current_group_context and access_context and not group_id:
         return {"action_type": "qq_group_clarification", "group_id": ""}
     return None
 
