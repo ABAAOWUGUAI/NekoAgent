@@ -94,6 +94,15 @@ def route_metadata(decision: Mapping[str, object] | None) -> dict:
 
 def initial_route_disposition(message: str, history: list[dict] | None = None, *, current_group_id: str = "") -> tuple[dict, dict | None]:
     decision = resolve_request(message, history, current_group_id=current_group_id)
+    if decision["status"] == "mixed":
+        # Explicit cross-domain actions are composable work in one message.
+        # The dispatcher builds one Interaction Plan instead of forcing the
+        # Owner to choose a domain or silently dropping a candidate.
+        if not any(
+            isinstance(item, dict) and str(item.get("operation") or "") == "clarify"
+            for item in decision.get("candidates") or []
+        ):
+            return decision, None
     if decision["status"] not in {"mixed", "ambiguous"}:
         return decision, None
     labels = "、".join(str(item.get("action_type") or "") for item in decision["candidates"] if isinstance(item, dict))

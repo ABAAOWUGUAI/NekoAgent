@@ -159,6 +159,15 @@ def _automation_parameters(instruction: str) -> dict:
     return parameters
 
 
+# The extraction contract lives in its own bounded module.  Importing these
+# names after the legacy helpers keeps older callers compatible while routing
+# every new schedule through the current-turn objective-preserving parser.
+from bridge_automation_instruction import (  # noqa: E402
+    extract_instruction as _instruction,
+    extract_parameters as _automation_parameters,
+)
+
+
 def parse_automation_action(
     message: str,
     history: list[dict] | None = None,
