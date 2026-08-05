@@ -14,12 +14,19 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import re
+import shutil
+import subprocess
 from threading import Lock
 from typing import Callable
+
+from bridge_media_contract import classify_media_component, media_preflight
 
 
 MAX_VISUAL_IMAGES = 3
 MAX_VISUAL_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_VISUAL_VIDEO_BYTES = 16 * 1024 * 1024
+MAX_VISUAL_FRAME_BYTES = 4 * 1024 * 1024
+MEDIA_FRAME_TIMEOUT_SECONDS = 8
 MAX_VISUAL_EVIDENCE_CHARS = 500
 VISUAL_CONTEXT_TTL_SECONDS = 10 * 60
 SUPPORTED_VISUAL_TRANSPORTS = {
@@ -62,9 +69,53 @@ def _detect_mime(data: bytes) -> str:
     return ""
 
 
-def _decode_image(item: object) -> tuple[str, bytes] | None:
-    if not isinstance(item, dict) or str(item.get("type") or "").strip().lower() != "image":
-        return None
+def _extract_first_frame(data: bytes, *, media_kind: str) -> tuple[bytes | None, str]:
+    """Extract one bounded PNG frame without retaining the source media."""
+
+    executable = shutil.which("ffmpeg")
+    if not executable:
+        return None, "media_decoder_unavailable"
+    try:
+        completed = subprocess.run(
+            [
+                executable,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                "pipe:0",
+                "-frames:v",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
+                "pipe:1",
+            ],
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=MEDIA_FRAME_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, f"{media_kind}_decode_failed"
+    frame = bytes(completed.stdout or b"")
+    if completed.returncode != 0 or not frame:
+        return None, f"{media_kind}_decode_failed"
+    if len(frame) > MAX_VISUAL_FRAME_BYTES:
+        return None, f"{media_kind}_frame_too_large"
+    if _detect_mime(frame) != "image/png":
+        return None, f"{media_kind}_decode_failed"
+    return frame, ""
+
+
+def _decode_visual_media(item: object) -> tuple[tuple[str, bytes] | None, str]:
+    if not isinstance(item, dict):
+        return None, "visual_media_invalid"
+    kind = str(item.get("type") or "").strip().lower()
+    if kind not in {"image", "video"}:
+        return None, "visual_media_invalid"
     encoded = str(item.get("data_base64") or "").strip()
     declared = str(item.get("mime") or "").strip().lower()
     if encoded.startswith("data:"):
@@ -72,18 +123,47 @@ def _decode_image(item: object) -> tuple[str, bytes] | None:
         if not match:
             return None
         declared, encoded = match.group(1).lower(), match.group(2)
-    if not encoded or len(encoded) > ((MAX_VISUAL_IMAGE_BYTES * 4 // 3) + 16):
-        return None
+    max_bytes = MAX_VISUAL_VIDEO_BYTES if kind == "video" else MAX_VISUAL_IMAGE_BYTES
+    preflight = media_preflight(
+        {"type": kind, "mime": declared, "data_base64": encoded},
+        transport_available=True,
+        max_bytes=max_bytes,
+    )
+    if preflight.get("state") != "ready":
+        return None, str(preflight.get("reason") or "visual_media_invalid")
+    # The contract canonicalizes MIME aliases (for example image/jpg) and
+    # preserves wildcard adapter hints.  Use the canonical value for all
+    # decoder comparisons so aliases do not fail after preflight.
+    canonical_mime = str(preflight.get("safe_mime") or declared).strip().lower()
+    declared = "" if canonical_mime == "image/*" else canonical_mime
+    if not encoded or len(encoded) > ((max_bytes * 4 // 3) + 16):
+        return None, f"{kind}_too_large" if kind == "video" else "visual_media_invalid"
     try:
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError):
-        return None
-    if not data or len(data) > MAX_VISUAL_IMAGE_BYTES:
-        return None
+        return None, f"{kind}_fetch_failed" if kind == "video" else "visual_media_invalid"
+    if not data or len(data) > max_bytes:
+        return None, f"{kind}_too_large" if kind == "video" else "visual_media_invalid"
+    if kind == "video" or declared.startswith("video/"):
+        frame, reason = _extract_first_frame(data, media_kind="video")
+        return (("image/png", frame), "") if frame else (None, reason or "video_decode_failed")
     detected = _detect_mime(data)
+    if detected == "image/gif" or declared == "image/gif":
+        frame, reason = _extract_first_frame(data, media_kind="gif")
+        return (("image/png", frame), "") if frame else (
+            None,
+            "media_decoder_unavailable" if reason == "media_decoder_unavailable" else "gif_frame_extract_failed",
+        )
     if not detected or (declared and declared != detected):
-        return None
-    return detected, data
+        return None, "visual_media_invalid"
+    return (detected, data), ""
+
+
+def _decode_image(item: object) -> tuple[str, bytes] | None:
+    """Backward-compatible image decoder used by older callers/tests."""
+
+    decoded, _reason = _decode_visual_media(item)
+    return decoded
 
 
 def _visual_route(settings: object) -> tuple[bool, str]:
@@ -220,6 +300,7 @@ def consume_qq_visual_media(
     get_role_settings: Callable[[str, dict], dict],
     call_model: Callable[[dict, list[dict], int], dict],
     record_model: Callable[..., None],
+    allow_model: bool = True,
 ) -> dict:
     """Remove one raw adapter payload and leave only a typed route status."""
 
@@ -234,19 +315,53 @@ def consume_qq_visual_media(
     media_items = payload.pop("visual_media", None)
     if not isinstance(media_items, list) or not media_items:
         result = {"status": "none", "reason": "no_visual_media", "image_count": 0}
+        typed = {
+            "state": "none",
+            "media_kind": "unknown",
+            "source_component": "",
+            "safe_mime": "",
+        }
     else:
-        result = resolve_inbound_visual_evidence(
-            media_items,
-            scope=scope,
-            event_id=event_id,
-            message_text=message,
-            vision_settings=get_role_settings("vision_caption", settings),
-            call_model=call_model,
-            record_model=record_model,
-        )
+        first = media_items[0] if isinstance(media_items[0], dict) else {}
+        descriptor = classify_media_component(first.get("type"), first.get("mime"))
+        max_bytes = MAX_VISUAL_VIDEO_BYTES if descriptor.media_kind == "video" else MAX_VISUAL_IMAGE_BYTES
+        typed = media_preflight(first, transport_available=True, max_bytes=max_bytes)
+        if typed.get("state") != "ready":
+            result = {
+                "status": "unavailable",
+                "reason": str(typed.get("reason") or "visual_media_invalid"),
+                "image_count": 0,
+            }
+        elif not allow_model:
+            # Ambient deferred media still crosses the typed boundary and is
+            # removed from the payload, but does not spend a vision call.
+            result = {
+                "status": "deferred",
+                "reason": "media_observation_deferred",
+                "image_count": 0,
+            }
+        else:
+            result = resolve_inbound_visual_evidence(
+                media_items,
+                scope=scope,
+                event_id=event_id,
+                message_text=message,
+                vision_settings=get_role_settings("vision_caption", settings),
+                call_model=call_model,
+                record_model=record_model,
+            )
+    result.update({
+        "state": "ready" if result.get("status") == "ready" else str(result.get("status") or typed.get("state") or "none"),
+        "media_kind": str(typed.get("media_kind") or "unknown"),
+        "source_component": str(typed.get("source_component") or ""),
+        "safe_mime": str(typed.get("safe_mime") or ""),
+    })
     payload["visual_context_status"] = str(result.get("status") or "none")
     payload["visual_context_reason"] = str(result.get("reason") or "")[:80]
-    # An adapter can occasionally resolve a current Image component while
+    payload["visual_media_kind"] = str(result.get("media_kind") or "unknown")
+    payload["visual_media_source_component"] = str(result.get("source_component") or "")
+    payload["visual_media_safe_mime"] = str(result.get("safe_mime") or "")
+    # An adapter can occasionally resolve a current visual component while
     # omitting its structural attachment marker. Preserve only a typed image
     # failure marker so the downstream media Gate still closes before normal
     # reply generation; never reconstruct or retain the raw payload.
@@ -263,18 +378,22 @@ def consume_qq_visual_media(
             and isinstance(media_items, list)
             and media_items
             and not any(
-                isinstance(item, dict) and str(item.get("type") or "").lower() == "image"
+                isinstance(item, dict)
+                and str(item.get("type") or "").lower() in {"image", "video"}
                 for item in payload["attachments"]
             )
         ):
-            payload["attachments"].append({"type": "image"})
+            payload["attachments"].append({"type": "video" if any(
+                isinstance(item, dict) and str(item.get("type") or "").lower() == "video"
+                for item in media_items
+            ) else "image"})
         payload["attachments"] = [
             {
                 **item,
                 "visual_context_ready": result.get("status") == "ready",
                 "visual_context_state": str(result.get("status") or "none"),
             }
-            if isinstance(item, dict) and str(item.get("type") or "").lower() == "image"
+            if isinstance(item, dict) and str(item.get("type") or "").lower() in {"image", "video"}
             else item
             for item in payload["attachments"]
         ]
@@ -299,6 +418,7 @@ def prepare_qq_visual_turn(
     event_id: object,
     message: str,
     settings: dict,
+    allow_model: bool = True,
 ) -> list[str]:
     """Consume current QQ media and return only its local, ephemeral context."""
 
@@ -306,10 +426,47 @@ def prepare_qq_visual_turn(
     reference = _event(event_id)
     runtime = _QQ_RUNTIME
     if runtime is None:
+        # Even when the vision runtime is unavailable, cross the same media
+        # boundary so raw adapter bytes cannot leak into a later dispatch or
+        # durable diagnostic.  ``allow_model=False`` makes this a typed
+        # consume-only path; no model callback is possible here.
+        consume_qq_visual_media(
+            payload,
+            scope=scope,
+            event_id=reference,
+            message=message,
+            settings=settings,
+            get_role_settings=lambda _role, default: default,
+            call_model=lambda *_args, **_kwargs: {"ok": False, "error": "vision_runtime_unavailable"},
+            record_model=lambda *_args, **_kwargs: None,
+            allow_model=False,
+        )
         payload["visual_context_status"] = "unavailable"
         payload["visual_context_reason"] = "vision_runtime_unavailable"
+        if isinstance(payload.get("attachments"), list):
+            payload["attachments"] = [
+                {
+                    **item,
+                    "visual_context_ready": False,
+                    "visual_context_state": "unavailable",
+                }
+                if isinstance(item, dict)
+                and str(item.get("type") or "").strip().lower() in {"image", "video"}
+                else item
+                for item in payload["attachments"]
+            ]
         return []
-    consume_qq_visual_media(payload, scope=scope, event_id=reference, message=message, settings=settings, get_role_settings=runtime[0], call_model=runtime[1], record_model=runtime[2])
+    consume_qq_visual_media(
+        payload,
+        scope=scope,
+        event_id=reference,
+        message=message,
+        settings=settings,
+        get_role_settings=runtime[0],
+        call_model=runtime[1],
+        record_model=runtime[2],
+        allow_model=allow_model,
+    )
     return visual_context_lines(scope, reference)
 
 
@@ -365,12 +522,19 @@ def resolve_inbound_visual_evidence(
     if not callable(call_model):
         return {"status": "unavailable", "reason": "vision_runtime_unavailable", "image_count": 0}
     decoded: list[tuple[str, bytes]] = []
+    media_errors: list[str] = []
     for raw in media_items[:MAX_VISUAL_IMAGES]:
-        image = _decode_image(raw)
+        image, reason = _decode_visual_media(raw)
         if image is not None:
             decoded.append(image)
+        elif reason:
+            media_errors.append(reason)
     if not decoded:
-        return {"status": "unavailable", "reason": "visual_media_invalid", "image_count": 0}
+        return {
+            "status": "unavailable",
+            "reason": media_errors[0] if media_errors else "visual_media_invalid",
+            "image_count": 0,
+        }
     image_count = len(decoded)
 
     parts: list[dict] = [{
@@ -430,6 +594,8 @@ def resolve_inbound_visual_evidence(
 __all__ = [
     "MAX_VISUAL_IMAGES",
     "MAX_VISUAL_IMAGE_BYTES",
+    "MAX_VISUAL_VIDEO_BYTES",
+    "MAX_VISUAL_FRAME_BYTES",
     "SUPPORTED_VISUAL_TRANSPORTS",
     "append_visual_history",
     "configure_qq_visual_runtime",

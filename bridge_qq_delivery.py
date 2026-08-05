@@ -6,6 +6,7 @@ from __future__ import annotations
 import sqlite3
 
 from bridge_delivery_continuity import logical_response_id
+from bridge_conversation_participation import build_media_delivery_trace, media_trace_categories
 from bridge_response_modality import reconcile_voice_capability_claims
 
 
@@ -147,6 +148,16 @@ def enqueue_qq_response(
         or not result.get("ok")
         else "social"
     )
+    media_categories = media_trace_categories({
+        **transport,
+        **result,
+        **decision,
+        "media_observation_decision": (
+            result.get("media_observation_decision")
+            or decision.get("media_observation_decision")
+            or transport.get("media_observation_decision")
+        ),
+    })
     delivery = outbox.enqueue(
         dedupe_key=f"qq:response:{response_id}",
         channel="qq",
@@ -168,6 +179,7 @@ def enqueue_qq_response(
             "automation_job_id": automation_job_id,
             "automation_action_plan_id": str(result.get("automation_action_plan_id") or ""),
             "social_action": str((decision or {}).get("social_action") or ""),
+            "media_trace": media_categories,
             # Direct @ / quote turns are genuine replies but not unsolicited
             # participation. Settlement keeps the ambient budget truthful.
             "uninvited_group_action": bool(scope == "group" and not directed),
@@ -181,14 +193,26 @@ def enqueue_qq_response(
         supersede_pending_social=delivery_class == "social",
         response_sequence=int(transport.get("_response_sequence") or 0),
     )
+    delivery_trace = build_media_delivery_trace(
+        engagement_decision_id=engagement_decision_id,
+        delivery_id=str(delivery["id"]),
+        **media_categories,
+        delivery_state=str(delivery.get("state") or "pending"),
+        ack_state="pending",
+    )
     response = {
         **result,
         "delivery_queued": True,
         "logical_response_id": response_id,
+        **media_categories,
+        "media_delivery_trace": delivery_trace,
         "delivery": {
             "id": delivery["id"],
+            "delivery_id": delivery["id"],
             "state": delivery["state"],
             "certainty": delivery.get("delivery_certainty") or "pending",
+            "ack_state": "pending",
+            "engagement_decision_id": engagement_decision_id,
             "sequence": delivery.get("response_sequence") or 0,
         },
     }

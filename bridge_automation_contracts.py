@@ -82,6 +82,7 @@ def automation_config_hash(job: Mapping[str, object]) -> str:
             "schedule_type", "run_at", "time_of_day", "weekdays",
             "interval_minutes", "timezone", "enabled", "revision",
             "output_contract_hash",
+            "execution_contract_hash",
         )
     }
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()

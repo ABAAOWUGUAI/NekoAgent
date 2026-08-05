@@ -11,6 +11,14 @@ from bridge_migrations import MigrationDriftError, utc_now
 
 
 NATURAL_GROUP_PARTICIPATION_FEATURE_FLAG = "natural_group_participation_v1"
+# This field belongs to the existing group policy fact source.  Keep its
+# default closed so old policies cannot silently start consuming media.
+MEDIA_OBSERVATION_POLICY_FIELD = "media_observation_probability"
+MEDIA_OBSERVATION_POLICY_DEFAULT = 0.0
+GROUP_POLICY_TABLE = "group_policies"
+GROUP_POLICY_REQUIRED_COLUMNS = {
+    MEDIA_OBSERVATION_POLICY_FIELD: "REAL",
+}
 GROUP_PARTICIPATION_BUDGET_TABLE = "group_participation_budget"
 GROUP_PARTICIPATION_QUEUE_TABLE = "group_participation_queue"
 GROUP_PARTICIPATION_BUDGET_COLUMNS = {
@@ -72,6 +80,27 @@ def apply_group_participation_v1(conn: sqlite3.Connection) -> None:
     }
     if "assistant_feature_flags" not in tables:
         raise MigrationDriftError("group_participation_feature_table_missing")
+    # The policy table is an existing social fact source, but the registered
+    # migration runner also needs a minimal closed default when bootstrapping a
+    # legacy database that has not gone through the bridge's social DDL yet.
+    # Keep this additive and idempotent; the full social bootstrap later adds
+    # the remaining policy columns without replacing existing data.
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {GROUP_POLICY_TABLE} (
+            group_id TEXT PRIMARY KEY,
+            {MEDIA_OBSERVATION_POLICY_FIELD} REAL NOT NULL DEFAULT {MEDIA_OBSERVATION_POLICY_DEFAULT}
+        )
+        """,
+    )
+    policy_columns = {
+        str(row[1]) for row in conn.execute(f"PRAGMA table_info({GROUP_POLICY_TABLE})")
+    }
+    if MEDIA_OBSERVATION_POLICY_FIELD not in policy_columns:
+        conn.execute(
+            f"ALTER TABLE {GROUP_POLICY_TABLE} ADD COLUMN "
+            f"{MEDIA_OBSERVATION_POLICY_FIELD} REAL NOT NULL DEFAULT {MEDIA_OBSERVATION_POLICY_DEFAULT}",
+        )
     conn.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {GROUP_PARTICIPATION_BUDGET_TABLE} (
@@ -138,6 +167,7 @@ def inspect_group_participation_schema(conn: sqlite3.Connection) -> dict:
     flag = None
     columns: set[str] = set()
     queue_columns: set[str] = set()
+    group_policy_columns: set[str] = set()
     if GROUP_PARTICIPATION_BUDGET_TABLE in tables:
         columns = {
             str(row[1])
@@ -146,6 +176,10 @@ def inspect_group_participation_schema(conn: sqlite3.Connection) -> dict:
     if GROUP_PARTICIPATION_QUEUE_TABLE in tables:
         queue_columns = {
             str(row[1]) for row in conn.execute(f"PRAGMA table_info({GROUP_PARTICIPATION_QUEUE_TABLE})")
+        }
+    if GROUP_POLICY_TABLE in tables:
+        group_policy_columns = {
+            str(row[1]) for row in conn.execute(f"PRAGMA table_info({GROUP_POLICY_TABLE})")
         }
     if "assistant_feature_flags" in tables:
         flag = conn.execute(
@@ -158,12 +192,14 @@ def inspect_group_participation_schema(conn: sqlite3.Connection) -> dict:
             and GROUP_PARTICIPATION_QUEUE_TABLE in tables
             and set(GROUP_PARTICIPATION_BUDGET_COLUMNS).issubset(columns)
             and set(GROUP_PARTICIPATION_QUEUE_COLUMNS).issubset(queue_columns)
+            and set(GROUP_POLICY_REQUIRED_COLUMNS).issubset(group_policy_columns)
             and flag is not None
         ),
         "contract_checksum": GROUP_PARTICIPATION_MIGRATION_CHECKSUM,
-        "missing_tables": sorted({GROUP_PARTICIPATION_BUDGET_TABLE, GROUP_PARTICIPATION_QUEUE_TABLE} - tables),
+        "missing_tables": sorted({GROUP_PARTICIPATION_BUDGET_TABLE, GROUP_PARTICIPATION_QUEUE_TABLE, GROUP_POLICY_TABLE} - tables),
         "missing_columns": sorted(set(GROUP_PARTICIPATION_BUDGET_COLUMNS) - columns),
         "missing_queue_columns": sorted(set(GROUP_PARTICIPATION_QUEUE_COLUMNS) - queue_columns),
+        "missing_policy_columns": sorted(set(GROUP_POLICY_REQUIRED_COLUMNS) - group_policy_columns),
         "feature_flag_present": flag is not None,
         "feature_enabled": bool(int(flag[0])) if flag is not None else False,
     }
@@ -173,7 +209,11 @@ def require_group_participation_schema(conn: sqlite3.Connection) -> dict:
     audit = inspect_group_participation_schema(conn)
     if not audit["ok"]:
         missing = ",".join(audit["missing_tables"])
-        columns = ",".join(audit["missing_columns"] + audit.get("missing_queue_columns", []))
+        columns = ",".join(
+            audit["missing_columns"]
+            + audit.get("missing_queue_columns", [])
+            + audit.get("missing_policy_columns", [])
+        )
         suffix = "|feature_flag" if not audit["feature_flag_present"] else ""
         raise MigrationDriftError(
             "group_participation_schema_drift:" + missing + "|" + columns + suffix,
@@ -188,6 +228,10 @@ __all__ = [
     "GROUP_PARTICIPATION_QUEUE_COLUMNS",
     "GROUP_PARTICIPATION_MIGRATION_CHECKSUM",
     "NATURAL_GROUP_PARTICIPATION_FEATURE_FLAG",
+    "MEDIA_OBSERVATION_POLICY_FIELD",
+    "MEDIA_OBSERVATION_POLICY_DEFAULT",
+    "GROUP_POLICY_TABLE",
+    "GROUP_POLICY_REQUIRED_COLUMNS",
     "apply_group_participation_v1",
     "inspect_group_participation_schema",
     "require_group_participation_schema",

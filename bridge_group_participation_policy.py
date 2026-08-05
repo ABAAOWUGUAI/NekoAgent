@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 import sqlite3
 
 from bridge_conversation_participation_contract import GroupParticipationMode, group_mode_from_legacy
@@ -13,6 +14,8 @@ from bridge_conversation_participation_engine import deterministic_participation
 from bridge_conversation_participation import participation_shadow_enabled
 from bridge_group_participation_schema import (
     GROUP_PARTICIPATION_BUDGET_TABLE,
+    MEDIA_OBSERVATION_POLICY_DEFAULT,
+    MEDIA_OBSERVATION_POLICY_FIELD,
     NATURAL_GROUP_PARTICIPATION_FEATURE_FLAG,
     require_group_participation_schema,
 )
@@ -20,7 +23,44 @@ from bridge_delivery_continuity import unified_delivery_enabled
 from bridge_migrations import utc_now
 
 
-POLICY_VERSION = "group-social-action-plan-v2"
+POLICY_VERSION = "group-social-action-plan-v3"
+
+
+def bounded_media_observation_probability(value: object, *, default: float = MEDIA_OBSERVATION_POLICY_DEFAULT) -> float:
+    """Normalize the additive media policy field and fail closed on bad input."""
+
+    try:
+        fallback = float(default)
+        if not math.isfinite(fallback):
+            fallback = 0.0
+        probability = float(value)
+    except (TypeError, ValueError, OverflowError):
+        probability = fallback if "fallback" in locals() else 0.0
+    if not math.isfinite(probability):
+        probability = fallback if "fallback" in locals() else 0.0
+    return max(0.0, min(probability, 1.0))
+
+
+def project_media_observation_policy(policy: dict | None, *, staging: bool = False) -> dict:
+    """Return one policy projection with an additive bounded media field.
+
+    Existing policies remain closed (``0.0``) until a caller explicitly
+    projects a value.  ``staging=True`` is an opt-in convenience for a Gate
+    fixture; it never changes the persisted policy or the reply probability.
+    """
+
+    projected = dict(policy) if isinstance(policy, dict) else {}
+    # ``staging`` is an explicit caller opt-in for the target Gate.  It must
+    # work for policies loaded from the migrated table as well as for legacy
+    # mappings that do not yet carry the additive field.
+    if staging:
+        raw = 1.0
+    elif MEDIA_OBSERVATION_POLICY_FIELD in projected:
+        raw = projected.get(MEDIA_OBSERVATION_POLICY_FIELD)
+    else:
+        raw = MEDIA_OBSERVATION_POLICY_DEFAULT
+    projected[MEDIA_OBSERVATION_POLICY_FIELD] = bounded_media_observation_probability(raw)
+    return projected
 
 
 def group_participation_confidence_floor(policy: dict) -> float:
@@ -110,6 +150,47 @@ def _parse_time(value: object) -> datetime | None:
 
 def _day_key(now: datetime) -> str:
     return now.astimezone(timezone.utc).date().isoformat()
+
+
+def _recent_topic_model_decision(
+    conn: sqlite3.Connection,
+    *,
+    group_id: str,
+    now: datetime,
+    window_seconds: int,
+) -> dict | None:
+    """Return a recent ambient engagement decision without reading message text.
+
+    The durable participation decision is the source of truth for whether the
+    engagement model already evaluated this active group topic.  We deliberately
+    inspect only thread, role, lifecycle time and decision identifiers here: a
+    timing prefilter must not become a second content classifier or a shadow
+    message store.
+    """
+
+    cutoff = now - timedelta(seconds=max(1, int(window_seconds)))
+    rows = conn.execute(
+        """
+        SELECT id,action,reason_code,created_at
+        FROM engagement_decisions
+        WHERE thread_id=? AND model_role='conversation_engagement' AND created_at>=?
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        (f"qq:group:{str(group_id or '').strip()}", cutoff.isoformat()),
+    ).fetchall()
+    if not rows:
+        return None
+    row = rows[0]
+    decided_at = _parse_time(row["created_at"])
+    if decided_at is None or decided_at > now:
+        return None
+    return {
+        "decision_id": str(row["id"] or ""),
+        "action": str(row["action"] or ""),
+        "reason": str(row["reason_code"] or ""),
+        "age_seconds": max(0, int((now - decided_at).total_seconds())),
+        "window_seconds": max(1, int(window_seconds)),
+    }
 
 
 def observe_group_message(
@@ -264,6 +345,40 @@ def group_final_action_gate(
     current_time = now or datetime.now(timezone.utc)
     is_continuation = str(candidate_kind or "") == "continuation"
     frame = conversation_frame or {}
+    if not is_continuation:
+        # Ambient acknowledgements and attachment-only turns cannot provide a
+        # reliable textual participation basis.  They remain available to
+        # explicit/direct routes, but must not spend a group engagement or
+        # vision-model request merely to return a deterministic silence.
+        if bool(frame.get("acknowledgement_only")):
+            return {
+                "should_reply": False,
+                "reason": "ambient_acknowledgement",
+                "policy_version": POLICY_VERSION,
+                "candidate_kind": "ambient",
+            }
+        if bool(frame.get("attachment_only")):
+            return {
+                "should_reply": False,
+                "reason": "ambient_attachment_only",
+                "policy_version": POLICY_VERSION,
+                "candidate_kind": "ambient",
+            }
+        topic_window = group_active_topic_window_seconds(policy)
+        recent_decision = _recent_topic_model_decision(
+            conn,
+            group_id=group_id,
+            now=current_time,
+            window_seconds=topic_window,
+        )
+        if recent_decision:
+            return {
+                "should_reply": False,
+                "reason": "topic_decision_coalesced",
+                "policy_version": POLICY_VERSION,
+                "candidate_kind": "ambient",
+                "topic_coalescing": recent_decision,
+            }
     if is_continuation:
         try:
             max_auto_continuations = max(
@@ -331,9 +446,11 @@ def group_final_action_gate(
 
 __all__ = [
     "POLICY_VERSION",
+    "bounded_media_observation_probability",
     "group_active_topic_window_seconds",
     "group_participation_confidence_floor",
     "group_final_action_gate",
+    "project_media_observation_policy",
     "natural_group_cutover_plan",
     "natural_group_participation_enabled",
     "natural_group_preflight",

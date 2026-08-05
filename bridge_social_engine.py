@@ -435,6 +435,38 @@ def attachment_capability_lines(context: dict | None) -> list[str]:
     return base_messages
 
 
+def build_daily_cache_system_prompt(
+    settings: dict,
+    *,
+    mode_decision: dict | None = None,
+    group_context: dict | None = None,
+    voice_contract: dict | None = None,
+) -> str:
+    from bridge_prompt_cache_contract import build_daily_cache_system_prompt as build
+    return build(settings, mode_decision=mode_decision, group_context=group_context, voice_contract=voice_contract)
+
+
+def build_daily_runtime_context(
+    settings: dict,
+    memories: list[dict],
+    *,
+    mode_decision: dict | None = None,
+    habits: list[dict] | None = None,
+    group_context: dict | None = None,
+    attachment_context: dict | None = None,
+    voice_contract: dict | None = None,
+    expression_plan: dict | None = None,
+    relationship_context: dict | None = None,
+) -> str:
+    from bridge_prompt_cache_contract import build_daily_runtime_context as build
+    return build(
+        settings, memories, mode_decision=mode_decision, habits=habits,
+        group_context=group_context, attachment_context=attachment_context,
+        voice_contract=voice_contract, expression_plan=expression_plan,
+        relationship_context=relationship_context,
+    )
+
+
 def build_daily_system_prompt(
     settings: dict,
     memories: list[dict],

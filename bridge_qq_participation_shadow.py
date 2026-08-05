@@ -9,14 +9,25 @@ import sqlite3
 from typing import Callable
 
 import bridge_assistant_identity as assistant_identity
+from bridge_media_observation import select_media_observation
+from bridge_media_observation_helpers import (
+    has_visual_attachment as _has_visual_attachment,
+    media_budget_snapshot as _media_budget_snapshot,
+    media_burst_limit as _media_burst_limit,
+)
+from bridge_participation_shadow_records import (
+    record_group_shadow_decision,
+    transition_group_participation,
+)
 from bridge_conversation_participation import (
+    build_media_delivery_trace,
+    media_trace_categories,
     build_event,
     decision_from_legacy,
     participation_shadow_enabled,
     record_conversation_event,
     record_participation_decision,
     retention_for_decision,
-    transition_participation_decision,
 )
 from bridge_conversation_participation_contract import GroupParticipationMode, ParticipationAction, group_mode_from_legacy
 from bridge_conversation_participation_engine import (
@@ -30,6 +41,7 @@ from bridge_group_participation_policy import (
     natural_group_participation_enabled,
     natural_group_preflight,
     observe_group_message,
+    project_media_observation_policy,
     record_group_reply,
 )
 from bridge_migrations import utc_now
@@ -99,41 +111,6 @@ def qq_participation_event(
     )
 
 
-def record_group_shadow_decision(
-    conn: sqlite3.Connection,
-    event,
-    *,
-    allowed: bool,
-    reason: str,
-    group_id: str,
-    source_message_id: str,
-    model_role: str = "",
-    model_id: str = "",
-    conversation_frame: dict | None = None,
-    interaction_decision: dict | None = None,
-):
-    decision = decision_from_legacy(
-        event,
-        allowed=allowed,
-        legacy_reason=reason,
-        model_role=model_role,
-        model_id=model_id,
-    )
-    retention, _ = retention_for_decision(event, decision)
-    return record_participation_decision(
-        conn,
-        decision,
-        assistant_id=event.assistant_id,
-        thread_id=f"qq:group:{group_id}",
-        source_message_id=source_message_id,
-        legacy_allowed=allowed,
-        legacy_reason=reason,
-        retention_class=retention,
-        conversation_frame=conversation_frame,
-        interaction_decision=interaction_decision,
-    )
-
-
 def prepare_group_shadow(
     conn: sqlite3.Connection,
     payload: dict,
@@ -144,6 +121,8 @@ def prepare_group_shadow(
     is_mention: bool,
     allowed: bool,
     reason: str,
+    policy: dict | None = None,
+    topic_active: bool = False,
 ) -> tuple[object | None, object | None, dict]:
     if not participation_shadow_enabled(conn) and not deterministic_participation_enabled(conn):
         return None, None, {}
@@ -159,15 +138,30 @@ def prepare_group_shadow(
     record_conversation_event(conn, event)
     preliminary = decision_from_legacy(event, allowed=allowed, legacy_reason=reason)
     retention, expires_at = retention_for_decision(event, preliminary)
+    metadata = {
+        "event_id": event.event_id,
+        "message_kind": event.message_kind.value,
+    }
+    if _has_visual_attachment(event.attachments):
+        media_policy = project_media_observation_policy(policy)
+        burst_count, daily_remaining = _media_budget_snapshot(conn, group_id, media_policy)
+        media_decision = select_media_observation(
+            event_id=event.event_id,
+            participation_mode=str(media_policy.get("participation_mode") or ""),
+            addressed=bool(is_mention or payload.get("reply_to_assistant") or payload.get("visual_question") or payload.get("media_question")),
+            topic_active=bool(topic_active or payload.get("topic_active") or payload.get("_topic_active")),
+            probability=media_policy.get("media_observation_probability", 0.0),
+            burst_count=burst_count,
+            daily_remaining=daily_remaining,
+            burst_limit=_media_burst_limit(media_policy),
+        )
+        metadata["media_observation"] = media_decision
     return event, retention, {
         "external_message_id": payload.get("_external_message_id") or "",
         "retention_class": retention.value,
         "expires_at": expires_at,
         "engagement_decision_id": preliminary.decision_id,
-        "metadata": {
-            "event_id": event.event_id,
-            "message_kind": event.message_kind.value,
-        },
+        "metadata": metadata,
     }
 
 
@@ -194,6 +188,8 @@ def record_group_inbound(
         is_mention=is_mention,
         allowed=allowed,
         reason=reason,
+        policy=policy,
+        topic_active=bool(payload.get("topic_active") or payload.get("_topic_active")),
     )
     current = record_group_message(
         conn,
@@ -281,33 +277,6 @@ def finalize_group_shadow(
     )
 
 
-def transition_group_participation(
-    conn: sqlite3.Connection,
-    *,
-    decision_id: str,
-    stage: str,
-    action: str | None = None,
-    reason_code: str | None = None,
-    model_role: str | None = None,
-    model_id: str | None = None,
-    confidence: float | None = None,
-    superseded_by: str = "",
-) -> dict | None:
-    """Keep deferred natural-group candidates in their original decision record."""
-
-    return transition_participation_decision(
-        conn,
-        decision_id=decision_id,
-        stage=stage,
-        action=action,
-        reason_code=reason_code,
-        model_role=model_role,
-        model_id=model_id,
-        confidence=confidence,
-        superseded_by=superseded_by,
-    )
-
-
 def prepare_group_dispatch(
     conn: sqlite3.Connection,
     payload: dict,
@@ -361,6 +330,22 @@ def prepare_group_dispatch(
             is_mention=is_mention,
         )
         conversation_frame["message_kind"] = probe_event.message_kind.value
+        # A media reason cannot be emitted until this bounded, send-independent
+        # policy has run.  The deterministic participation engine may still
+        # keep the event silent; its decision is now made after this preflight.
+        if _has_visual_attachment(probe_event.attachments):
+            media_policy = project_media_observation_policy(policy)
+            burst_count, daily_remaining = _media_budget_snapshot(conn, group_id, media_policy)
+            conversation_frame["media_observation"] = select_media_observation(
+                event_id=probe_event.event_id,
+                participation_mode=str(media_policy.get("participation_mode") or ""),
+                addressed=bool(is_mention or payload.get("reply_to_assistant") or payload.get("visual_question") or payload.get("media_question")),
+                topic_active=bool(conversation_frame.get("topic_active") or payload.get("topic_active") or payload.get("_topic_active")),
+                probability=media_policy.get("media_observation_probability", 0.0),
+                burst_count=burst_count,
+                daily_remaining=daily_remaining,
+                burst_limit=_media_burst_limit(media_policy),
+            )
         deterministic_decision = deterministic_inbound_decision(
             probe_event,
             group_policy=policy,
@@ -572,6 +557,9 @@ def complete_group_dispatch(
     conversation_frame: dict | None = None,
 ) -> bool:
     reply = str(result.get("reply") or "").strip()
+    # Carry only bounded media lifecycle categories into the Delivery payload;
+    # raw attachment data remains at the media boundary.
+    result.update(media_trace_categories(conversation_frame))
     if (
         reply
         and str((conversation_frame or {}).get("attention") or "") == "active_continuation"
@@ -647,6 +635,18 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
     if existing:
         return {"projected": False, "group_message_id": int(existing[0]), "delivery_id": delivery_id}
     now = utc_now()
+    media_trace = build_media_delivery_trace(
+        engagement_decision_id=str(delivery.get("engagement_decision_id") or ""),
+        delivery_id=delivery_id,
+        **media_trace_categories(payload.get("media_trace")),
+        delivery_state=str(delivery.get("delivery_certainty") or "sent"),
+        ack_state=(
+            "confirmed"
+            if str(delivery.get("delivery_certainty") or "").strip().lower() == "confirmed"
+            or str(delivery.get("acked_at") or "").strip()
+            else "pending"
+        ),
+    )
     metadata = json.dumps(
         {
             "delivery_id": delivery_id,
@@ -655,6 +655,13 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
             "dispatch": str(payload.get("response_kind") or ""),
             "social_action": str(payload.get("social_action") or ""),
             "delivery_state": "confirmed",
+            "media_trace": {
+                key: media_trace[key]
+                for key in (
+                    "media_kind", "media_preflight_state", "visual_context_state",
+                    "media_observation_decision",
+                )
+            },
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -706,7 +713,12 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
         reason_code="delivery_confirmed",
     )
     message_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
-    return {"projected": True, "group_message_id": message_id, "delivery_id": delivery_id}
+    return {
+        "projected": True,
+        "group_message_id": message_id,
+        "delivery_id": delivery_id,
+        "delivery_trace": media_trace,
+    }
 
 
 def observe_private_participation(

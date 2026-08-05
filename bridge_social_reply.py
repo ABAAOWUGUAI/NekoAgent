@@ -54,6 +54,14 @@ _UNINVITED_TARGETED_JUDGEMENT_RE = re.compile(
 _GENERIC_ASSISTANT_FRAME_RE = re.compile(
     r"^(?:我理解|听起来|感谢(?:你)?(?:的)?分享|很高兴|作为(?:一个)?(?:AI|助手)|希望(?:这些|这).{0,12}(?:有帮助|帮到你))",
 )
+_GROUP_RELATIONSHIP_ROLE_RE = re.compile(
+    r"(?:尊敬的当前助手|主人(?:大人)?|爸爸(?=[，。！？!?~～\s]|$))",
+)
+_INTERNAL_DIAGNOSTIC_RE = re.compile(
+    r"(?:本次请求没有成功完成|并在\s*Web\s*控制台查看|assistant_chat_group_style_initial|ActionReceipt)",
+    re.IGNORECASE,
+)
+_GROUP_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])")
 
 
 def _reply_opener(value: object) -> str:
@@ -96,6 +104,8 @@ def group_reply_style_issues(
         issues.append("repeated_stock_opener")
     if _GENERIC_ASSISTANT_FRAME_RE.search(text):
         issues.append("generic_assistant_frame")
+    if _GROUP_RELATIONSHIP_ROLE_RE.search(text):
+        issues.append("relationship_role_leak")
     if repeated_reply_shape_issue(text, recent_replies):
         issues.append("repeated_reply_shape")
     if uninvited and _UNINVITED_TARGETED_JUDGEMENT_RE.search(text):
@@ -116,6 +126,7 @@ def normalize_social_reply(
     limit: int = 3600,
     group: bool = False,
     request: str = "",
+    max_sentences: int | None = None,
 ) -> str:
     text = str(value or "").strip()
     text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I)
@@ -135,9 +146,15 @@ def normalize_social_reply(
         text = re.sub(r"(?m)^#{1,6}\s+", "", text)
         text = _GROUP_PARENTHETICAL_RE.sub("", text)
         text = re.sub(r"[ \t]{2,}", " ", text).strip()
-        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
-        text = "\n".join(paragraphs[:1])
-        limit = min(limit, 180)
+        if max_sentences is not None:
+            sentence_limit = max(1, min(int(max_sentences), 3))
+            units = []
+            for paragraph in (part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()):
+                units.extend(part.strip() for part in _GROUP_SENTENCE_SPLIT_RE.split(paragraph) if part.strip())
+            text = "".join(units[:sentence_limit])
+        limit = min(limit, 240 if (max_sentences or 0) >= 2 else 180)
+        if _INTERNAL_DIAGNOSTIC_RE.search(text):
+            return "这次没接好，先不把后台提示刷出来。"
     text = guard_casual_identity_reply(request, text)
     return text[: max(1, int(limit or 3600))].strip()
 

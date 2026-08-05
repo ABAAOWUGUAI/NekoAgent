@@ -35,6 +35,140 @@ SHADOW_POLICY_VERSION = "ac1-shadow-v1"
 TRANSIENT_RETENTION_MINUTES = 30
 
 
+_MEDIA_TRACE_FIELDS = (
+    "media_kind",
+    "media_preflight_state",
+    "visual_context_state",
+    "media_observation_decision",
+)
+_MEDIA_KIND_ALIASES = {
+    "image": "image",
+    "photo": "image",
+    "picture": "image",
+    "gif": "gif",
+    "mface": "gif",
+    "marketface": "gif",
+    "market_face": "gif",
+    "dynamicface": "gif",
+    "dynamic_face": "gif",
+    "video": "video",
+}
+_MEDIA_KINDS = {"none", "image", "gif", "video", "mixed", "unknown"}
+_MEDIA_PREFLIGHT_STATES = {
+    "none", "ready", "blocked", "unavailable", "preflight_ready", "preflight_blocked",
+    "invalid", "transport_unavailable", "too_large", "unsupported",
+}
+_VISUAL_CONTEXT_STATES = {
+    "none", "ready", "unavailable", "blocked", "failed", "timeout", "model_unavailable",
+}
+_MEDIA_OBSERVATION_STATES = {"none", "observe", "deferred", "blocked"}
+
+
+def _safe_media_category(value: object, allowed: set[str], default: str = "unknown") -> str:
+    """Normalize an aggregate category without retaining payload identifiers."""
+
+    token = str(value or "").strip().lower().replace("-", "_")
+    if token in allowed:
+        return token
+    return default
+
+
+def media_trace_categories(source: Mapping[str, object] | None = None) -> dict[str, str]:
+    """Project typed media stages into four privacy-safe aggregate categories.
+
+    Nested M2/M3 aliases are accepted for compatibility, but no arbitrary
+    adapter value is copied into the persisted decision payload.
+    """
+
+    values = dict(source) if isinstance(source, Mapping) else {}
+    preflight = values.get("media_preflight_state")
+    if not preflight and isinstance(values.get("media_preflight"), Mapping):
+        preflight = values["media_preflight"].get("state")
+    visual = values.get("visual_context_state") or values.get("visual_context_status")
+    observation = values.get("media_observation_decision")
+    if not observation and isinstance(values.get("media_observation"), Mapping):
+        observation = values["media_observation"].get("decision")
+
+    kind = str(values.get("media_kind") or "").strip().lower().replace("-", "_")
+    if not kind:
+        attachments = values.get("attachments")
+        detected: set[str] = set()
+        if isinstance(attachments, (list, tuple)):
+            for item in attachments:
+                if not isinstance(item, Mapping):
+                    continue
+                raw = str(
+                    item.get("media_kind") or item.get("type")
+                    or item.get("source_component") or ""
+                ).strip().lower().replace("-", "_")
+                mapped = _MEDIA_KIND_ALIASES.get(raw)
+                if mapped:
+                    detected.add(mapped)
+        kind = next(iter(detected)) if len(detected) == 1 else ("mixed" if detected else "none")
+    kind = _MEDIA_KIND_ALIASES.get(kind, kind)
+    return {
+        "media_kind": _safe_media_category(kind, _MEDIA_KINDS, "unknown"),
+        "media_preflight_state": _safe_media_category(
+            preflight, _MEDIA_PREFLIGHT_STATES, "none",
+        ),
+        "visual_context_state": _safe_media_category(
+            visual, _VISUAL_CONTEXT_STATES, "none",
+        ),
+        "media_observation_decision": _safe_media_category(
+            observation, _MEDIA_OBSERVATION_STATES, "none",
+        ),
+    }
+
+
+def build_media_delivery_trace(
+    *,
+    engagement_decision_id: str,
+    delivery_id: str = "",
+    media_kind: str = "none",
+    media_preflight_state: str = "none",
+    visual_context_state: str = "none",
+    media_observation_decision: str = "none",
+    delivery_state: str = "pending",
+    ack_state: str = "pending",
+) -> dict[str, str]:
+    """Build a body-free media-to-delivery trace with truthful ACK semantics."""
+
+    categories = media_trace_categories({
+        "media_kind": media_kind,
+        "media_preflight_state": media_preflight_state,
+        "visual_context_state": visual_context_state,
+        "media_observation_decision": media_observation_decision,
+    })
+    delivery = str(delivery_state or "pending").strip().lower().replace("-", "_")
+    delivery = delivery if delivery in {"pending", "queued", "claimed", "sending", "sent", "failed", "rejected", "ambiguous", "confirmed", "delivered"} else "pending"
+    ack = str(ack_state or "").strip().lower().replace("-", "_")
+    if not ack:
+        ack = "confirmed" if delivery in {"confirmed", "delivered"} else "pending"
+    ack = ack if ack in {"pending", "confirmed", "failed", "ambiguous"} else "pending"
+    delivery_linked = bool(str(delivery_id or "").strip())
+    confirmed_delivery_state = delivery in {"sent", "confirmed", "delivered"}
+    if ack == "confirmed" and delivery_linked and confirmed_delivery_state:
+        outcome = "delivery_confirmed"
+    elif ack == "confirmed" and (not delivery_linked or not confirmed_delivery_state):
+        outcome = "delivery_ambiguous"
+    elif ack == "ambiguous" or delivery == "ambiguous":
+        outcome = "delivery_ambiguous"
+    elif ack == "failed" or delivery in {"failed", "rejected"}:
+        outcome = "delivery_failed"
+    elif delivery in {"sent", "sending"}:
+        outcome = "delivery_unconfirmed"
+    else:
+        outcome = "delivery_pending"
+    return {
+        "engagement_decision_id": str(engagement_decision_id or "").strip()[:160],
+        "delivery_id": str(delivery_id or "").strip()[:160],
+        **categories,
+        "delivery_state": delivery,
+        "ack_state": ack,
+        "outcome_category": outcome,
+    }
+
+
 def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -362,6 +496,10 @@ def record_participation_decision(
     require_conversation_participation_schema(conn)
     payload = decision.to_dict()
     payload["retention_class"] = retention_class.value if retention_class else ""
+    # Media lifecycle state is persisted as bounded categories only.  Delivery
+    # identifiers are added by the outbox binding after enqueue; this decision
+    # payload never receives raw media bytes, paths, URLs, or message bodies.
+    payload.update(media_trace_categories(conversation_frame))
     if conversation_frame:
         from bridge_group_context_frame import audit_group_conversation_frame
 
@@ -565,7 +703,9 @@ __all__ = [
     "SHADOW_POLICY_VERSION",
     "TRANSIENT_RETENTION_MINUTES",
     "build_event",
+    "build_media_delivery_trace",
     "decision_from_legacy",
+    "media_trace_categories",
     "observe_legacy_decision",
     "participation_cutover_plan",
     "participation_shadow_enabled",

@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import subprocess
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -278,6 +279,9 @@ def set_skill_enabled(conn: sqlite3.Connection, skill_id: str, enabled: bool) ->
 def _read_skill(path_text: object, limit: int = 12000) -> tuple[str, str]:
     try:
         path = Path(str(path_text or "")).resolve()
+        root = SKILL_ROOT.resolve()
+        if root not in path.parents:
+            return "", "skill_path_outside_root"
         if not path.is_file():
             return "", "skill_file_missing"
         content = path.read_text(encoding="utf-8", errors="replace")[:limit]
@@ -428,6 +432,7 @@ def discover_skill_plan(
     message: str,
     intent: str,
     capability_ids: tuple[str, ...] | list[str] | set[str] | None = None,
+    allowed_capability_ids: tuple[str, ...] | list[str] | set[str] | None = None,
 ) -> dict:
     """Return a deterministic, auditable Skill selection and capability gate."""
 
@@ -448,7 +453,17 @@ def discover_skill_plan(
         item for item in required
         if available is not None and item not in available
     ]
-    status = "ready" if selected and not missing else "missing_capability" if missing else "no_match"
+    allowed = None if allowed_capability_ids is None else {
+        str(item).strip() for item in allowed_capability_ids if str(item).strip()
+    }
+    scope_missing = sorted(set(required) - (allowed or set())) if allowed is not None else []
+    scope_unexpected = sorted((allowed or set()) - set(required)) if allowed is not None else []
+    status = (
+        "skill_contract_mismatch" if scope_missing
+        else "missing_capability" if missing
+        else "ready" if selected
+        else "no_match"
+    )
     return {
         "status": status,
         "intent": str(intent or "analysis"),
@@ -463,9 +478,31 @@ def discover_skill_plan(
             for item in selected
         ],
         "required_capabilities": required,
-        "missing_capabilities": missing,
+        "missing_capabilities": sorted(set(missing) | set(scope_missing)),
+        "unexpected_capabilities": scope_unexpected,
+        "allowed_capabilities": sorted(allowed) if allowed is not None else None,
         "context": context,
     }
+
+
+def validate_skill_contract(contract: Mapping[str, object], skill_plan: Mapping[str, object]) -> dict:
+    """Ensure selected Skill requirements stay inside the server Action contract."""
+
+    raw_allowed = contract.get("allowed_capability_ids")
+    if isinstance(raw_allowed, (list, tuple, set)):
+        allowed = {str(item).strip() for item in raw_allowed if str(item).strip()}
+    else:
+        capability_id = str(contract.get("capability_id") or "").strip()
+        allowed = {capability_id} if capability_id else set()
+    raw_required = skill_plan.get("required_capabilities")
+    required = {
+        str(item).strip()
+        for item in (raw_required if isinstance(raw_required, (list, tuple, set)) else [])
+        if str(item).strip()
+    }
+    missing = sorted(required - allowed)
+    unexpected = sorted(allowed - required)
+    return {"ok": not missing, "missing": missing, "unexpected": unexpected}
 
 
 def record_skill_outcomes(

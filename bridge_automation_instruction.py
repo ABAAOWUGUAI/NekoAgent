@@ -17,10 +17,9 @@ _DAILY_CLAUSE_RE = re.compile(
     r"(?:[01]?\d|2[0-3])\s*(?:[:：点时])\s*(?:[0-5]?\d)?\s*分?",
 )
 _SCHEDULE_WRAPPER_RE = re.compile(
-    r"(?:[，,：:；;]\s*)?(?:这个|这项|该|当前)?(?:需求|任务|计划)\s*"
+    r"(?:，|,|；|;)\s*(?:这个|这项|该|当前)?(?:需求|任务|计划)\s*"
     r"(?:做成|设置成|设为|安排为|改成|改为)?\s*"
-    r"(?:一个)?(?:定时任务|定时计划|定时提醒)"
-    r"(?:\s*(?:给到我|发给我|推送给我|提醒我))?\s*$",
+    r"(?:一个)?(?:定时任务|定时计划|定时提醒)(?:\s*(?:给到我|发给我|推送给我|提醒我))?\s*$",
 )
 
 
@@ -30,6 +29,8 @@ def _clip(value: object, limit: int) -> str:
 
 def extract_instruction(text: str) -> str:
     value = str(text or "").strip()
+    # Both natural word orders are valid: “做一个定时任务，每天……” and
+    # “每天……，这个需求做成定时任务给到我”。
     leading = re.match(
         r"^(?:.*?)(?:定时任务|定时计划|定时提醒)\s*[，,：:]?\s*(?:要求)?\s*",
         value,
@@ -40,10 +41,10 @@ def extract_instruction(text: str) -> str:
         value = value[leading.end():]
     else:
         value = _SCHEDULE_WRAPPER_RE.sub("", value, count=1)
-    value = re.sub(r"^(?:呢|呀|吧)\s*[,，：:]?\s*", "", value, count=1)
+    value = re.sub(r"^(?:呢|呀|吧)\s*[,，:：]?\s*", "", value, count=1)
     value = value.replace("点钟", "点")
     value = _DAILY_CLAUSE_RE.sub("", value, count=1)
-    value = re.sub(r"^(?:小菲|助手)\s*", "", value)
+    value = re.sub(r"^(?:当前助手|助手)\s*", "", value)
     value = re.sub(r"^(?:请|麻烦|帮我|给我|要求)\s*", "", value)
     value = re.sub(r"^(?:给我)?推送\s*", "获取并整理", value)
     value = re.sub(r"[，,。；;\s]+$", "", value).strip(" ，,：:")

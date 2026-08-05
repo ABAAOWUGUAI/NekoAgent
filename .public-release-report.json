@@ -117,9 +117,9 @@
       "sha256": "326cdd5ca081b641f5914a3986c2273dd91659aaf8f5dcd231330e631d15c6c5"
     },
     {
-      "bytes": 19272,
+      "bytes": 19824,
       "path": "admin/admin-layout.css",
-      "sha256": "c29ffa21d25af67fb2ec39ad953bf32969b8c91e890511d72926e4b3bc9406cc"
+      "sha256": "e2c2db4c8826c99e6e189dc989622026edba5bec93db36f6892ed12b2536057c"
     },
     {
       "bytes": 10993,
@@ -267,9 +267,9 @@
       "sha256": "bc63fdaf41b08afc8a2512248f22f069fd732c8275af7a857f2fdfc5718df6ff"
     },
     {
-      "bytes": 11749,
+      "bytes": 11734,
       "path": "admin/partials/social.html",
-      "sha256": "30319583a583f2fe6b65b0d3fa74b6ceb0f2c594b9d0b7835c19bddee39002b2"
+      "sha256": "5afe7f3a03ff7526063efb2296d8c60cbd6089d04c52355b7911abea119e61fc"
     },
     {
       "bytes": 12359,
@@ -277,9 +277,9 @@
       "sha256": "b566fa81d88ad139a937319f49cb1c7e922db0c3cb3a0ac93794f1cfaf5167d3"
     },
     {
-      "bytes": 39640,
+      "bytes": 39691,
       "path": "admin/partials/workspace.html",
-      "sha256": "8bea1dea8475dfc364fea59b76906a49d0ca3c018301802743b0e987903d33a6"
+      "sha256": "7cd7645dd0e83e385b3c37810afc554c37ece396ad2ce2bb5aa9efccf777054e"
     },
     {
       "bytes": 609,
@@ -322,9 +322,9 @@
       "sha256": "61424b5343215ef65f58ffb860de2e1611996d297d62d213302b61976fa880ec"
     },
     {
-      "bytes": 56249,
+      "bytes": 56336,
       "path": "admin/views-catalog.js",
-      "sha256": "c58d8932674799d95592a84aec4f183e25b82b8cde336076943cbd91ed7167d3"
+      "sha256": "1361770aac783ee67662c313269fa161ced8082590a7324abd8fd160610c1248"
     },
     {
       "bytes": 28576,
@@ -352,9 +352,9 @@
       "sha256": "12a5e9416850e43836216094f7683144fbad3d17a5a28bdf2172fff1a54898fc"
     },
     {
-      "bytes": 56724,
+      "bytes": 58579,
       "path": "admin/views-models.js",
-      "sha256": "dcbaef8be431868d0399c68b46989a2b4d1d96c3ada797c00ed8e0cacf81ae95"
+      "sha256": "317fd26000686ad26c32caeeee55d45a83ef2ec466c100599d4f24c18a12b794"
     },
     {
       "bytes": 20138,
@@ -362,9 +362,9 @@
       "sha256": "c657c5dfcafe4727c0941b2d7b72042515899c71db5abf5f5691f6038ecc2dde"
     },
     {
-      "bytes": 32679,
+      "bytes": 34945,
       "path": "admin/views-persona.js",
-      "sha256": "0d2ac0a7a8f749fc4db8091e82261a01d9a3479696ae5827827bcc975b4a64b9"
+      "sha256": "ad853518472d84958cbde544d0bda29f98996125138237805045c00789ea02e4"
     },
     {
       "bytes": 19487,
@@ -412,14 +412,19 @@
       "sha256": "7540d399c61020bc0966ae6ed332a549fb831d9b93762ef48f2979164bacd2e3"
     },
     {
-      "bytes": 4644,
-      "path": "bridge_action_registry.py",
-      "sha256": "689d0d42ce20748fb394513e26b8f54ef71a3fa1caad019fc42341d7b1404c29"
+      "bytes": 6956,
+      "path": "bridge_action_followup.py",
+      "sha256": "1e3a493d599500363bd8893d06819981e911110bd13590dbf55d7466201cfadb"
     },
     {
-      "bytes": 3432,
+      "bytes": 6197,
+      "path": "bridge_action_registry.py",
+      "sha256": "bc3986ce7a8f575f9d63d46d4498c813165d0f5c043c2680fc4ad5969e695dd7"
+    },
+    {
+      "bytes": 3732,
       "path": "bridge_action_truth.py",
-      "sha256": "3f0cc7518a9cc9155dd919d10cab2f10f38095a25854ffbac241619d46c47c45"
+      "sha256": "ff18e4e373266a48aa21993a41443bbd3807f06afc95fbcba61737c1ec51b8fe"
     },
     {
       "bytes": 2301,
@@ -482,9 +487,9 @@
       "sha256": "d3b06661065bc70a27e6792f9c788cc3db25304488ab8e6edbdd9a6f8054ef69"
     },
     {
-      "bytes": 33039,
+      "bytes": 33212,
       "path": "bridge_artifact_service.py",
-      "sha256": "3bcea690199fe3b84f62cc50d071c95fc6742c2bf04f545c88ff79d34c7fceea"
+      "sha256": "e6d9c9a2aed3b781841aac0c9cc319db585dbb879acfb9cee30c7f2c479b9d63"
     },
     {
       "bytes": 2131,
@@ -492,9 +497,9 @@
       "sha256": "908b0a1f87615300ca3ffe64ff106cfa1337b8823e99988c9163fa6298f0fe49"
     },
     {
-      "bytes": 8211,
+      "bytes": 8446,
       "path": "bridge_assistant_chat_context.py",
-      "sha256": "d24d659f75383f76c2d8d7119f2dcc3c9d47628fcb9e274c85746efadc90e19d"
+      "sha256": "8d2e2a38339d3454061094dd98a2971a15236f223e81c808d244a2ab5940ab4a"
     },
     {
       "bytes": 24307,
@@ -542,19 +547,24 @@
       "sha256": "bf8cdc40cdc3f82cc079a22582687ba50dfe135658526af12e64978c1d7a4756"
     },
     {
-      "bytes": 40483,
+      "bytes": 40482,
       "path": "bridge_automation.py",
-      "sha256": "6282e12c2794ba4d7311f4c82e9a2f37c79ff4ae5de4db5099d5f8b8bba8c2ad"
+      "sha256": "e83c0a264eb183610df84e5ccdcd38af72b396a903232fd311f55e75370d682c"
     },
     {
-      "bytes": 48198,
+      "bytes": 47055,
       "path": "bridge_automation_actions.py",
-      "sha256": "5eee35504be5174290b7c7556a23761d79e818d87eef5ef3a47445903a3acdd2"
+      "sha256": "33791b6d961a99edc044a18a8296a1024d3798f800d7c76aa251e7bb736dc9b3"
     },
     {
-      "bytes": 10043,
+      "bytes": 8171,
+      "path": "bridge_automation_capability_runtime.py",
+      "sha256": "67faf3dbcbd5a1ff951ea703bc02f5da93e2adb93e48d069148771e369a4ad7b"
+    },
+    {
+      "bytes": 10082,
       "path": "bridge_automation_contracts.py",
-      "sha256": "98774dcc920c6792e6f9b63eac2b34c05750b4a27305b0fc759b644adf2ce884"
+      "sha256": "1d868efc1f142c19bfdceddc5075ae0e17dbdb2828f6c8df9c10d362d9b21e76"
     },
     {
       "bytes": 11910,
@@ -567,14 +577,34 @@
       "sha256": "89a483ba0e119feba23f7d2a9eb94354e8b1014b57a5e18fc86124ab270810bc"
     },
     {
+      "bytes": 2386,
+      "path": "bridge_automation_create_runtime.py",
+      "sha256": "55504dffea41a93907140975a85bf347ebea011a6943fbaa8b1a9541b74b64b8"
+    },
+    {
       "bytes": 6670,
       "path": "bridge_automation_disable.py",
       "sha256": "ea7c4bae6c1b854a6a1789a850f9bd888cd19b21cf119d898139cc0d020445a4"
     },
     {
-      "bytes": 6855,
+      "bytes": 12861,
       "path": "bridge_automation_execution.py",
-      "sha256": "d388886dd6e3e7d6bebd2e54054ec99ca4aa46949ba90a9470c8b96e1d364291"
+      "sha256": "7039d051f01719445211c362dbd15c7bb935ab5437bf72e3e67fa2d8e22ec274"
+    },
+    {
+      "bytes": 15251,
+      "path": "bridge_automation_execution_contract.py",
+      "sha256": "e59bd8abaf392d5df49ddf8fa1129710645826642b145b44f9b9169085d54678"
+    },
+    {
+      "bytes": 3662,
+      "path": "bridge_automation_instruction.py",
+      "sha256": "3cab4481e6ca5e9354130dff84686207ab877ccae04e9a4f9932b636dd0c765d"
+    },
+    {
+      "bytes": 2870,
+      "path": "bridge_automation_proactive_delivery.py",
+      "sha256": "6efcd0407f376eb0adf2d0b885436fda45009a347e19a1a672e6649b02881a40"
     },
     {
       "bytes": 7155,
@@ -587,14 +617,14 @@
       "sha256": "3e28fc55174338c7fc4f43d10b1d7f94a885b276472ac7bb4f5a11625ecbb492"
     },
     {
-      "bytes": 7457,
+      "bytes": 9149,
       "path": "bridge_automation_runs.py",
-      "sha256": "724fb8320c4bd0468c800b925a28eead8b77a1bf740a1d405ac913eb6a2240c5"
+      "sha256": "8acd2f590dd6cca879348f95e0d8cc1694ef69f75578d849a791359906e29826"
     },
     {
-      "bytes": 11881,
+      "bytes": 15485,
       "path": "bridge_automation_schema.py",
-      "sha256": "eab8ab38dabd7f1fa23cf400574085c2f289f01f38b5e564108e88d9444769cf"
+      "sha256": "bec9fa1cbc33fdc8567223392ce834e81575012e99eab094a758c396b0c39284"
     },
     {
       "bytes": 1627,
@@ -612,9 +642,9 @@
       "sha256": "9691f876a0c17a46caa4b6088995db6c5abeaae4d3b14d9984337705f91c5a0a"
     },
     {
-      "bytes": 26191,
+      "bytes": 27929,
       "path": "bridge_capability_registry.py",
-      "sha256": "1a83dd9071896a07df439cbba89d8f42f0bef9d0dd52df3662eb3952b698d749"
+      "sha256": "8ff4ab054cb6df06400ce0712501fe4c5bdf05f91df27d2eb76a481f4d123d24"
     },
     {
       "bytes": 3098,
@@ -632,9 +662,9 @@
       "sha256": "61b9fbeeefad01aaa1e78773c45678e34ab3975e6d01cae6557daa7f2a74e822"
     },
     {
-      "bytes": 20347,
+      "bytes": 25253,
       "path": "bridge_continuity_kernel.py",
-      "sha256": "31e6d1c04bfde7c548b546ac557d2b723498360860bf94e72bada4cddac83c44"
+      "sha256": "3ad54003ffadc1c991549fa4c3ccf1d81ebb89b0246ed7bde55db3ef35dc8af4"
     },
     {
       "bytes": 8501,
@@ -667,9 +697,9 @@
       "sha256": "0208c9ff6690fa0d4bf286e622adf1b10fc1e99c56f268f43f9594c2fedf5a1b"
     },
     {
-      "bytes": 28264,
+      "bytes": 28745,
       "path": "bridge_conversation_memory.py",
-      "sha256": "e24be680c10fff9efc40c53bc6c3f873d9ba467c0e758e1e512845991b94f6c2"
+      "sha256": "0149e4b95b0f6e597ffefcb9a8600d10c07f314c28a67ed455d58849a430608e"
     },
     {
       "bytes": 2832,
@@ -682,24 +712,24 @@
       "sha256": "bab62ca879fe193314950c66821849327eb9b96874a7cc7608409400c63bf35c"
     },
     {
-      "bytes": 1901,
+      "bytes": 5807,
       "path": "bridge_conversation_model_runtime.py",
-      "sha256": "a723b9ffde2b6cba0e8f66e0d4bebb06fd47fd1001e5bb3bd0b88d83249fe61d"
+      "sha256": "b966b3cad2522bfd993ce0e6f4d0f9e9fa94aed331a49255406e8fb2692b563e"
     },
     {
-      "bytes": 19040,
+      "bytes": 27905,
       "path": "bridge_conversation_participation.py",
-      "sha256": "546ab3aa03ed93d65bc8fcf43be973b21b59b039df8d0f54f50739d776f4994f"
+      "sha256": "e7a411f238b6b1b18ef676ba1e6b4fbcb5997047bcf27b3a4d7ce4c8f2d8b94d"
     },
     {
-      "bytes": 14887,
+      "bytes": 14979,
       "path": "bridge_conversation_participation_contract.py",
-      "sha256": "2ddebd799a5af8efa95e4cc20ebe7b4a88ea8ab087e2e38f885d792a2506cfa5"
+      "sha256": "7fef7e1bf82d5470cfda03b5a7f4c01acf4298412fbd93279b625fa76a4a28dd"
     },
     {
-      "bytes": 10372,
+      "bytes": 12330,
       "path": "bridge_conversation_participation_engine.py",
-      "sha256": "44a75b35d5c475002d50a7ef5cb1e7197278faccafc648087b9d12765b4f9eb1"
+      "sha256": "1c271aa2c26b60b56d1249b561cce7d989868686c5f38b4d0722c3d1af32c8da"
     },
     {
       "bytes": 4648,
@@ -712,9 +742,9 @@
       "sha256": "5fa9575cc07a10dba3c9adb606a55ff9bce68a9d2aebd3fec9f669cbd0d04716"
     },
     {
-      "bytes": 4514,
+      "bytes": 6577,
       "path": "bridge_conversation_reply_runtime.py",
-      "sha256": "c260427cbc532343d6024c30dd2e525fd24d86e76746d5983c97537e688ababb"
+      "sha256": "4b7a5ac73e594a087b5c9d7367399cbb6b2f624cfc89bf1209a9e0cc97e2c6b1"
     },
     {
       "bytes": 14352,
@@ -737,9 +767,9 @@
       "sha256": "221e19bc00fc39fe33161b910fab66ff921fda47f6a00341e82421d252f833c7"
     },
     {
-      "bytes": 8320,
+      "bytes": 8372,
       "path": "bridge_delivery_enqueue.py",
-      "sha256": "bbeadfe5808743d90dbfe2287d6e4d96d22d0dc17e61a247a0a85b23c5c8838c"
+      "sha256": "34ce18eac9589896a334bbd0f954ab8d7a5eee63ade880cc7892677a591acf1c"
     },
     {
       "bytes": 781,
@@ -847,9 +877,24 @@
       "sha256": "2d26137b12720421c45671ed629c4da0c549f62228b3e8c1ae5efc3306cfe630"
     },
     {
-      "bytes": 8416,
+      "bytes": 10327,
       "path": "bridge_group_direct_dispatch.py",
-      "sha256": "fd52c2be6a67bb75e9f24414ce981220e2a1dd629c5fa1c6844e548a49beed0a"
+      "sha256": "1087d635064d07b70a128b00d4fbc4d5d954c795efc47637c4201fde3ae86fb3"
+    },
+    {
+      "bytes": 5205,
+      "path": "bridge_group_engagement_prompt.py",
+      "sha256": "e5d6021812ea02823e84deb882e95796b6b22fda3be89eb633d5e9618e4b9b57"
+    },
+    {
+      "bytes": 5420,
+      "path": "bridge_group_expression.py",
+      "sha256": "c9a0ca954a84032c96f6f2e5bcd6337cf1bf0b63228b2a868887d5c3a9fa7a29"
+    },
+    {
+      "bytes": 2264,
+      "path": "bridge_group_media_context.py",
+      "sha256": "81e3140b6e3da5373b7eba16a661184a3c0accd6623ff9ca31bcbecb682a8163"
     },
     {
       "bytes": 6425,
@@ -862,29 +907,29 @@
       "sha256": "1d030aa12707f136cdba3059f411cb1acf0f773db7cb2fd762a946f5d7f9e5dc"
     },
     {
-      "bytes": 12837,
+      "bytes": 17909,
       "path": "bridge_group_participation_policy.py",
-      "sha256": "8c110280cb771d0b3f1db7939fb11d9f4eeb9887701afd36dc766bc71d84abeb"
+      "sha256": "c1d9ad1b1abad50436fd2783c569d6cfd8a827c78ec9af0aa755d92941635aae"
     },
     {
-      "bytes": 5294,
+      "bytes": 7243,
       "path": "bridge_group_participation_queue.py",
-      "sha256": "f1380bb0ff46d174add6f3d172b34c7a59c4e6f39411072e3e717ebb51508c20"
+      "sha256": "d434007c4c6121144096016fd644988a6c801eeb2bf7dd27fc6cbe45a6518d99"
     },
     {
-      "bytes": 7059,
+      "bytes": 9088,
       "path": "bridge_group_participation_schema.py",
-      "sha256": "e6bea3df9d514cca1539fbb4d2e7eb10a7858f50e2a2c6059a03c921ad9ea71c"
+      "sha256": "d02b5d33b8a60d48a4d843d7afe4cca81c30f5dd0a8699801b7b873a71e76850"
     },
     {
-      "bytes": 22794,
+      "bytes": 26094,
       "path": "bridge_group_participation_worker.py",
-      "sha256": "2b2bd4f8919a5f203aa7089bc00ee2a810cddd938e397e8799a853a3033809a0"
+      "sha256": "69ca6941d668e5fe0eba6b38de94d833d14290b81e241aea08ea52250be0088a"
     },
     {
-      "bytes": 8459,
+      "bytes": 10095,
       "path": "bridge_group_policy_store.py",
-      "sha256": "623fc1ec5a33f51d66f6430caa8470f8f670a4efbe778cd461b0a42305ecc496"
+      "sha256": "6e8290d7e89372a86bf313ce1ed897753c6f794199b4068244f2857915435d20"
     },
     {
       "bytes": 11725,
@@ -917,9 +962,9 @@
       "sha256": "ab715923d3746bfd68167db283dd08c7c7092d9340f34b283159c84483daeba3"
     },
     {
-      "bytes": 9173,
+      "bytes": 11231,
       "path": "bridge_inbound_media.py",
-      "sha256": "66c758b452b9dc73f7827e1216cae741a0e45eeed2075e44d5e2ac0cd96fd47e"
+      "sha256": "dbdbbda4450894835cf90ecedae057f117e7c543cecff6f5470a5f49e979f35c"
     },
     {
       "bytes": 3036,
@@ -947,9 +992,9 @@
       "sha256": "24f14ac63b4bfbf1dc089c555891cc6e7d015ef53e51f48ec41e806b570103b4"
     },
     {
-      "bytes": 11354,
+      "bytes": 11521,
       "path": "bridge_interaction_runtime.py",
-      "sha256": "da07549a4d60e083d359975e425bc4093196b7af225331ce92f27a86312e4c69"
+      "sha256": "9a31b0d23b93c10b034cd7b320a13720bf4c3890c57b2b27b7724232cebd05db"
     },
     {
       "bytes": 6360,
@@ -997,6 +1042,21 @@
       "sha256": "ec3328e245888e599561c4267a4e2f428df5a6dd86b5bb5e798ce62db04593b1"
     },
     {
+      "bytes": 6814,
+      "path": "bridge_media_contract.py",
+      "sha256": "bfb3d5fde8c49ceeb2ecffa4d9d7beecba19619c1f55f388f885378f5f483d32"
+    },
+    {
+      "bytes": 4274,
+      "path": "bridge_media_observation.py",
+      "sha256": "210f5a359cd7377f12a3fd7a38df6371f07f60eb8544ceb1fbe5c836beda8764"
+    },
+    {
+      "bytes": 2386,
+      "path": "bridge_media_observation_helpers.py",
+      "sha256": "cbf0016136bdc9686b8ba971199ea0ada590cf88226b5c145c15b1617074de74"
+    },
+    {
       "bytes": 6887,
       "path": "bridge_meme_attachment.py",
       "sha256": "d429df2394c0f96b985aa79158da7a2ae1cb4d11035148a4c2f74940e5715b7c"
@@ -1027,9 +1087,9 @@
       "sha256": "5639c2ec20004b1e4cf2b652b4670f270ecbc0f51953d39c9f8777f2a240932b"
     },
     {
-      "bytes": 8736,
+      "bytes": 10968,
       "path": "bridge_model_adapters.py",
-      "sha256": "4c4923df2699110f8395eb255f00f613451ef2169f3502651e355a42167c4a30"
+      "sha256": "2290d5fb509bf1c68b92d995ff0eecd893c8dc12e49fc8a977d19de54d57eb8e"
     },
     {
       "bytes": 17028,
@@ -1047,9 +1107,9 @@
       "sha256": "816dd523ffb12e7ee3b06fbd66765605921976456e85b1011d655e77e124b2a6"
     },
     {
-      "bytes": 7445,
+      "bytes": 15082,
       "path": "bridge_model_observability.py",
-      "sha256": "da01a39907505433e38fe372e9c0af1e9aa89035ff640e6a4fd745326cb2806b"
+      "sha256": "665d272816aa1fc372bf9839ef77fa57b2126fcbc023d12ec1748032a8dfbb0a"
     },
     {
       "bytes": 4593,
@@ -1067,9 +1127,14 @@
       "sha256": "d0873a6b35cb180dee7f58292759166730fe5bb6ef35d32398ff867c254c5b42"
     },
     {
-      "bytes": 34096,
+      "bytes": 34097,
       "path": "bridge_model_registry.py",
-      "sha256": "cb378714f358cbded06ceb9739334575a489778e2fa6aca5d239bbfdb93faada"
+      "sha256": "9632f23ff98aec67b831d5fe03c4081242613ab105bea0152eada0bc74b5ccfe"
+    },
+    {
+      "bytes": 703,
+      "path": "bridge_model_role_runtime.py",
+      "sha256": "b4e5a6b959e75c70d9807c648e1c646517e31695ba012d1312d8fdc523482e9a"
     },
     {
       "bytes": 15893,
@@ -1132,14 +1197,19 @@
       "sha256": "2d6de9374429284e43bc03659704d5eaff2ce85acbedfed81a138f14e5910277"
     },
     {
-      "bytes": 2316,
+      "bytes": 10356,
       "path": "bridge_participation_diagnostics.py",
-      "sha256": "6928aa46b794cf8d3676fe05ea3ab196aa8674c13e02514e2f2edcb64d9e3c56"
+      "sha256": "465ba91393c7dfc3558fe7e0241fa618fa99a2171ae3328a70c45ed3a207f666"
     },
     {
-      "bytes": 15636,
+      "bytes": 2034,
+      "path": "bridge_participation_shadow_records.py",
+      "sha256": "4d7df7ee8c8297ada638b0aa0a02d17f6a28d074cdd8f354bfde142aa785cb20"
+    },
+    {
+      "bytes": 16347,
       "path": "bridge_persona_runtime.py",
-      "sha256": "a9ba098d36ae1b2ecff7a84b596e737c5ecce848590331019af07e397f327993"
+      "sha256": "ff2ea0b2d37b9158658fe65049b28623f0bd54b3f4a3d4355c3c5a3b830aac7b"
     },
     {
       "bytes": 2855,
@@ -1217,6 +1287,11 @@
       "sha256": "3b959aa7664be1144e87a6fab751c6ddcc47cf3b3779e1c751525d6ce7bc00a7"
     },
     {
+      "bytes": 11983,
+      "path": "bridge_prompt_cache_contract.py",
+      "sha256": "6b73a2f5733d1306860f6f25f25aca807440b5eaa44ea684f54acae8d894e252"
+    },
+    {
       "bytes": 2436,
       "path": "bridge_provider_errors.py",
       "sha256": "acce565de5107fcdb7a659fc5fa465bf0f7055c543a5dde03b1114fb508868ac"
@@ -1277,24 +1352,24 @@
       "sha256": "46efd34e86ea4c0056294b240c2d984f63352e2d690dbb816d31e308f5eb4d9e"
     },
     {
-      "bytes": 18568,
+      "bytes": 30801,
       "path": "bridge_qq_admin_actions.py",
-      "sha256": "490092d98c2bb1bb6c52e2d429d67a01865161b82a34dd4c89e9080aa92f814e"
+      "sha256": "eb2cdeeeafc3efa7808caae04c169cf3c49b5524bf058297413b5b077b261f1a"
     },
     {
-      "bytes": 9799,
+      "bytes": 10765,
       "path": "bridge_qq_delivery.py",
-      "sha256": "bb71584f1f91a88ee8c330aa3ff36f1cbede51d072d6c3712e33a37ede252f28"
+      "sha256": "f2919140a95df597f782aeb3763322ba55d17b21d5b44ac3b7b50724a62ee8f2"
     },
     {
-      "bytes": 9602,
+      "bytes": 9652,
       "path": "bridge_qq_diagnostics.py",
-      "sha256": "8a1fcae11e2bf80ef688b708895e5f4780a063c5deb91d04401ff4fff41dcaa0"
+      "sha256": "0aeedfe5663e9665c1aa4d7d2e24ae045e4ce6640a187aa5f19f78a9e87a33cb"
     },
     {
-      "bytes": 6955,
+      "bytes": 7005,
       "path": "bridge_qq_llbot_diagnostics.py",
-      "sha256": "cf0dc13aaf35d094cd1c13c490e2d72d59bdcb6ccd88e721afb6c84113f625d2"
+      "sha256": "622a5ce19adf53b4f3b94097decc9dbbcc50d59a32beba688dd64ace02921636"
     },
     {
       "bytes": 3263,
@@ -1317,9 +1392,9 @@
       "sha256": "096a16a1c0084bc25798d638b9282005f80cafc28e27761b1f242bfd0fe82f91"
     },
     {
-      "bytes": 24654,
+      "bytes": 29872,
       "path": "bridge_qq_participation_shadow.py",
-      "sha256": "76aae87466143f222e3b8941af794095c91d3366c306277422f005ed6cb19dc8"
+      "sha256": "ac314fe023de84e3def9cce059550068fb6d003a6ec5bb99faac58dab79ff257"
     },
     {
       "bytes": 2340,
@@ -1382,9 +1457,29 @@
       "sha256": "22f56693090019748312e63dfade62a43743f7540883da74d4681417567c28d4"
     },
     {
+      "bytes": 8304,
+      "path": "bridge_request_router.py",
+      "sha256": "88f302bb2449f5931007374347bfd81216b1b80d06862736053c6b0db4a78294"
+    },
+    {
       "bytes": 3708,
       "path": "bridge_response_modality.py",
       "sha256": "1f1f17526ec2a4d07206eb927df867f8b2353f4130110a44ee2734d3be00f4e6"
+    },
+    {
+      "bytes": 12063,
+      "path": "bridge_route_dispatch.py",
+      "sha256": "f565a9e1292af75b25abd6d61cc08a1447d81dda6dda1785a6dff999dab7882c"
+    },
+    {
+      "bytes": 2817,
+      "path": "bridge_runtime_data_mappers.py",
+      "sha256": "85817e8b312b603725ba0434ade43c364202fcdeaacc7dc04d5536ad216434a9"
+    },
+    {
+      "bytes": 4709,
+      "path": "bridge_runtime_text_utils.py",
+      "sha256": "1ad7aa561f3c29e0208bbe277c41a1540008e9d3badf2352fb06b7ddac913577"
     },
     {
       "bytes": 4011,
@@ -1397,14 +1492,14 @@
       "sha256": "fc39972bc7cdf76ffcadc71053ecd48597123fb78ad2dfbbf13e5225ac8d5fa0"
     },
     {
-      "bytes": 34373,
+      "bytes": 33230,
       "path": "bridge_social_engine.py",
-      "sha256": "98a673d1ee80c30a65dc864c20743331d6ba1fc0fdf383e5a40ba34b102609dc"
+      "sha256": "fad86cc71b25e49e517973070e066b106663ef246894cd0c877974c119844208"
     },
     {
-      "bytes": 31075,
+      "bytes": 33095,
       "path": "bridge_social_experience.py",
-      "sha256": "9c75d80c2c2b4ae054156b80429f141e2eff607306e5ba3cca84e5759af56d12"
+      "sha256": "a261e01f7cca00860e628ac5a10dd93289cebd2cae9d93abdc5278973827870c"
     },
     {
       "bytes": 2571,
@@ -1417,9 +1512,9 @@
       "sha256": "6c6fae73f148a6d085440655b40168ee1bbf3004f4b765c5163a5b77c8b7002e"
     },
     {
-      "bytes": 4184,
+      "bytes": 5576,
       "path": "bridge_social_reply.py",
-      "sha256": "27c859086669a45c7936cf01a303300a799eecd50104383f0a31fabd6777d4f8"
+      "sha256": "5dc54a86aaba5c66be70a9f36c9d31a3547b2bdfcf4f453c633912511aea34cc"
     },
     {
       "bytes": 13558,
@@ -1487,9 +1582,9 @@
       "sha256": "0b57ce0eabf6f0fd06c9ffaf96434f54d61160be77bdddb1e578ed57f3e7b0bf"
     },
     {
-      "bytes": 16597,
+      "bytes": 23531,
       "path": "bridge_visual_context.py",
-      "sha256": "f02cf7b0ccf4a92cc57b053f856f7930f0cb1c6531ca759c7c0e50c075cd8a5f"
+      "sha256": "1d83fcc73949d1c7e2036d7a411a27d5ef775e23178e135fb5dc16be1024e84c"
     },
     {
       "bytes": 10409,
@@ -1602,9 +1697,9 @@
       "sha256": "44b7a6c4d3de3934d8258f14898c53cf021b0af86874bfd4dc4366fd3d22fb76"
     },
     {
-      "bytes": 341160,
+      "bytes": 340173,
       "path": "codex_qq_bridge.py",
-      "sha256": "e5dd7194b59834e21e4d96920406a04994cd5c10b20e36a316ae52c6f1e8d60d"
+      "sha256": "6499330cb74c747aea90b4193ce42d52e50662114abfd459dfa8cbd50e560d21"
     },
     {
       "bytes": 657,
@@ -1697,9 +1792,9 @@
       "sha256": "ed874e25b703301d6ebfe8a09092caa96853b95f80de1a771301ba1792ff3d0d"
     },
     {
-      "bytes": 66721,
+      "bytes": 66669,
       "path": "remote-plugin/main.py",
-      "sha256": "aecc279e2317575ee1063462983455fe413f847379f44786e16fb3145d0b3460"
+      "sha256": "2ee0051725c0bb54ec7449b00b3c5ff7f8c4f997611014dfcdd041fbe8ef9314"
     },
     {
       "bytes": 237,
@@ -1712,9 +1807,9 @@
       "sha256": "ac4efbe1988c7b1ba7677f1835523801d241df34cad02e9f09f6c7f7cc014125"
     },
     {
-      "bytes": 8161,
+      "bytes": 12230,
       "path": "remote-plugin/participation_metadata.py",
-      "sha256": "559a47e25c912b192b33dfddfd2d179a2aae224589e00c8b17a821498f0630fe"
+      "sha256": "dc4c340b69beda4e1a14c599045e4b330644731a1ab4278452ca654c6ad8aece"
     },
     {
       "bytes": 2523,

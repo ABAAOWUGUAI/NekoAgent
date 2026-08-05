@@ -217,15 +217,19 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                 policy, context_items, latest, conversation_frame,
             )
             if social_context:
-                decision_messages.append({
-                    "role": "system",
-                    "content": (
-                        "SocialOpportunity 已启用。若 should_reply=true，只能选择下面的 candidate id，"
-                        "并返回 why_now、approach(light_join|continue|share|ask|inform) 与 "
-                        "meme_intent(none|optional|strong)；缺失或虚构即静默。\n"
-                        + json.dumps(social_context["topic"], ensure_ascii=False)
-                    ),
-                })
+                social_packet = (
+                    "SocialOpportunity 已启用。若选择非 silent，只能选择下面的 candidate id，"
+                    "并返回 why_now、approach(light_join|continue|share|ask|inform) 与 "
+                    "meme_intent(none|optional|strong)；缺失或虚构即静默。\n"
+                    + json.dumps(social_context["topic"], ensure_ascii=False)
+                )
+                # Keep dynamic opportunity data in the final user turn. A late
+                # system message broke role semantics and cache prefix reuse.
+                decision_messages[-1] = {
+                    **decision_messages[-1],
+                    "content": str(decision_messages[-1].get("content") or "")
+                    + "\n\n" + social_packet,
+                }
             provider = str(classifier_settings.get("chat_provider") or "codex")
             if provider == "openai-compatible":
                 classifier_settings = dict(classifier_settings)

@@ -141,6 +141,7 @@ def enqueue(
                     """
                     UPDATE delivery_outbox SET superseded_by=?,last_action='superseded',updated_at=?
                     WHERE channel=? AND thread_ref=? AND id<>? AND delivery_class='social'
+                      AND engagement_decision_id=''
                       AND acked_at='' AND dead_letter=0 AND superseded_by='' AND lease_owner=''
                       AND delivery_certainty IN ('pending','rejected')
                     """,

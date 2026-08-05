@@ -2,8 +2,144 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
+
+
+# Stable terminal-stage identifiers.  They are persisted as telemetry and are
+# deliberately independent from exception class names or provider wording.
+FAILURE_STAGE_CONTRACT = "contract"
+FAILURE_STAGE_CAPABILITY = "capability"
+FAILURE_STAGE_EVIDENCE = "evidence"
+FAILURE_STAGE_TASK = "task"
+FAILURE_STAGE_DELIVERY = "delivery"
+FAILURE_STAGE_ACK = "ack"
+AUTOMATION_FAILURE_STAGES = (
+    FAILURE_STAGE_CONTRACT,
+    FAILURE_STAGE_CAPABILITY,
+    FAILURE_STAGE_EVIDENCE,
+    FAILURE_STAGE_TASK,
+    FAILURE_STAGE_DELIVERY,
+    FAILURE_STAGE_ACK,
+)
+
+_SAFE_ERROR_CODE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,95}$")
+_KNOWN_ERROR_CODES = frozenset({
+    "automation_execution_failed",
+    "automation_execution_contract_invalid",
+    "automation_execution_contract_needs_clarification",
+    "execution_contract_needs_clarification",
+    "automation_capability_failed",
+    "automation_evidence_or_presentation_missing",
+    "automation_preflight_failed",
+    "automation_skill_capability_missing",
+    "automation_skill_contract_mismatch",
+    "automation_skill_not_resolved",
+    "capability_not_registered",
+    "capability_execution_failed",
+    "capability_failed",
+    "capability_output_invalid",
+    "capability_result_invalid",
+    "capability_result_mismatch",
+    "delivery_enqueue_failed",
+    "delivery_enqueue_unconfirmed",
+    "delivery_payload_builder_failed",
+    "delivery_payload_invalid",
+    "delivery_failed",
+    "delivery_ack_timeout",
+    "ack_timeout",
+    "missing_evidence",
+    "evidence_missing",
+    "evidence_invalid",
+    "task_terminal_failed",
+    "temporary_source_error",
+    "github_trending_authoritative_source_unavailable",
+    "executor_snapshot_missing",
+    "executor_model_missing",
+    "executor_profile_missing",
+    "executor_runtime_not_applied",
+    "executor_profile_file_missing",
+    "executor_credential_missing",
+    "executor_workspace_missing",
+    "unsupported_executor_transport",
+    "cwd_not_allowed_for_proxy",
+    "danger_full_access_not_allowed_for_proxy",
+})
+_STAGE_MESSAGES = {
+    FAILURE_STAGE_CONTRACT: "这项定时任务的执行条件还不完整，本次没有执行。",
+    FAILURE_STAGE_CAPABILITY: "这项定时任务暂不支持所需能力，本次没有执行。",
+    FAILURE_STAGE_EVIDENCE: "执行结果缺少可验证证据，本次没有发送结果。",
+    FAILURE_STAGE_TASK: "执行器本次未返回可用结果，任务仍未结束。",
+    FAILURE_STAGE_DELIVERY: "结果生成了，但消息发送未确认，本次没有视为结束。",
+    FAILURE_STAGE_ACK: "消息发送状态尚未确认，任务仍未结束。",
+}
+
+
+def _safe_error_code(error: object) -> str:
+    """Keep only a short stable token; never expose exception text to users."""
+
+    if isinstance(error, dict):
+        raw = error.get("error_code") or error.get("error") or ""
+    else:
+        raw = error
+    token = str(raw or "").strip().split(None, 1)[0].lower()
+    # Common exception prefixes are not stable application codes.
+    if token in {"runtimeerror", "valueerror", "typeerror", "exception", "error"}:
+        return "automation_execution_failed"
+    if not _SAFE_ERROR_CODE.fullmatch(token):
+        return "automation_execution_failed"
+    if token in _KNOWN_ERROR_CODES:
+        return token
+    if token.startswith("automation_execution_contract"):
+        # Contract validator details are internal implementation names.  Keep
+        # the stable stage while avoiding persistence of arbitrary suffixes.
+        return "automation_execution_contract_invalid"
+    return "automation_execution_failed"
+
+
+def _infer_failure_stage(error_code: str) -> str:
+    if error_code.startswith(("execution_contract", "automation_execution_contract", "contract_")):
+        return FAILURE_STAGE_CONTRACT
+    if error_code.startswith(("capability_", "skill_")):
+        return FAILURE_STAGE_CAPABILITY
+    if error_code.startswith(("evidence_", "missing_evidence")):
+        return FAILURE_STAGE_EVIDENCE
+    if error_code.startswith(("delivery_ack", "ack_")):
+        return FAILURE_STAGE_ACK
+    if error_code.startswith(("delivery_", "outbox_", "enqueue_")):
+        return FAILURE_STAGE_DELIVERY
+    return FAILURE_STAGE_TASK
+
+
+def classify_automation_failure(error: object, *, stage: str = "") -> dict:
+    """Classify an internal failure into a redacted, stable terminal record."""
+
+    error_code = _safe_error_code(error)
+    normalized_stage = str(stage or "").strip().lower()
+    if normalized_stage not in AUTOMATION_FAILURE_STAGES:
+        normalized_stage = _infer_failure_stage(error_code)
+    # Admission and evidence failures are deterministic; transport, task and
+    # ACK failures may be retried once by the existing bounded run policy.
+    retryable = normalized_stage in {
+        FAILURE_STAGE_TASK,
+        FAILURE_STAGE_DELIVERY,
+        FAILURE_STAGE_ACK,
+    }
+    if error_code in {
+        "executor_snapshot_missing", "executor_model_missing",
+        "executor_profile_missing", "executor_runtime_not_applied",
+        "executor_profile_file_missing", "executor_credential_missing",
+        "executor_workspace_missing", "unsupported_executor_transport",
+        "cwd_not_allowed_for_proxy", "danger_full_access_not_allowed_for_proxy",
+    }:
+        retryable = False
+    return {
+        "error_code": error_code[:96],
+        "stage": normalized_stage,
+        "retryable": retryable,
+        "user_message": _STAGE_MESSAGES[normalized_stage],
+    }
 
 
 def automation_thread_ref(job: dict) -> str:
@@ -81,7 +217,9 @@ def build_skill_execution_contract(skill_plan: dict) -> SkillExecutionContract:
 
 
 def error_user_message(error: object) -> str:
-    kind = str(error or "").strip()
+    if isinstance(error, dict) and error.get("user_message"):
+        return str(error["user_message"])[:160]
+    kind = _safe_error_code(error)
     if kind.startswith("cwd_not_allowed_for_proxy"):
         return "工作区不在受控执行目录内。"
     if kind in {
@@ -107,8 +245,9 @@ def is_permanent_error(error: object) -> bool:
 
 
 def notify_failure(enqueue: Callable[..., dict], job: dict, error: object) -> None:
+    classified = error if isinstance(error, dict) and error.get("stage") else classify_automation_failure(error)
     title = str(job.get("title") or "定时任务").strip()[:120]
-    content = f"定时任务“{title}”本次未执行成功，任务没有生成结果。{error_user_message(error)}"
+    content = f"定时任务“{title}”本次没有产出可确认结果。{classified['user_message']}"
     enqueue(
         dedupe_key=f"qq:automation-failure:{job.get('id')}:{job.get('run_id')}",
         channel="qq",
@@ -119,6 +258,8 @@ def notify_failure(enqueue: Callable[..., dict], job: dict, error: object) -> No
             "automation_run_id": str(job.get("run_id") or ""),
             "user_id": str(job.get("user_id") or ""),
             "content": content,
+            "failure_stage": classified["stage"],
+            "error_code": classified["error_code"],
         },
         max_attempts=20,
         thread_ref=automation_thread_ref(job),
@@ -180,8 +321,16 @@ def run_job(
 
 __all__ = [
     "SkillExecutionContract",
+    "AUTOMATION_FAILURE_STAGES",
+    "FAILURE_STAGE_ACK",
+    "FAILURE_STAGE_CAPABILITY",
+    "FAILURE_STAGE_CONTRACT",
+    "FAILURE_STAGE_DELIVERY",
+    "FAILURE_STAGE_EVIDENCE",
+    "FAILURE_STAGE_TASK",
     "automation_thread_ref",
     "build_skill_execution_contract",
+    "classify_automation_failure",
     "error_user_message",
     "is_permanent_error",
     "notify_failure",

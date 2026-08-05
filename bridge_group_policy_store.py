@@ -14,6 +14,8 @@ from bridge_conversation_participation_contract import (
     legacy_group_flags_for_mode,
 )
 from bridge_group_context_frame import DEFAULT_GROUP_CONTEXT_LIMIT, normalize_group_context_limit
+from bridge_group_participation_policy import bounded_media_observation_probability
+from bridge_group_participation_schema import MEDIA_OBSERVATION_POLICY_DEFAULT, MEDIA_OBSERVATION_POLICY_FIELD
 
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
@@ -64,6 +66,24 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
         probability = max(0.0, min(float(payload.get("reply_probability") or 0.2), 1.0))
     except (TypeError, ValueError):
         probability = 0.2
+    if MEDIA_OBSERVATION_POLICY_FIELD in payload:
+        media_observation_probability = bounded_media_observation_probability(
+            payload.get(MEDIA_OBSERVATION_POLICY_FIELD),
+        )
+    else:
+        # A partial policy update must not silently close an explicitly staged
+        # value.  The existing group_policies row remains the sole fact source;
+        # a missing column/row fails closed to the additive default.
+        try:
+            existing_media = conn.execute(
+                f"SELECT {MEDIA_OBSERVATION_POLICY_FIELD} FROM group_policies WHERE group_id=?",
+                (group_id,),
+            ).fetchone()
+        except sqlite3.Error:
+            existing_media = None
+        media_observation_probability = bounded_media_observation_probability(
+            existing_media[0] if existing_media is not None else MEDIA_OBSERVATION_POLICY_DEFAULT,
+        )
     try:
         cooldown = max(15, min(int(payload.get("cooldown_seconds") or 180), 86400))
         max_context = normalize_group_context_limit(payload.get("max_context"))
@@ -112,6 +132,7 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
         "daily_reply_budget": daily_budget,
         "continuation_window_seconds": continuation_window,
         "max_auto_continuations": max_auto_continuations,
+        "media_observation_probability": media_observation_probability,
     }
     now = _utc_now()
     conn.execute(
@@ -122,8 +143,9 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
             max_context, allow_work, allowed_work_senders, meme_enabled,
             quiet_gap_seconds, burst_window_seconds, burst_max_messages, daily_reply_budget,
             continuation_window_seconds, max_auto_continuations,
+            media_observation_probability,
             last_reply_at, message_count, reply_count, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, ?, ?)
         ON CONFLICT(group_id) DO UPDATE SET
             group_name = excluded.group_name,
             session = CASE WHEN excluded.session <> '' THEN excluded.session ELSE group_policies.session END,
@@ -146,6 +168,7 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
             daily_reply_budget = excluded.daily_reply_budget,
             continuation_window_seconds = excluded.continuation_window_seconds,
             max_auto_continuations = excluded.max_auto_continuations,
+            media_observation_probability = excluded.media_observation_probability,
             updated_at = excluded.updated_at
         """,
         (
@@ -155,7 +178,8 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
             values["quiet_end"], values["timezone"], values["max_context"], values["allow_work"],
             values["allowed_work_senders"], values["meme_enabled"], values["quiet_gap_seconds"],
             values["burst_window_seconds"], values["burst_max_messages"], values["daily_reply_budget"],
-            values["continuation_window_seconds"], values["max_auto_continuations"], now, now,
+            values["continuation_window_seconds"], values["max_auto_continuations"],
+            values["media_observation_probability"], now, now,
         ),
     )
     return _present_group_policy(
@@ -167,6 +191,11 @@ def _present_group_policy(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
     policy = dict(row)
+    # A legacy row loaded from a pre-M2 database is closed until explicitly
+    # projected; this keeps reads idempotent even during schema rollout.
+    policy["media_observation_probability"] = bounded_media_observation_probability(
+        policy.get("media_observation_probability"),
+    )
     mode = group_mode_from_legacy(policy)
     policy["participation_mode"] = mode.value
     policy.update(legacy_group_flags_for_mode(mode))

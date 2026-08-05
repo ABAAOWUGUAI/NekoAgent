@@ -32,8 +32,10 @@ def _deepseek_cache_scope(settings: dict) -> str:
     if host != "api.deepseek.com" or "deepseek" not in route or not assistant_id:
         return ""
     role = str(settings.get("model_role") or "conversation").strip() or "conversation"
+    contract = str(settings.get("prompt_cache_contract_version") or "role-cache-v2").strip()[:80]
+    variant = str(settings.get("prompt_cache_variant") or f"role-{role}").strip()[:80]
     return "pai-" + hashlib.sha256(
-        f"assistant-cache-v1:{assistant_id}:{role}".encode("utf-8"),
+        f"assistant-cache:{contract}:{assistant_id}:{role}:{variant}".encode("utf-8"),
     ).hexdigest()[:48]
 
 
