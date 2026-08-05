@@ -5,7 +5,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from bridge_social_reply import group_reply_style_issues
+from bridge_social_reply import (
+    group_reply_style_issues_for_delivery,
+    normalize_group_reply_for_delivery,
+)
 
 
 def call_openai_with_empty_retry(
@@ -58,6 +61,7 @@ def call_openai_conversation_reply(
     record_model: Callable[..., None],
     conversation_scope: str = "private",
     group_context: dict | None = None,
+    group_reply_finalizer: Callable[[str, dict], tuple[str, dict]] | None = None,
 ) -> dict:
     result = call_openai_with_empty_retry(
         settings,
@@ -79,21 +83,26 @@ def call_openai_conversation_reply(
     request = str(messages[-1].get("content") or "") if messages else ""
     group_context = group_context if isinstance(group_context, dict) else {}
     uninvited = bool(group_context.get("uninvited_group_action"))
+    expression_plan = group_context.get("expression_plan")
     recent_group_replies = [
         str(item.get("content") or "")
         for item in messages[-14:]
         if str(item.get("role") or "") == "assistant"
     ]
+    initial_delivery_reply, initial_issues, initial_delivery_metadata = group_reply_style_issues_for_delivery(
+        request,
+        result.get("reply") or result.get("output") or "",
+        recent_replies=recent_group_replies,
+        uninvited=uninvited,
+        expression_plan=expression_plan,
+        candidate=result,
+        finalizer=group_reply_finalizer,
+    )
     final = call_openai_group_style_retry(
         settings,
         messages,
         result,
-        group_reply_style_issues(
-            request,
-            result.get("reply") or result.get("output") or "",
-            recent_replies=recent_group_replies,
-            uninvited=uninvited,
-        ),
+        initial_issues,
         timeout=timeout,
         user_id=user_id,
         call_model=call_model,
@@ -101,6 +110,10 @@ def call_openai_conversation_reply(
         request=request,
         recent_replies=recent_group_replies,
         uninvited=uninvited,
+        expression_plan=expression_plan,
+        delivery_reply=initial_delivery_reply,
+        delivery_metadata=initial_delivery_metadata,
+        group_reply_finalizer=group_reply_finalizer,
     )
     final["conversation_scope"] = scope
     return final
@@ -119,11 +132,31 @@ def call_openai_group_style_retry(
     request: str = "",
     recent_replies: list[str] | None = None,
     uninvited: bool = False,
+    expression_plan: dict | None = None,
+    delivery_reply: str | None = None,
+    delivery_metadata: dict | None = None,
+    group_reply_finalizer: Callable[[str, dict], tuple[str, dict]] | None = None,
 ) -> dict:
     """Regenerate one group draft that failed the server-side naturalness gate."""
 
+    initial_delivery_metadata = dict(delivery_metadata or {})
+    if delivery_reply is None:
+        initial_delivery_reply, _fallback_issues, initial_delivery_metadata = group_reply_style_issues_for_delivery(
+            request,
+            result.get("reply") or result.get("output") or "",
+            recent_replies=recent_replies,
+            uninvited=uninvited,
+            expression_plan=expression_plan,
+            candidate=result,
+            finalizer=group_reply_finalizer,
+        )
+    else:
+        initial_delivery_reply = delivery_reply
     if not result.get("ok"):
         result.update({
+            "reply": initial_delivery_reply,
+            "output": initial_delivery_reply,
+            **initial_delivery_metadata,
             "group_style_retry_attempted": False,
             "group_style_initial_issues": [],
             "group_style_final_issues": [],
@@ -131,6 +164,11 @@ def call_openai_group_style_retry(
         })
         return result
     if not issues:
+        result.update({
+            "reply": initial_delivery_reply,
+            "output": initial_delivery_reply,
+            **initial_delivery_metadata,
+        })
         result.update({
             "group_style_gate": "passed",
             "group_style_retry_attempted": False,
@@ -150,7 +188,7 @@ def call_openai_group_style_retry(
         "上一版草稿未通过群聊自然表达检查（"
         + "、".join(issues)
         + "）。保留原事实，只重写成符合本轮 Expression Plan 的一到两句自然群聊消息："
-          "直接接住话题里的具体人、物或动作，不复述上一条，不解释自己的表达，"
+          "直接接住该话题中的具体对象或动作，不复述上一条，不解释自己的表达，"
           "不用括号补充动作或心理，不用固定口头禅开场，不编造自己的经历或设定，"
           "也不要提到规则或改写。"
     )
@@ -165,20 +203,32 @@ def call_openai_group_style_retry(
     retry = call_model(settings, retry_messages, timeout=timeout)
     if not retry.get("ok"):
         result.update({
+            "reply": initial_delivery_reply,
+            "output": initial_delivery_reply,
+            **initial_delivery_metadata,
+        })
+        result.update({
             "group_style_retry_attempted": True,
             "group_style_retry_failed": True,
             "group_style_retry_error_kind": retry.get("error_kind") or "",
+            "group_style_initial_issues": list(issues),
             "group_style_gate": "degraded",
             "group_style_final_issues": list(issues),
         })
         return result
-    final_issues = group_reply_style_issues(
+    final_delivery_reply, final_issues, final_delivery_metadata = group_reply_style_issues_for_delivery(
         request,
         retry.get("reply") or retry.get("output") or "",
         recent_replies=recent_replies or [],
         uninvited=uninvited,
+        expression_plan=expression_plan,
+        candidate=retry,
+        finalizer=group_reply_finalizer,
     )
     retry.update({
+        "reply": final_delivery_reply,
+        "output": final_delivery_reply,
+        **final_delivery_metadata,
         "group_style_retry_attempted": True,
         "group_style_initial_issues": list(issues),
         "group_style_final_issues": list(final_issues),

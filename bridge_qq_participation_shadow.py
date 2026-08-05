@@ -401,6 +401,7 @@ def prepare_group_dispatch(
                 8 if policy.get("quiet_gap_seconds") in {None, ""} else policy["quiet_gap_seconds"]
             ),
             active_topic_window_seconds=group_active_topic_window_seconds(policy),
+            message_kind=str(conversation_frame.get("message_kind") or ""),
         )
         allowed = False
         reason = "natural_deferred"
@@ -453,7 +454,17 @@ def prepare_group_dispatch(
                 reason_code="natural_deferred",
             )
             replaced_message_id = int(natural_guard["queue"].get("replaced_message_id") or 0)
-            if replaced_message_id:
+            if natural_guard["queue"].get("joined_active_topic"):
+                reason = "topic_context_coalesced"
+                decision = {"should_reply": False, "reason": reason}
+                transition_group_participation(
+                    conn,
+                    decision_id=current_decision_id,
+                    stage="preflight_blocked",
+                    action="silent",
+                    reason_code=reason,
+                )
+            elif replaced_message_id:
                 replaced = conn.execute(
                     "SELECT engagement_decision_id FROM group_messages WHERE id=? AND group_id=?",
                     (replaced_message_id, group_id),
@@ -616,7 +627,6 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
     failed, superseded and ambiguous attempts out of the next group context and
     makes reply counts/rhythm reflect what the group could actually see.
     """
-
     payload = delivery.get("payload") if isinstance(delivery.get("payload"), dict) else {}
     group_id = str(payload.get("group_id") or "").strip()
     content = str(payload.get("content") or "").strip()[:4000]

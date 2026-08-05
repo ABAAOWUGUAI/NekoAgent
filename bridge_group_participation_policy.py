@@ -20,6 +20,10 @@ from bridge_group_participation_schema import (
     require_group_participation_schema,
 )
 from bridge_delivery_continuity import unified_delivery_enabled
+from bridge_group_participation_floor import (
+    NATURAL_PARTICIPATION_FLOOR_WINDOW_COUNT,
+    apply_natural_participation_floor,
+)
 from bridge_migrations import utc_now
 
 
@@ -446,6 +450,8 @@ def group_final_action_gate(
 
 __all__ = [
     "POLICY_VERSION",
+    "NATURAL_PARTICIPATION_FLOOR_WINDOW_COUNT",
+    "apply_natural_participation_floor",
     "bounded_media_observation_probability",
     "group_active_topic_window_seconds",
     "group_participation_confidence_floor",

@@ -105,6 +105,11 @@ from bridge_group_participation_schema import (
     apply_group_participation_v1,
     require_group_participation_schema,
 )
+from bridge_group_topic_window_schema import (
+    GROUP_TOPIC_WINDOW_MIGRATION_CHECKSUM,
+    apply_group_topic_window_v1,
+    require_group_topic_window_schema,
+)
 from bridge_social_virtual_schema import (
     SOCIAL_VIRTUAL_MIGRATION_CHECKSUM,
     apply_social_virtual_v1,
@@ -139,6 +144,7 @@ from bridge_voice_transport_probe_schema import (
 )
 from bridge_voice_migration_registry import VOICE_MIGRATIONS, require_voice_schemas
 from bridge_assistant_audit import audit, record_security_audit
+from bridge_assistant_schema_result import registered_assistant_schema_result
 
 
 ASSISTANT_CORE_NAMESPACE = "assistant-core"
@@ -493,6 +499,12 @@ ASSISTANT_CORE_MIGRATIONS = (
         checksum=VOICE_TRANSPORT_PROBE_MIGRATION_CHECKSUM,
     ),
     *VOICE_MIGRATIONS,
+    Migration(
+        version=36,
+        name="group_topic_window_candidate_v1",
+        apply=apply_group_topic_window_v1,
+        checksum=GROUP_TOPIC_WINDOW_MIGRATION_CHECKSUM,
+    ),
 )
 
 
@@ -542,6 +554,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     conversation_participation_schema = None
     conversation_participation_routing_schema = None
     group_participation_schema = None
+    group_topic_window_schema = None
     social_virtual_schema = None
     proactive_messaging_schema = None
     learning_schema = None
@@ -590,6 +603,8 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         identity_source = identity_source_preflight(conn)
     if 23 in versions:
         group_participation_schema = require_group_participation_schema(conn)
+    if 36 in versions:
+        group_topic_window_schema = require_group_topic_window_schema(conn)
     if 24 in versions:
         social_virtual_schema = require_social_virtual_schema(conn)
     if 25 in versions:
@@ -639,6 +654,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         "conversation_participation_schema": conversation_participation_schema,
         "conversation_participation_routing_schema": conversation_participation_routing_schema,
         "group_participation_schema": group_participation_schema,
+        "group_topic_window_schema": group_topic_window_schema,
         "social_virtual_schema": social_virtual_schema,
         "proactive_messaging_schema": proactive_messaging_schema,
         "learning_schema": learning_schema,
@@ -720,6 +736,9 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
     group_participation_schema = (
         require_group_participation_schema(conn) if 23 in versions else None
     )
+    group_topic_window_schema = (
+        require_group_topic_window_schema(conn) if 36 in versions else None
+    )
     social_virtual_schema = (
         require_social_virtual_schema(conn) if 24 in versions else None
     )
@@ -741,39 +760,11 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
         voice_output_schema,
         voice_response_policy_schema,
     ) = require_voice_schemas(conn, versions)
-    return {
-        "registered": True,
-        "applied": applied,
-        "schema": schema,
-        "identity_schema": identity_schema,
-        "conversation_memory_schema": conversation_memory_schema,
-        "interaction_plan_schema": interaction_plan_schema,
-        "relationship_proactive_schema": relationship_proactive_schema,
-        "qq_access_schema": qq_access_schema,
-        "qq_object_schema": qq_object_schema,
-        "reliability_schema": reliability_schema,
-        "qq_runtime_schema": qq_runtime_schema,
-        "provider_secret_schema": provider_secret_schema,
-        "project_lifecycle_schema": project_lifecycle_schema,
-        "assistant_knowledge_schema": assistant_knowledge_schema,
-        "assistant_continuity_schema": assistant_continuity_schema,
-        "living_wiki_schema": living_wiki_schema,
-        "executor_profile_schema": executor_profile_schema,
-        "conversation_participation_schema": conversation_participation_schema,
-        "conversation_participation_routing_schema": conversation_participation_routing_schema,
-        "group_participation_schema": group_participation_schema,
-        "social_virtual_schema": social_virtual_schema,
-        "proactive_messaging_schema": proactive_messaging_schema,
-        "learning_schema": learning_schema,
-        "network_policy_schema": network_policy_schema,
-        "continuity_kernel_schema": continuity_kernel_schema,
-        "automation_conversation_schema": automation_conversation_schema,
-        "voice_transport_probe_schema": voice_transport_probe_schema,
-        "voice_message_schema": voice_message_schema,
-        "voice_input_schema": voice_input_schema,
-        "voice_output_schema": voice_output_schema,
-        "voice_response_policy_schema": voice_response_policy_schema,
-    }
+    return registered_assistant_schema_result(
+        applied=applied,
+        schema=schema,
+        values=locals(),
+    )
 
 
 def ensure_assistant_core_migrations(conn: sqlite3.Connection) -> list[int]:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import re
 
 from bridge_group_expression import repeated_reply_shape_issue
@@ -62,6 +63,33 @@ _INTERNAL_DIAGNOSTIC_RE = re.compile(
     re.IGNORECASE,
 )
 _GROUP_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])")
+_ANCHOR_STOP_TERMS = {"这个", "那个", "这里", "那里", "什么", "怎么", "可以", "已经", "终于"}
+
+
+def _bounded_anchor_terms(value: object) -> tuple[str, ...]:
+    """Return a small set of literal topic markers without semantic inference."""
+
+    terms: list[str] = []
+    for run in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_]{2,}", str(value or "")[:160]):
+        if re.fullmatch(r"[\u4e00-\u9fff]+", run):
+            terms.extend(run[index:index + 2] for index in range(len(run) - 1))
+        else:
+            terms.append(run.lower())
+    return tuple(term for term in dict.fromkeys(terms) if term not in _ANCHOR_STOP_TERMS)[:48]
+
+
+def _looks_generic_without_anchor(reply: object, anchor_text: object) -> bool:
+    text = str(reply or "").strip()
+    if not _GENERIC_ASSISTANT_FRAME_RE.search(text):
+        return False
+    terms = _bounded_anchor_terms(anchor_text)
+    return bool(terms) and not _has_anchor_terms(text, anchor_text)
+
+
+def _has_anchor_terms(value: object, anchor_text: object) -> bool:
+    terms = _bounded_anchor_terms(anchor_text)
+    text = str(value or "").lower()
+    return bool(terms) and any(term in text for term in terms)
 
 
 def _reply_opener(value: object) -> str:
@@ -78,6 +106,8 @@ def group_reply_style_issues(
     *,
     recent_replies: list[str] | None = None,
     uninvited: bool = False,
+    expression_plan: dict | None = None,
+    source_reply: str | None = None,
 ) -> list[str]:
     """Return bounded, explainable reasons a group draft sounds like narration."""
 
@@ -102,8 +132,23 @@ def group_reply_style_issues(
     }
     if opener and opener in recent_openers:
         issues.append("repeated_stock_opener")
+    if _INTERNAL_DIAGNOSTIC_RE.search(text):
+        issues.append("internal_state_leak")
     if _GENERIC_ASSISTANT_FRAME_RE.search(text):
         issues.append("generic_assistant_frame")
+    plan = expression_plan if isinstance(expression_plan, dict) else {}
+    if plan.get("topic_anchor_required") and _looks_generic_without_anchor(
+        text,
+        plan.get("topic_anchor_text"),
+    ):
+        issues.append("missing_topic_anchor")
+    if (
+        plan.get("topic_anchor_required")
+        and source_reply is not None
+        and _has_anchor_terms(source_reply, plan.get("topic_anchor_text"))
+        and not _has_anchor_terms(text, plan.get("topic_anchor_text"))
+    ):
+        issues.append("topic_anchor_lost_after_normalization")
     if _GROUP_RELATIONSHIP_ROLE_RE.search(text):
         issues.append("relationship_role_leak")
     if repeated_reply_shape_issue(text, recent_replies):
@@ -159,4 +204,73 @@ def normalize_social_reply(
     return text[: max(1, int(limit or 3600))].strip()
 
 
-__all__ = ["group_reply_style_issues", "normalize_social_reply"]
+def normalize_group_reply_for_delivery(
+    value: object,
+    *,
+    request: str = "",
+    expression_plan: dict | None = None,
+) -> str:
+    """Return the exact group text that the existing send path will normalize."""
+
+    plan = expression_plan if isinstance(expression_plan, dict) else {}
+    try:
+        sentence_limit = int(plan.get("sentence_limit"))
+    except (TypeError, ValueError):
+        sentence_limit = None
+    return normalize_social_reply(
+        value,
+        group=True,
+        request=request,
+        max_sentences=sentence_limit,
+    )
+
+
+def group_reply_style_issues_for_delivery(
+    request: str,
+    reply: str,
+    *,
+    recent_replies: list[str] | None = None,
+    uninvited: bool = False,
+    expression_plan: dict | None = None,
+    candidate: dict | None = None,
+    finalizer: Callable[[str, dict], tuple[str, dict]] | None = None,
+) -> tuple[str, list[str], dict]:
+    """Inspect the exact finalized delivery text, retaining raw diagnostics."""
+
+    normalized_reply = normalize_group_reply_for_delivery(
+        reply,
+        request=request,
+        expression_plan=expression_plan,
+    )
+    final_reply, final_metadata = (
+        finalizer(normalized_reply, candidate or {})
+        if finalizer is not None else (normalized_reply, {})
+    )
+    final_reply = str(final_reply or "").strip()
+    final_metadata = dict(final_metadata) if isinstance(final_metadata, dict) else {}
+    raw_issues = group_reply_style_issues(
+        request,
+        reply,
+        recent_replies=recent_replies,
+        uninvited=uninvited,
+        expression_plan=expression_plan,
+    )
+    final_issues = group_reply_style_issues(
+        request,
+        final_reply,
+        recent_replies=recent_replies,
+        uninvited=uninvited,
+        expression_plan=expression_plan,
+        source_reply=reply,
+    )
+    issues = [issue for issue in raw_issues if issue == "internal_state_leak"]
+    issues.extend(issue for issue in final_issues if issue not in issues)
+    return final_reply, issues, final_metadata
+
+
+__all__ = [
+    "group_reply_style_issues",
+    "group_reply_style_issues_for_delivery",
+    "normalize_group_reply_for_delivery",
+    "normalize_social_reply",
+]
