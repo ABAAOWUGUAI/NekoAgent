@@ -19,6 +19,7 @@ from bridge_group_participation_queue import (
     reschedule_group_candidate,
 )
 from bridge_group_participation_policy import (
+    apply_natural_participation_floor,
     natural_group_participation_enabled,
     natural_group_preflight,
 )
@@ -63,6 +64,61 @@ BRIDGE_SERVICE_NAMES = {
 }
 
 
+def _store_group_engagement_metadata(
+    conn: Any,
+    *,
+    decision_id: str,
+    decision: dict,
+    threshold: float,
+    social_decision: dict | None = None,
+) -> None:
+    """Persist bounded server diagnostics without retaining model prose."""
+
+    if not decision_id:
+        return
+    stored = conn.execute(
+        "SELECT decision_json FROM engagement_decisions WHERE id=?", (decision_id,),
+    ).fetchone()
+    if not stored:
+        return
+    try:
+        payload = json.loads(str(stored[0] or "{}"))
+    except json.JSONDecodeError:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    if social_decision is not None:
+        payload["social_opportunity"] = social_decision
+    payload["group_engagement"] = {
+        "reason_code": str(decision.get("reason") or ""),
+        "confidence": float(decision.get("confidence") or 0),
+        "classifier_provider": str(decision.get("classifier_provider") or ""),
+        "classifier_ok": bool(decision.get("classifier_ok")),
+        "threshold": float(threshold),
+        "turn_policy": decision.get("turn_policy") if isinstance(decision.get("turn_policy"), dict) else {},
+        "social_action": str(decision.get("social_action") or "silent"),
+        "participation_floor_applied": bool(decision.get("participation_floor_applied")),
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if social_decision is None:
+        conn.execute(
+            "UPDATE engagement_decisions SET decision_json=? WHERE id=?",
+            (serialized, decision_id),
+        )
+        return
+    final_action = "contextual_participation" if decision.get("should_reply") else "silent"
+    conn.execute(
+        """UPDATE engagement_decisions
+           SET action=?,reason_code=?,confidence=?,decision_json=? WHERE id=?""",
+        (
+            final_action,
+            str(decision.get("reason") or "")[:120],
+            float(decision.get("confidence") or 0),
+            serialized,
+            decision_id,
+        ),
+    )
+
+
 def process_group_participation_queue(services: dict[str, Any]) -> None:
     """Evaluate quiet-gap candidates and enqueue one durable QQ reply."""
 
@@ -76,7 +132,28 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
     for candidate in candidates:
         group_id = str(candidate.get("group_id") or "")
         latest_message_id = int(candidate.get("latest_message_id") or 0)
+        candidate_revision = int(candidate.get("candidate_revision") or 0)
+        anchor_message_id = int(candidate.get("anchor_message_id") or 0)
         decision_id = ""
+
+        def is_current(conn: Any) -> bool:
+            return group_candidate_is_current(
+                conn, group_id, latest_message_id=latest_message_id,
+                candidate_revision=candidate_revision,
+            )
+
+        def supersede(conn: Any) -> None:
+            services["transition_participation"](
+                conn, decision_id=decision_id, stage="superseded", action="silent",
+                reason_code="candidate_superseded",
+            )
+
+        def fence(conn: Any) -> bool:
+            if is_current(conn):
+                return True
+            supersede(conn)
+            return False
+
         try:
             access = services["group_access"](
                 db_connect,
@@ -85,7 +162,11 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
             )
             if not access.get("allowed"):
                 with db_connect() as conn:
-                    finish_group_candidate(conn, group_id, state="cancelled", latest_message_id=latest_message_id)
+                    if fence(conn):
+                        finish_group_candidate(
+                            conn, group_id, state="cancelled", latest_message_id=latest_message_id,
+                            candidate_revision=candidate_revision,
+                        )
                 continue
             with db_connect() as conn:
                 policy = services["get_group_policy"](conn, group_id) or {}
@@ -93,34 +174,67 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     not natural_group_participation_enabled(conn)
                     or group_mode_from_legacy(policy) is not GroupParticipationMode.NATURAL_PARTICIPATION
                 ):
-                    finish_group_candidate(conn, group_id, state="cancelled", latest_message_id=latest_message_id)
+                    if fence(conn):
+                        finish_group_candidate(
+                            conn, group_id, state="cancelled", latest_message_id=latest_message_id,
+                            candidate_revision=candidate_revision,
+                        )
                     continue
                 latest = conn.execute(
                     "SELECT * FROM group_messages WHERE id=? AND group_id=?",
                     (int(candidate.get("latest_message_id") or 0), group_id),
                 ).fetchone()
+                anchor = conn.execute(
+                    "SELECT * FROM group_messages WHERE id=? AND group_id=?",
+                    (anchor_message_id, group_id),
+                ).fetchone() if anchor_message_id else None
                 context_items = services["group_context"](
                     conn, group_id, int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
                 )
             if not latest:
                 with db_connect() as conn:
-                    finish_group_candidate(conn, group_id, state="cancelled", latest_message_id=latest_message_id)
+                    if fence(conn):
+                        finish_group_candidate(
+                            conn, group_id, state="cancelled", latest_message_id=latest_message_id,
+                            candidate_revision=candidate_revision,
+                        )
                 continue
             latest = dict(latest)
             decision_id = str(latest.get("engagement_decision_id") or "")
+            if not anchor:
+                with db_connect() as conn:
+                    if fence(conn):
+                        services["mark_group_decision"](
+                            conn, message_id=int(latest["id"]), group_id=group_id,
+                            decision={"should_reply": False, "reason": "no_concrete_anchor"}, replied=False,
+                        )
+                        supersede_reason = "no_concrete_anchor"
+                        services["transition_participation"](
+                            conn, decision_id=decision_id, stage="preflight_blocked", action="silent",
+                            reason_code=supersede_reason,
+                        )
+                        finish_group_candidate(
+                            conn, group_id, latest_message_id=latest_message_id,
+                            candidate_revision=candidate_revision,
+                        )
+                continue
+            anchor = dict(anchor)
             # The latest candidate must remain available to this one worker
             # decision even when its transient retention window has elapsed
             # before the quiet-gap claim (for example after delayed delivery
             # or clock skew).  This is an in-memory supplement only; durable
             # context reads keep their retention and redaction rules.
-            latest_id = int(latest.get("id") or 0)
-            if latest_id and not any(
-                int(item.get("id") or 0) == latest_id for item in context_items
+            anchor_id = int(anchor.get("id") or 0)
+            if anchor_id and not any(
+                int(item.get("id") or 0) == anchor_id for item in context_items
             ):
-                context_items.append(latest)
+                context_items.append(anchor)
+            model_context_items = [
+                item for item in context_items if int(item.get("id") or 0) < anchor_id
+            ] + [anchor]
+            turn_history = model_context_items
             conversation_frame = build_group_conversation_frame(
-                context_items,
-                latest,
+                context_items, anchor,
                 context_limit=int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
                 continuation_window_seconds=int(policy.get("continuation_window_seconds") or 120),
             )
@@ -129,28 +243,26 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     conn,
                     policy=policy,
                     group_id=group_id,
-                    current=latest,
+                    current=anchor,
                     conversation_frame=conversation_frame,
                     candidate_kind=(
                         "continuation" if conversation_frame.get("active_continuation") else "ambient"
                     ),
                 )
                 if guard:
-                    services["mark_group_decision"](
-                        conn,
-                        message_id=int(latest["id"]),
-                        group_id=group_id,
-                        decision=guard,
-                        replied=False,
-                    )
-                    services["transition_participation"](
-                        conn,
-                        decision_id=decision_id,
-                        stage="preflight_blocked",
-                        action="silent",
-                        reason_code=str(guard.get("reason") or "preflight_blocked"),
-                    )
-                    finish_group_candidate(conn, group_id, latest_message_id=latest_message_id)
+                    if fence(conn):
+                        services["mark_group_decision"](
+                            conn, message_id=int(anchor["id"]), group_id=group_id,
+                            decision=guard, replied=False,
+                        )
+                        services["transition_participation"](
+                            conn, decision_id=decision_id, stage="preflight_blocked", action="silent",
+                            reason_code=str(guard.get("reason") or "preflight_blocked"),
+                        )
+                        finish_group_candidate(
+                            conn, group_id, latest_message_id=latest_message_id,
+                            candidate_revision=candidate_revision,
+                        )
                     continue
             social_context = None
             with db_connect() as conn:
@@ -164,9 +276,9 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                         """SELECT version FROM relationship_states
                            WHERE assistant_id=? AND user_id=? AND scope_type='qq_group' AND scope_id=?
                            ORDER BY updated_at DESC LIMIT 1""",
-                        (str(assistant_row[0]), str(latest.get("sender_id") or ""), group_id),
+                        (str(assistant_row[0]), str(anchor.get("sender_id") or ""), group_id),
                     ).fetchone()
-                    engagement_id = str(latest.get("engagement_decision_id") or "")
+                    engagement_id = decision_id
                     existing = conn.execute(
                         "SELECT * FROM social_opportunities WHERE id=?",
                         (f"decision-{engagement_id}",),
@@ -175,18 +287,18 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                         conn, assistant_id=str(assistant_row[0]), kind="join",
                         subject_type="qq_group", subject_id=group_id,
                         thread_id=f"qq:group:{group_id}", trigger_type="active_group_topic",
-                        trigger_ref=str(latest.get("external_message_id") or latest.get("id") or ""),
+                        trigger_ref=str(anchor.get("external_message_id") or anchor.get("id") or ""),
                         policy_snapshot={
                             "participation_mode": policy.get("participation_mode"),
                             "quiet_gap_seconds": policy.get("quiet_gap_seconds"),
                             "reply_probability": policy.get("reply_probability"),
                         },
                         relationship_version=int(relationship_row[0]) if relationship_row else 0,
-                        opportunity_id=f"join-{group_id}-{latest.get('id')}",
+                        opportunity_id=f"join-{group_id}-{anchor.get('id')}",
                     )
                     topic = add_topic_candidate(conn, opportunity["id"], {
                         "source_type": "conversation",
-                        "source_id": str(latest.get("external_message_id") or latest.get("id") or ""),
+                        "source_id": str(anchor.get("external_message_id") or anchor.get("id") or ""),
                         "scope_type": "qq_group", "scope_id": group_id,
                         "summary": str(conversation_frame.get("topic_summary") or "")[:800] or "当前群聊消息",
                         "freshness": str(latest.get("created_at") or ""),
@@ -200,21 +312,21 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     social_context = {"opportunity": opportunity, "topic": topic}
             fallback_settings = services["assistant_settings"](include_secrets=True)
             visual_event_id = str(
-                latest.get("external_message_id")
+                anchor.get("external_message_id")
                 or candidate.get("latest_external_message_id")
-                or latest.get("id")
+                or anchor.get("id")
                 or ""
             )
             transient_visual_context = visual_context_lines(
                 visual_scope(channel="qq_group", thread_id=group_id),
                 visual_event_id,
             )
-            latest = with_visual_group_current(latest, transient_visual_context)
+            anchor = with_visual_group_current(anchor, transient_visual_context)
             classifier_settings = services["settings_for_model_role"](
                 "conversation_engagement", fallback_settings,
             )
             decision_messages = services["build_group_decision_messages"](
-                policy, context_items, latest, conversation_frame,
+                policy, model_context_items, anchor, conversation_frame,
             )
             if social_context:
                 social_packet = (
@@ -264,20 +376,39 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                 raise RuntimeError(
                     str(classifier_result.get("error") or "group_classifier_failed"),
                 )
+            with db_connect() as conn:
+                if not fence(conn):
+                    continue
             decision = services["parse_group_decision"](
                 classifier_result.get("reply") or classifier_result.get("output") or "",
                 is_mention=False,
+                expected_anchor_message_id=int(anchor["id"]),
             )
             decision = services["apply_group_turn_policy"](
-                policy, context_items, latest, decision, conversation_frame,
+                policy, turn_history, anchor, decision, conversation_frame,
             )
             decision["classifier_ok"] = True
             decision["classifier_provider"] = classifier_result.get("provider") or provider
             threshold = services["participation_confidence_floor"](policy)
             if decision.get("should_reply") and float(decision.get("confidence") or 0) < threshold:
                 decision.update({"should_reply": False, "reason": "engagement_below_threshold"})
-            if social_context:
-                with db_connect() as conn:
+            with db_connect() as conn:
+                if not fence(conn):
+                    continue
+                decision = apply_natural_participation_floor(
+                    conn,
+                    policy=policy,
+                    group_id=group_id,
+                    anchor=anchor,
+                    decision=decision,
+                    conversation_frame=conversation_frame,
+                    current_decision_id=decision_id,
+                )
+            social_decision = None
+            with db_connect() as conn:
+                if not fence(conn):
+                    continue
+                if social_context:
                     try:
                         social_decision = decide_opportunity(conn, social_context["opportunity"]["id"], {
                             "action": "reply" if decision.get("should_reply") else "silent",
@@ -293,44 +424,19 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                             {"action": "silent", "reason_code": "invalid_model_social_contract"},
                         )
                     decision["social_opportunity"] = social_decision
-                    engagement_id = str(latest.get("engagement_decision_id") or "")
-                    if engagement_id:
-                        stored = conn.execute(
-                            "SELECT decision_json FROM engagement_decisions WHERE id=?", (engagement_id,),
-                        ).fetchone()
-                        if stored:
-                            try:
-                                decision_payload = json.loads(str(stored[0] or "{}"))
-                            except json.JSONDecodeError:
-                                decision_payload = {}
-                            decision_payload["social_opportunity"] = social_decision
-                            # Preserve only structured, non-content diagnostics.
-                            # Provider free prose is neither a policy code nor a
-                            # safe durable explanation for the Owner ledger.
-                            decision_payload["group_engagement"] = {
-                                "reason_code": str(decision.get("reason") or ""),
-                                "confidence": float(decision.get("confidence") or 0),
-                                "classifier_provider": str(decision.get("classifier_provider") or ""),
-                                "classifier_ok": bool(decision.get("classifier_ok")),
-                                "threshold": float(threshold),
-                                "turn_policy": decision.get("turn_policy") if isinstance(decision.get("turn_policy"), dict) else {},
-                                "social_action": str(decision.get("social_action") or "silent"),
-                            }
-                            final_action = "contextual_participation" if decision.get("should_reply") else "silent"
-                            conn.execute(
-                                """UPDATE engagement_decisions
-                                   SET action=?,reason_code=?,confidence=?,decision_json=? WHERE id=?""",
-                                (
-                                    final_action, str(decision.get("reason") or "")[:120],
-                                    float(decision.get("confidence") or 0),
-                                    json.dumps(decision_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-                                    engagement_id,
-                                ),
-                            )
+                _store_group_engagement_metadata(
+                    conn,
+                    decision_id=decision_id,
+                    decision=decision,
+                    threshold=threshold,
+                    social_decision=social_decision,
+                )
             if not decision.get("should_reply"):
                 with db_connect() as conn:
+                    if not fence(conn):
+                        continue
                     services["mark_group_decision"](
-                        conn, message_id=int(latest["id"]), group_id=group_id,
+                        conn, message_id=int(anchor["id"]), group_id=group_id,
                         decision=decision, replied=False,
                     )
                     services["transition_participation"](
@@ -343,21 +449,17 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                         model_id=str(classifier_settings.get("chat_model") or ""),
                         confidence=float(decision.get("confidence") or 0),
                     )
-                    finish_group_candidate(conn, group_id, latest_message_id=latest_message_id)
+                    finish_group_candidate(
+                        conn, group_id, latest_message_id=latest_message_id,
+                        candidate_revision=candidate_revision,
+                    )
                 continue
             with db_connect() as conn:
-                if not group_candidate_is_current(conn, group_id, latest_message_id):
-                    services["transition_participation"](
-                        conn,
-                        decision_id=decision_id,
-                        stage="superseded",
-                        action="silent",
-                        reason_code="candidate_superseded",
-                    )
+                if not fence(conn):
                     continue
-            message = str(latest.get("content") or "").strip()
+            message = str(anchor.get("content") or "").strip()
             history = group_model_history(
-                context_items[:-1],
+                turn_history[:-1],
                 limit=int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
             )
             history = append_visual_history(history, transient_visual_context)
@@ -369,9 +471,9 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                 "sender_id": candidate.get("latest_sender_id") or "",
                 "session": candidate.get("latest_session") or "",
                 "is_mention": False,
-                "_external_message_id": candidate.get("latest_external_message_id") or f"natural:{latest['id']}",
-                "trace_id": f"natural-group:{group_id}:{latest['id']}",
-                "engagement_decision_id": str(latest.get("engagement_decision_id") or ""),
+                "_external_message_id": candidate.get("latest_external_message_id") or f"natural:{anchor['id']}",
+                "trace_id": f"natural-group:{group_id}:{anchor['id']}",
+                "engagement_decision_id": decision_id,
             }
 
             def _execute_natural_turn(_turn_id: str) -> dict:
@@ -390,6 +492,10 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                             "group_name": policy.get("group_name") or "",
                             "sender_id": candidate.get("latest_sender_id") or "",
                             "sender_name": candidate.get("latest_sender_name") or "",
+                            "topic_anchor": {
+                                "id": int(anchor.get("id") or 0),
+                                "content": message,
+                            },
                             "allow_group_feedback": False,
                         },
                         "conversation_frame": conversation_frame,
@@ -402,6 +508,9 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     "group_decision": decision,
                     "engagement_decision_id": transport["engagement_decision_id"],
                 }
+                with db_connect() as conn:
+                    if not fence(conn):
+                        raise RuntimeError("candidate_superseded")
                 queued = services["dispatch_response"](
                     services["outbox"](), lambda: result, transport,
                     scope="group", enabled=True,
@@ -431,6 +540,8 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                     str(queued.get("error") or "natural_group_delivery_not_queued"),
                 )
             with db_connect() as conn:
+                if not fence(conn):
+                    continue
                 services["transition_participation"](
                     conn,
                     decision_id=decision_id,
@@ -444,14 +555,19 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
                 services["complete_group_dispatch"](
                     conn, event=None, deterministic_decision=None,
                     decision=decision, group_id=group_id, payload=transport,
-                    classifier_settings=classifier_settings, current=latest,
+                    classifier_settings=classifier_settings, current=anchor,
                     result=queued,
                     assistant_name=str(fallback_settings.get("display_name") or "助手"),
                     conversation_frame=conversation_frame,
                 )
-                finish_group_candidate(conn, group_id, latest_message_id=latest_message_id)
+                finish_group_candidate(
+                    conn, group_id, latest_message_id=latest_message_id,
+                    candidate_revision=candidate_revision,
+                )
         except Exception as exc:
             error_text = str(exc)
+            if error_text == "candidate_superseded":
+                continue
             if (
                 isinstance(exc, RuntimeError)
                 and error_text != "natural_group_delivery_not_queued"
@@ -462,15 +578,21 @@ def process_group_participation_queue(services: dict[str, Any]) -> None:
             else:
                 failure_reason = "group_participation_worker_failed"
             with db_connect() as conn:
+                if not fence(conn):
+                    continue
                 if int(candidate.get("attempt") or 0) < 3:
                     reschedule_group_candidate(
                         conn,
                         group_id,
                         seconds=15,
                         latest_message_id=latest_message_id,
+                        candidate_revision=candidate_revision,
                     )
                 else:
-                    finish_group_candidate(conn, group_id, state="failed", latest_message_id=latest_message_id)
+                    finish_group_candidate(
+                        conn, group_id, state="failed", latest_message_id=latest_message_id,
+                        candidate_revision=candidate_revision,
+                    )
                     if latest_message_id:
                         services["mark_group_decision"](
                             conn,

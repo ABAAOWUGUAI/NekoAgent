@@ -3058,6 +3058,18 @@ def _assistant_chat(
                            _call_openai_compatible_chat, _record_model_call),
     )
     provider = str(chat_settings.get("chat_provider") or "codex")
+    group_reply_finalizer = None
+    if context.get("group"):
+        def group_reply_finalizer(reply_text, candidate_result):
+            finalized_reply, action_truth_guarded = enforce_action_truth(
+                reply_text,
+                candidate_result.get("action_receipts")
+                if isinstance(candidate_result.get("action_receipts"), list) else None,
+            )
+            if candidate_result.get("ok") and finalized_reply:
+                finalized_reply = align_reply_with_attachment(finalized_reply, attachment_context)
+            return finalized_reply, {"action_truth_guarded": action_truth_guarded}
+
     result, cache_replay_metadata = run_conversation_model_reply(
         provider, chat_settings, user_id, display_message, memories, history,
         intent=intent, criteria=criteria, policy=policy, mode_decision=mode_decision,
@@ -3067,28 +3079,28 @@ def _assistant_chat(
         format_prompt=_format_assistant_prompt, call_model=_call_openai_compatible_chat,
         record_model=_record_model_call, run_codex=_run_codex_assistant_chat,
         cwd=_default_cwd(),
+        group_reply_finalizer=group_reply_finalizer,
     )
     _record_model_call(chat_settings, result, source="assistant_chat", user_id=user_id)
     reply = (result.get("reply") or result.get("output") or "").strip()
-    if str(mode_decision.get("mode") or "daily") != "work":
+    if not context.get("group") and str(mode_decision.get("mode") or "daily") != "work":
         expression_plan = social_context.get("expression_plan") if isinstance(social_context, dict) else None
-        max_group_sentences = None
-        if context.get("group") and isinstance(expression_plan, dict):
-            max_group_sentences = expression_plan.get("sentence_limit")
         reply = normalize_social_reply(
             reply,
-            group=bool(context.get("group")),
+            group=False,
             request=raw_message,
-            max_sentences=max_group_sentences,
         )
-    reply, action_truth_guarded = enforce_action_truth(
-        reply,
-        result.get("action_receipts") if isinstance(result.get("action_receipts"), list) else None,
-    )
+    if context.get("group"):
+        action_truth_guarded = bool(result.get("action_truth_guarded"))
+    else:
+        reply, action_truth_guarded = enforce_action_truth(
+            reply,
+            result.get("action_receipts") if isinstance(result.get("action_receipts"), list) else None,
+        )
     result["action_truth_guarded"] = action_truth_guarded
-    if result.get("ok") and reply:
+    if not context.get("group") and result.get("ok") and reply:
         reply = align_reply_with_attachment(reply, attachment_context)
-    elif meme:
+    elif meme and (not result.get("ok") or not reply):
         mark_failed_attachment(
             db_connect=_assistant_db_connect,
             mark_delivery=mark_meme_delivery,

@@ -45,12 +45,13 @@ def build_group_decision_messages(
             "先选择 social_action：silent/ack/ack_add/follow_up/reply/bridge_topic/topic_start/repair。"
             "ack 只简短承接；ack_add 承接后只补一个新点；follow_up 只问一个锚定问题；reply 只回应当前一件事；"
             "bridge_topic 必须说清与当前话题的关联；topic_start 只可基于当前群已有共同上下文且话题明显停住；repair 直接修正自己刚才的具体误解。"
-            "输出字段：should_reply(boolean), confidence(0-1), reason, social_action, emotion, reply_length(short/medium), "
+            "输出字段：should_reply(boolean), confidence(0-1), reason, social_action, anchor_message_id(integer), silent_reason, emotion, reply_length(short/medium), "
             "meme_intent(none/optional/strong), mode(daily/work/mixed), intent(chat/analysis/research/code/ops), "
             "why_now, topic_candidate_id。"
             "\nServer candidate contract: this candidate already passed server-side group access, safety, cooldown, density and budget preflight. "
             "You are not the permission judge. For a non-sensitive, non-acknowledgement message with a concrete topic anchor, choose one non-silent "
-            "social_action and a short reason code; reserve silent for the enumerated safety, duplicate or no-anchor cases."
+            "social_action and echo the exact final-packet anchor_message_id; silent must set silent_reason to one of "
+            "no_concrete_anchor, sensitive_topic, interpersonal_conflict, already_answered, topic_closed, low_relevance."
         ),
     }
     stable_context = "\n".join(
@@ -73,7 +74,10 @@ def build_group_decision_messages(
     # Do not put a per-call heading or recomputed metadata around this member
     # message. On the next decision the same event appears in ``history``;
     # matching the history form is the append-only cache contract.
-    current_packet = f"[成员] {str(current.get('content') or '').strip()}"
+    current_packet = (
+        f"[成员] {str(current.get('content') or '').strip()}\n"
+        f"本次候选 anchor_message_id: {int(current.get('id') or 0)}"
+    )
     return [
         stable_system,
         {"role": "user", "content": stable_context},

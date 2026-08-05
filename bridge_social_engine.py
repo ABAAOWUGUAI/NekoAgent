@@ -33,6 +33,7 @@ from bridge_group_message_store import (
 from bridge_group_context_frame import (
     acknowledgement_only,
 )
+from bridge_group_decision_contract import SILENT_REASON_CODES, parse_group_decision_contract
 from bridge_group_expression import choose_group_reply_shape, group_expression_signature
 from bridge_group_engagement_prompt import build_group_decision_messages
 from bridge_group_policy_store import get_group_policy, list_group_policies, upsert_group_policy
@@ -226,6 +227,7 @@ def plan_expression(
     social_cues: dict | None = None,
     mode_decision: dict | None = None,
     group_context: dict | None = None,
+    topic_anchor: dict | None = None,
     voice_contract: dict | None = None,
     recent_expression_shapes: list[str] | None = None,
 ) -> dict:
@@ -254,7 +256,7 @@ def plan_expression(
     ) if group else ""
     if group:
         length_key = str(contract.get("group_length") or "").strip()
-        sentence_limit = {"brief": 1, "short": 2, "balanced": 3}.get(length_key, 1)
+        sentence_limit = {"brief": 1, "short": 2, "balanced": 2}.get(length_key, 1)
     elif mode in {"work", "mixed"}:
         length_key = str(contract.get("work_length") or "").strip()
         sentence_limit = {"compact": 4, "structured_compact": 6, "detailed": 10}.get(
@@ -338,7 +340,7 @@ def plan_expression(
         structure = [*structure, shape_instruction]
     else:
         signature, reply_shape = {}, ""
-    return {
+    plan = {
         "purpose": purpose,
         "tone": tone,
         "sentence_limit": sentence_limit,
@@ -350,6 +352,18 @@ def plan_expression(
         "reply_shape": reply_shape,
         "meme_intent": cues["meme_intent"],
     }
+    if group and isinstance(topic_anchor, dict):
+        try:
+            anchor_id = int(topic_anchor.get("id") or 0)
+        except (TypeError, ValueError):
+            anchor_id = 0
+        if anchor_id > 0:
+            plan.update({
+                "topic_anchor_id": anchor_id,
+                "topic_anchor_required": True,
+                "topic_anchor_text": _clip(topic_anchor.get("content"), 160),
+            })
+    return plan
 
 
 def voice_contract_lines(contract: dict) -> list[str]:
@@ -707,62 +721,21 @@ def apply_group_turn_policy(
     return result
 
 
-def parse_group_decision(raw: object, *, is_mention: bool = False) -> dict:
-    text = str(raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    match = re.search(r"\{.*\}", text, flags=re.S)
-    if match:
-        text = match.group(0)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    confidence = data.get("confidence", 0.5 if is_mention else 0.0)
-    try:
-        confidence = max(0.0, min(float(confidence), 1.0))
-    except (TypeError, ValueError):
-        confidence = 0.5 if is_mention else 0.0
-    requested_reply = bool(data.get("should_reply")) or is_mention
-    social_action = normalize_group_social_action(
-        data.get("social_action"),
-        approach=data.get("approach"),
-        should_reply=requested_reply,
+def parse_group_decision(
+    raw: object,
+    *,
+    is_mention: bool = False,
+    expected_anchor_message_id: int = 0,
+) -> dict:
+    return parse_group_decision_contract(
+        raw,
+        is_mention=is_mention,
+        expected_anchor_message_id=expected_anchor_message_id,
+        normalize_action=normalize_group_social_action,
+        normalize_cues=normalize_social_cues,
+        clip=_clip,
+        action_approach=GROUP_SOCIAL_ACTION_APPROACH,
     )
-    should_reply = bool(requested_reply and social_action != "silent")
-    cues = normalize_social_cues(data)
-    mode = str(data.get("mode") or "daily").strip().lower()
-    if mode not in {"daily", "work", "mixed"}:
-        mode = "daily"
-    intent = str(data.get("intent") or "chat").strip().lower()
-    if intent not in {"chat", "analysis", "research", "code", "ops"}:
-        intent = "chat"
-    # A model's free-form rationale is useful only while evaluating this turn.
-    # It must not become ``reason_code``: reason codes are a server-owned
-    # taxonomy used by policy, aggregates, and the Owner console.
-    model_reason = _clip(data.get("reason"), 500)
-    return {
-        **data,
-        **cues,
-        "should_reply": should_reply,
-        "social_action": social_action,
-        "approach": GROUP_SOCIAL_ACTION_APPROACH.get(social_action, ""),
-        "group_action_plan": {
-            "schema_version": 1,
-            "action": social_action,
-        },
-        "confidence": confidence,
-        "reason": (
-            "direct_mention" if is_mention
-            else ("model_engagement_approved" if should_reply else "model_engagement_declined")
-        ),
-        "model_reason": model_reason,
-        "mode": mode,
-        "intent": intent,
-    }
 
 
 def mark_group_decision(

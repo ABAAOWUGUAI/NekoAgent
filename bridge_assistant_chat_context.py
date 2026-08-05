@@ -109,6 +109,7 @@ def build_social_context(
             social_cues=cues,
             mode_decision=mode_decision,
             group_context=group,
+            topic_anchor=group_info.get("topic_anchor") if group_info else None,
             voice_contract=contract,
             recent_expression_shapes=group_info.get("recent_reply_shapes") if group_info else None,
         ),
