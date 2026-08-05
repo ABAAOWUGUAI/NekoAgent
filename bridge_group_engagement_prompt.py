@@ -3,13 +3,7 @@
 
 from __future__ import annotations
 
-import json
-
-from bridge_group_context_frame import (
-    audit_group_conversation_frame,
-    group_context_lines,
-    normalize_group_context_limit,
-)
+from bridge_group_context_frame import normalize_group_context_limit
 
 
 def build_group_decision_messages(
@@ -19,8 +13,11 @@ def build_group_decision_messages(
     """Build a stable protocol prefix followed by chronological group turns.
 
     Provider KV cache reuse depends on prefix stability.  The protocol and the
-    group configuration are emitted before prior turns; volatile candidate
-    metadata remains in the final message.  This does not authorize delivery:
+    group configuration are emitted before prior turns. Each member turn,
+    including the final candidate, has one canonical representation so the
+    final turn of a request becomes byte-for-byte the next request's history.
+    Server-owned rhythm facts remain outside the model prompt because they
+    already passed the final action gate. This does not authorize delivery:
     the caller must still apply every server-owned group policy and Outbox ACK.
     """
 
@@ -29,11 +26,11 @@ def build_group_decision_messages(
         item for item in history
         if current_id is None or item.get("id") != current_id
     ]
-    recent = prior_history[-8:]
-    assistant_turns = sum(1 for item in recent if str(item.get("sender_id") or "") == "bot")
-    unique_speakers = len({str(item.get("sender_id") or "") for item in recent if item.get("sender_id")})
     context_limit = normalize_group_context_limit(policy.get("max_context"))
-    frame = audit_group_conversation_frame(conversation_frame)
+    # The frame belongs to deterministic candidate selection and final action
+    # gating. Re-emitting its evolving counters here would rewrite a former
+    # final user packet on the next turn and destroy the provider prefix.
+    del conversation_frame
     stable_system = {
         "role": "system",
         "content": (
@@ -73,20 +70,10 @@ def build_group_decision_messages(
             "role": "assistant" if is_assistant else "user",
             "content": f"[助手/self] {content}" if is_assistant else f"[成员] {content}",
         })
-    current_packet = "\n".join(
-        [
-            "当前候选消息：",
-            f"[成员] {str(current.get('content') or '').strip()}",
-            "服务端候选元数据：",
-            json.dumps({
-                "active_continuation": bool(frame.get("active_continuation")),
-                "assistant_turns_last_8": assistant_turns,
-                "unique_speakers": unique_speakers,
-                "server_candidate": "preflight_passed",
-            }, ensure_ascii=False, sort_keys=True),
-            "如有具体锚点，优先选择 ack_add、follow_up、reply 或 bridge_topic 之一。",
-        ],
-    )
+    # Do not put a per-call heading or recomputed metadata around this member
+    # message. On the next decision the same event appears in ``history``;
+    # matching the history form is the append-only cache contract.
+    current_packet = f"[成员] {str(current.get('content') or '').strip()}"
     return [
         stable_system,
         {"role": "user", "content": stable_context},

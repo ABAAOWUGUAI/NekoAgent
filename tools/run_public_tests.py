@@ -55,13 +55,14 @@ def main() -> int:
         smoke_tests = _load("public_release_smoke_tests", "tests/test_public_release_smoke.py")
         starter_pack_tests.test_xiaofei_pack_dry_run_has_no_runtime_state()
         smoke_tests.test_bridge_imports_without_runtime_bootstrap()
+        smoke_tests.test_group_engagement_candidates_are_append_only_for_provider_cache()
         smoke_tests.test_deployment_and_protection_documents_are_present()
         smoke_tests.test_automation_conversation_contract_is_public_and_versioned()
         smoke_tests.test_automation_followup_actions_are_context_bound_and_fail_closed()
         smoke_tests.test_owner_private_voice_input_is_local_bounded_and_opt_in()
         smoke_tests.test_continuity_terminal_outcomes_settle_plan_and_empty_skill_state()
         smoke_tests.test_owner_private_voice_output_is_policy_owned_and_opt_in()
-        tests = 8
+        tests = 9
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")
