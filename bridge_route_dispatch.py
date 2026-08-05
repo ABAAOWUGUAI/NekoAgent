@@ -12,7 +12,7 @@ from bridge_qq_admin_actions import (
     dispatch_qq_admin_action,
     execute_qq_admin_action,
 )
-from bridge_interaction_contract import PLAN_SCHEMA_VERSION
+from bridge_interaction_contract import PLAN_SCHEMA_VERSION, assemble_response
 from bridge_request_router import initial_route_disposition, route_execution_missing_result, route_metadata
 
 
@@ -36,49 +36,113 @@ def _composite_mode_decision(decision: Mapping[str, object]) -> dict:
         intent_type = "automation" if domain == "automation" else "ops"
         raw_action = str(candidate.get("action_type") or "respond")
         action_type = _AUTOMATION_ACTION_TYPES.get(raw_action, raw_action)
-        definition = action_definition(action_type)
+        try:
+            definition = action_definition(action_type)
+        except KeyError:
+            # Keep the plan serializable so the execution lane can emit a
+            # typed fail-closed receipt instead of crashing on model input.
+            definition = None
+        plan_action_type = action_type if definition is not None else "respond"
         intent_id = f"intent-{index}"
         action_id = f"action-{index}"
-        intents.append({
-            "id": intent_id,
-            "type": intent_type,
-            "confidence": 1.0,
-            "objective": f"执行 {raw_action} 的服务端动作",
-            "requires_tools": bool(definition.requires_tools),
-            "risk_level": definition.risk_level,
-        })
-        actions.append({
-            "id": action_id,
-            "type": action_type,
-            "intent_id": intent_id,
-            "objective": f"执行 {raw_action} 并取得 ActionReceipt",
-            "requires_tools": bool(definition.requires_tools),
-            "risk_level": definition.risk_level,
-            "depends_on": [],
-        })
+        intents.append(
+            {
+                "id": intent_id,
+                "type": intent_type,
+                "confidence": 1.0,
+                "objective": f"执行 {raw_action} 的服务端动作",
+                "requires_tools": True if definition is None else bool(definition.requires_tools),
+                "risk_level": "high" if definition is None else definition.risk_level,
+            },
+        )
+        actions.append(
+            {
+                "id": action_id,
+                # Interaction Plan normalization only accepts registered
+                # action types.  Preserve the raw type in the execution
+                # receipt, but persist a registered no-op plan action when
+                # the candidate is unsupported so the route fails closed.
+                "type": plan_action_type,
+                "intent_id": intent_id,
+                "objective": f"执行 {raw_action} 并取得 ActionReceipt",
+                "requires_tools": True if definition is None else bool(definition.requires_tools),
+                "risk_level": "high" if definition is None else definition.risk_level,
+                "depends_on": [],
+            },
+        )
     return {
         "schema_version": PLAN_SCHEMA_VERSION,
         "summary_mode": "mixed",
         "primary_intent": str(intents[0]["type"] if intents else "chat"),
         "confidence": 1.0,
         "reason": "多个当前消息明确提出的领域动作由一个 Interaction Plan 组合。",
-        "affect": {"expression_present": False, "kind": "neutral", "confidence": 0.0, "intensity": "low"},
+        "affect": {
+            "expression_present": False,
+            "kind": "neutral",
+            "confidence": 0.0,
+            "intensity": "low",
+        },
         "intents": intents,
-        "reply_parts": [],
+        # Composite work must keep a user-visible conversational handoff.  The
+        # action receipts remain independent, but the social/chat portion of a
+        # mixed turn cannot disappear merely because every candidate is work.
+        "reply_parts": [
+            {
+                "id": "reply-social-ack",
+                "type": "social_ack",
+                "text": "收到，我先把这几件事分别处理。",
+                "styleable": True,
+            },
+        ],
         "actions": actions,
         "approval_requests": [],
         "memory_candidates": [],
     }
 
 
+def _composite_action_failure(
+    candidate: Mapping[str, object],
+    *,
+    reason: str = "action_execution_failed",
+) -> dict:
+    """Return a stable, redacted receipt when one candidate raises."""
+
+    raw_action = str(candidate.get("action_type") or "respond")
+    action_type = _AUTOMATION_ACTION_TYPES.get(raw_action, raw_action)
+    return {
+        "ok": False,
+        "dispatch": "composite_action_failed",
+        "reply": "这一项动作执行失败了，但我会继续处理同一条消息里的其他事项。",
+        "action_receipts": [
+            {
+                "action_type": action_type,
+                "status": "failed",
+                "facts": {
+                    "stage": "action_registry",
+                    "reason": reason,
+                },
+            },
+        ],
+    }
+
+
 def _dispatch_composite_route(
-    *, decision: Mapping[str, object], assistant_connect: Callable[[], Any], store: object,
-    actor_id: str, message: str, history: list[dict], trace_id: str, source: str,
-    inbound_context: dict, automation_preflight: Callable[[dict], dict],
-    get_fallback: Callable[[], dict], get_role_settings: Callable[[str, dict], dict],
+    *,
+    decision: Mapping[str, object],
+    assistant_connect: Callable[[], Any],
+    store: object,
+    actor_id: str,
+    message: str,
+    history: list[dict],
+    trace_id: str,
+    source: str,
+    inbound_context: dict,
+    automation_preflight: Callable[[dict], dict],
+    get_fallback: Callable[[], dict],
+    get_role_settings: Callable[[str, dict], dict],
     readiness_check: Callable[[dict], tuple[bool, str]],
 ) -> dict:
-    """Execute explicit independent candidates through one plan/receipt lane."""
+    """Execute explicit independent candidates while keeping one plan/receipt lane."""
 
     mode_decision = {"interaction_plan": _composite_mode_decision(decision)}
     plan_record = store.persist(actor_id, mode_decision, source=source)
@@ -87,40 +151,88 @@ def _dispatch_composite_route(
         if not isinstance(candidate, Mapping):
             continue
         domain = str(candidate.get("domain") or "")
-        action = dict(candidate.get("parameters") or {})
-        if domain == "automation":
-            result = execute_automation_action(
-                assistant_connect, actor_id=actor_id, action=action,
-                trace_id=trace_id, preflight=automation_preflight,
+        try:
+            raw_parameters = candidate.get("parameters")
+            if raw_parameters is None:
+                action = {}
+            elif not isinstance(raw_parameters, Mapping):
+                raise ValueError("action_parameters_invalid")
+            else:
+                action = dict(raw_parameters)
+        except Exception:
+            component_results.append(
+                _composite_action_failure(candidate, reason="action_parameters_invalid"),
             )
-        elif domain == "qq":
-            result = execute_qq_admin_action(
-                assistant_connect, actor_id=actor_id, action=action,
-                trace_id=trace_id,
-                model_readiness=lambda: build_qq_control_model_readiness(
-                    get_fallback, get_role_settings, readiness_check,
-                ),
-            )
-        else:
-            result = {"ok": False, "dispatch": "composite_unsupported_domain", "reply": "本轮动作域不受支持。"}
+            continue
+        try:
+            raw_action = str(candidate.get("action_type") or "respond")
+            try:
+                action_definition(_AUTOMATION_ACTION_TYPES.get(raw_action, raw_action))
+            except KeyError:
+                result = _composite_action_failure(candidate, reason="action_type_unsupported")
+                component_results.append(result)
+                continue
+            if domain == "automation":
+                result = execute_automation_action(
+                    assistant_connect,
+                    actor_id=actor_id,
+                    action=action,
+                    trace_id=trace_id,
+                    preflight=automation_preflight,
+                )
+            elif domain == "qq":
+                result = execute_qq_admin_action(
+                    assistant_connect,
+                    actor_id=actor_id,
+                    action=action,
+                    trace_id=trace_id,
+                    model_readiness=lambda: build_qq_control_model_readiness(
+                        get_fallback, get_role_settings, readiness_check,
+                    ),
+                )
+            else:
+                result = {"ok": False, "dispatch": "composite_unsupported_domain", "reply": "本轮动作域不受支持。"}
+        except Exception:
+            # Never expose exception text or abort independent candidates.
+            result = _composite_action_failure(candidate)
         component_results.append(result or {"ok": False, "dispatch": "composite_no_result"})
+
     replies = [str(item.get("reply") or "").strip() for item in component_results if isinstance(item, dict)]
     receipts = [
-        receipt for item in component_results if isinstance(item, dict)
-        for receipt in (item.get("action_receipts") or []) if isinstance(receipt, dict)
+        receipt
+        for item in component_results
+        if isinstance(item, dict)
+        for receipt in (item.get("action_receipts") or [])
+        if isinstance(receipt, dict)
     ]
-    reply = "\n\n".join(item for item in replies if item)
-    store.record_exchange(actor_id, message, reply, mode_decision, source=source, inbound_context=inbound_context)
+    factual_reply = "\n\n".join(item for item in replies if item)
+    content_blocks, reply = assemble_response(
+        mode_decision["interaction_plan"],
+        factual_reply or "本轮没有可交付的动作结果。",
+        factual_type="status",
+    )
+    store.record_exchange(
+        actor_id,
+        message,
+        reply,
+        mode_decision,
+        source=source,
+        inbound_context=inbound_context,
+    )
     return {
         "ok": all(bool(item.get("ok", False)) for item in component_results if isinstance(item, dict)),
         "dispatch": "composite_route",
         "reply": reply,
+        "content_blocks": content_blocks,
         "action_receipts": receipts,
-        "component_dispatches": [str(item.get("dispatch") or "") for item in component_results if isinstance(item, dict)],
+        "component_dispatches": [
+            str(item.get("dispatch") or "") for item in component_results if isinstance(item, dict)
+        ],
         "mode": "work",
         "intent": "automation" if any(
             str(item.get("domain") or "") == "automation"
-            for item in (decision.get("candidates") or []) if isinstance(item, Mapping)
+            for item in (decision.get("candidates") or [])
+            if isinstance(item, Mapping)
         ) else "ops",
         "mode_decision": mode_decision,
         "interaction_plan": mode_decision["interaction_plan"],
@@ -129,16 +241,26 @@ def _dispatch_composite_route(
 
 
 def dispatch_deterministic_route(
-    *, assistant_connect: Callable[[], Any], store: object, actor_id: str,
-    message: str, history: list[dict], trace_id: str, source: str,
-    inbound_context: dict, automation_preflight: Callable[[dict], dict],
+    *,
+    assistant_connect: Callable[[], Any],
+    store: object,
+    actor_id: str,
+    message: str,
+    history: list[dict],
+    trace_id: str,
+    source: str,
+    inbound_context: dict,
+    automation_preflight: Callable[[dict], dict],
     resolve_automation_target: Callable[[str, dict], dict],
-    get_fallback: Callable[[], dict], get_role_settings: Callable[[str, dict], dict],
+    get_fallback: Callable[[], dict],
+    get_role_settings: Callable[[str, dict], dict],
     readiness_check: Callable[[dict], tuple[bool, str]],
 ) -> tuple[dict | None, dict]:
-    """Return an executor result or a decision for generic planning.
+    """Return an executed route result or the decision for generic planning.
 
-    Authorization, approval and durable writes remain in each domain executor.
+    The caller owns channel delivery and event signalling.  This function owns
+    only route arbitration; each domain executor still performs authorization,
+    approval and its own durable write.
     """
 
     group_id = str(inbound_context.get("group_id") or "")
@@ -147,11 +269,18 @@ def dispatch_deterministic_route(
         return blocked, decision
     if decision.get("status") == "mixed":
         result = _dispatch_composite_route(
-            decision=decision, assistant_connect=assistant_connect, store=store,
-            actor_id=actor_id, message=message, history=history, trace_id=trace_id,
-            source=source, inbound_context=inbound_context,
+            decision=decision,
+            assistant_connect=assistant_connect,
+            store=store,
+            actor_id=actor_id,
+            message=message,
+            history=history,
+            trace_id=trace_id,
+            source=source,
+            inbound_context=inbound_context,
             automation_preflight=automation_preflight,
-            get_fallback=get_fallback, get_role_settings=get_role_settings,
+            get_fallback=get_fallback,
+            get_role_settings=get_role_settings,
             readiness_check=readiness_check,
         )
         result["route_decision"] = decision

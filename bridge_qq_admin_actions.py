@@ -38,8 +38,8 @@ _ENABLE_HINTS = ("开放", "加入", "添加", "允许", "启用")
 _DISABLE_HINTS = ("移出", "移除", "删除", "撤销", "取消", "关闭", "禁用")
 _STATUS_HINTS = ("查询", "查看", "检查", "状态", "是否", "好了吗", "好了么", "生效")
 # Generic words such as “是否” also occur in unrelated requests (for example
-# weather forecasts). Only bounded phrases may carry a status question across
-# turns without repeating the group reference.
+# weather forecasts).  Only these bounded phrases may carry a status question
+# across turns without repeating the group reference.
 _STATUS_FOLLOWUP_HINTS = (
     "生效了吗", "生效了么", "好了吗", "好了么", "成功了吗", "完成了吗",
     "配置怎么样", "状态怎么样", "确认一下状态", "查一下状态",
@@ -48,11 +48,25 @@ _ALLOWLIST_LIST_HINTS = ("准入列表", "白名单列表", "哪些群", "多少
 _DIAGNOSTIC_HINTS = ("查日志", "看日志", "直接查", "排查", "没有回复", "没回复", "不回复")
 _POLICY_CLONE_HINTS = ("对齐", "保持一致", "一致", "复制", "同步", "一样", "相同")
 _GROUP_POLICY_COPY_FIELDS = (
-    "participation_mode", "enabled", "mention_only", "active_reply", "reply_probability",
-    "cooldown_seconds", "quiet_start", "quiet_end", "timezone", "max_context",
-    "allow_work", "allowed_work_senders", "meme_enabled", "quiet_gap_seconds",
-    "burst_window_seconds", "burst_max_messages", "daily_reply_budget",
-    "continuation_window_seconds", "max_auto_continuations",
+    "participation_mode",
+    "enabled",
+    "mention_only",
+    "active_reply",
+    "reply_probability",
+    "cooldown_seconds",
+    "quiet_start",
+    "quiet_end",
+    "timezone",
+    "max_context",
+    "allow_work",
+    "allowed_work_senders",
+    "meme_enabled",
+    "quiet_gap_seconds",
+    "burst_window_seconds",
+    "burst_max_messages",
+    "daily_reply_budget",
+    "continuation_window_seconds",
+    "max_auto_continuations",
 )
 
 
@@ -122,6 +136,8 @@ def _status_followup_reference(text: str, history: list[dict] | None) -> bool:
 
 
 def _normalize_access_terms(text: str) -> str:
+    """Normalize bounded Chinese typos before routing; raw text remains untouched."""
+
     return str(text or "").replace("准人", "准入")
 
 
@@ -129,7 +145,12 @@ def _group_ids_in_text(message: str) -> list[str]:
     return list(dict.fromkeys(_GROUP_ID_PATTERN.findall(str(message or ""))))
 
 
-def _clone_source_group_id(message: str, history: list[dict] | None, *, target_group_id: str) -> str:
+def _clone_source_group_id(
+    message: str,
+    history: list[dict] | None,
+    *,
+    target_group_id: str,
+) -> str:
     """Resolve an explicitly referenced source, preferring the current turn."""
 
     texts = [str(message or "")]
@@ -142,7 +163,10 @@ def _clone_source_group_id(message: str, history: list[dict] | None, *, target_g
 
 
 def _clone_target_group_id(
-    message: str, history: list[dict] | None, *, current_group_id: str = "",
+    message: str,
+    history: list[dict] | None,
+    *,
+    current_group_id: str = "",
 ) -> str:
     """Choose the target without mistaking a one-ID current template for it."""
 
@@ -150,7 +174,11 @@ def _clone_target_group_id(
     if len(current_ids) >= 2:
         return current_ids[0]
     history_target = _candidate_group_id("", history, current_group_id=current_group_id)
-    return history_target or _candidate_group_id(message, history, current_group_id=current_group_id)
+    return history_target or _candidate_group_id(
+        message,
+        history,
+        current_group_id=current_group_id,
+    )
 
 
 def _clone_requested(text: str) -> bool:
@@ -164,6 +192,8 @@ def _clone_requested(text: str) -> bool:
 
 
 def _allowlist_list_requested(text: str) -> bool:
+    """Recognise a read-only whole-list query, not a group mutation."""
+
     return any(hint in text for hint in _ALLOWLIST_LIST_HINTS) and any(
         hint in text for hint in ("多少", "几个", "哪些", "查询", "查看", "当前", "现在", "有")
     )
@@ -179,6 +209,9 @@ def parse_qq_admin_action(
     if not text:
         return None
     context_text = _normalize_access_terms(_context_text(message, history))
+    # Continuation turns often say only “then align it with …”.  The target
+    # remains explicit in recent private context, so retain it for deterministic
+    # routing instead of falling through to a general-purpose chat model.
     group_context = any(hint in context_text for hint in _GROUP_CONTEXT_HINTS)
     current_group_context = any(hint in text for hint in _GROUP_CONTEXT_HINTS)
     access_context = "白名单" in context_text or "准入" in context_text
@@ -188,8 +221,16 @@ def parse_qq_admin_action(
         current_group_id=current_group_id,
     )
     if group_context and _clone_requested(text):
-        group_id = _clone_target_group_id(message, history, current_group_id=current_group_id)
-        source_group_id = _clone_source_group_id(message, history, target_group_id=group_id)
+        group_id = _clone_target_group_id(
+            message,
+            history,
+            current_group_id=current_group_id,
+        )
+        source_group_id = _clone_source_group_id(
+            message,
+            history,
+            target_group_id=group_id,
+        )
         if group_id and source_group_id:
             return {
                 "action_type": "qq_group_policy_clone",
@@ -260,13 +301,23 @@ def _policy_payload(existing: dict | None, group_id: str, *, enabled: bool) -> d
     return payload
 
 
-def _clone_policy_payload(source: dict, existing_target: dict | None, target_group_id: str) -> dict:
+def _clone_policy_payload(
+    source: dict,
+    existing_target: dict | None,
+    target_group_id: str,
+) -> dict:
     """Copy only configurable behavior; never copy identity or runtime counters."""
 
-    payload = {key: source[key] for key in _GROUP_POLICY_COPY_FIELDS if key in source}
+    payload = {
+        key: source[key]
+        for key in _GROUP_POLICY_COPY_FIELDS
+        if key in source
+    }
     payload.update(
         {
             "group_id": target_group_id,
+            # A source group's display/session identity must not leak into a
+            # different group merely because its behavior was cloned.
             "group_name": str((existing_target or {}).get("group_name") or ""),
             "session": str((existing_target or {}).get("session") or ""),
         },
@@ -392,13 +443,32 @@ def execute_qq_admin_action(
             _authorise(conn, actor_id)
             if action_type == "qq_group_allowlist_list":
                 current = get_qq_access_settings(conn)
-                groups = [dict(item) for item in current.get("group_allowlist") or [] if item.get("enabled")]
+                groups = [
+                    dict(item)
+                    for item in current.get("group_allowlist") or []
+                    if item.get("enabled")
+                ]
                 group_ids = [str(item.get("group_id") or "") for item in groups if item.get("group_id")]
-                receipt = _receipt(action_type, "completed", "", config_version=int(current["settings"].get("config_version") or 0), group_allowlist_count=len(group_ids), group_ids=group_ids)
+                receipt = _receipt(
+                    action_type,
+                    "completed",
+                    "",
+                    config_version=int(current["settings"].get("config_version") or 0),
+                    group_allowlist_count=len(group_ids),
+                    group_ids=group_ids,
+                )
                 lines = [f"已通过 Bridge 只读查询，当前 QQ 群准入列表共 {len(group_ids)} 个群。"]
-                lines.extend(f"- {group_id}" for group_id in group_ids) if group_ids else lines.append("- 当前没有已启用的准入群。")
+                if group_ids:
+                    lines.extend(f"- {group_id}" for group_id in group_ids)
+                else:
+                    lines.append("- 当前没有已启用的准入群。")
                 lines.append(f"- 配置版本：{receipt['facts']['config_version']}")
-                return {"ok": True, "dispatch": "control_status", "reply": "\n".join(lines), "action_receipts": [receipt]}
+                return {
+                    "ok": True,
+                    "dispatch": "control_status",
+                    "reply": "\n".join(lines),
+                    "action_receipts": [receipt],
+                }
             if action_type in {"qq_group_status_read", "qq_group_diagnose"}:
                 state = _group_access_state(conn, group_id)
                 diagnostic = None
@@ -449,7 +519,10 @@ def execute_qq_admin_action(
             existing_state = _group_access_state(conn, group_id)
             if action_type == "qq_group_policy_clone":
                 existing_entry = next(
-                    (item for item in current.get("group_allowlist") or [] if str(item.get("group_id") or "") == group_id),
+                    (
+                        item for item in current.get("group_allowlist") or []
+                        if str(item.get("group_id") or "") == group_id
+                    ),
                     None,
                 )
                 groups.append({
@@ -457,14 +530,19 @@ def execute_qq_admin_action(
                     "enabled": True,
                     "remark": str((existing_entry or {}).get("remark") or "Owner-approved policy clone"),
                 })
-                if (
+                desired_matches = (
                     existing_state["allowlisted"]
                     and existing_state["group_chat_enabled"]
                     and _policies_match(target_policy, source_policy)
-                ):
+                )
+                if desired_matches:
                     receipt = _receipt(
-                        action_type, "no_op", group_id, source_group_id=source_group_id,
-                        config_version=existing_state["config_version"], policy_aligned=True,
+                        action_type,
+                        "no_op",
+                        group_id,
+                        source_group_id=source_group_id,
+                        config_version=existing_state["config_version"],
+                        policy_aligned=True,
                     )
                     return {
                         "ok": True,
@@ -508,9 +586,15 @@ def execute_qq_admin_action(
                     changed_by=changed_by,
                 )
                 if action_type == "qq_group_policy_clone":
-                    upsert_group_policy(conn, _clone_policy_payload(source_policy, target_policy, group_id))
+                    upsert_group_policy(
+                        conn,
+                        _clone_policy_payload(source_policy, target_policy, group_id),
+                    )
                 else:
-                    upsert_group_policy(conn, _policy_payload(target_policy, group_id, enabled=enable))
+                    upsert_group_policy(
+                        conn,
+                        _policy_payload(target_policy, group_id, enabled=enable),
+                    )
                 state = _group_access_state(conn, group_id)
             except Exception:
                 conn.rollback()

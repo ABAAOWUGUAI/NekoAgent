@@ -7,6 +7,11 @@ import json
 import sqlite3
 
 from bridge_automation_contracts import DEFAULT_OUTPUT_CONTRACT, normalize_output_contract, output_contract_hash
+from bridge_automation_execution_contract import (
+    derive_execution_contract,
+    execution_contract_hash,
+    normalize_execution_contract,
+)
 
 
 def ensure_automation_tables(conn: sqlite3.Connection) -> None:
@@ -22,6 +27,7 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             "SELECT name FROM sqlite_master WHERE type='index'",
         ).fetchall()
     }
+    schema_complete = False
     if {
         "automation_jobs",
         "automation_runs",
@@ -65,12 +71,20 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             }.issubset(policy_columns)
             and "intent" in event_columns
             and {"lease_owner", "lease_until", "attempt_count", "terminal_source", "job_revision", "config_hash", "output_contract_hash"}.issubset(run_columns)
-            and {"parameters_json", "revision", "output_contract_json", "output_contract_hash"}.issubset(job_columns)
+            and {
+                "parameters_json", "revision", "output_contract_json", "output_contract_hash",
+                "execution_contract_json", "execution_contract_hash",
+            }.issubset(job_columns)
             and required_indexes.issubset(indexes)
         ):
-            return
-    conn.executescript(
-        """
+            # Keep the idempotent migration/backfill below active.  A prior
+            # process may have created the new columns while leaving legacy
+            # rows with an empty execution contract.  Do not rerun
+            # executescript in this case: sqlite3 executescript implicitly
+            # commits and would destroy a caller-owned transaction/savepoint.
+            schema_complete = True
+    if not schema_complete:
+        schema_sql = """
         CREATE TABLE IF NOT EXISTS automation_jobs (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -81,6 +95,8 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             revision INTEGER NOT NULL DEFAULT 1,
             output_contract_json TEXT NOT NULL DEFAULT '{}',
             output_contract_hash TEXT NOT NULL DEFAULT '',
+            execution_contract_json TEXT NOT NULL DEFAULT '{}',
+            execution_contract_hash TEXT NOT NULL DEFAULT '',
             schedule_type TEXT NOT NULL,
             run_at TEXT NOT NULL DEFAULT '',
             time_of_day TEXT NOT NULL DEFAULT '09:00',
@@ -120,6 +136,9 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             job_revision INTEGER NOT NULL DEFAULT 0,
             config_hash TEXT NOT NULL DEFAULT '',
             output_contract_hash TEXT NOT NULL DEFAULT '',
+            capability_id TEXT NOT NULL DEFAULT '',
+            execution_contract_hash TEXT NOT NULL DEFAULT '',
+            failure_stage TEXT NOT NULL DEFAULT '',
             UNIQUE(job_id, scheduled_for),
             FOREIGN KEY(job_id) REFERENCES automation_jobs(id)
         );
@@ -211,7 +230,13 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_proactive_events_delivery
         ON proactive_events(delivery_id);
         """
-    )
+        if conn.in_transaction:
+            for statement in schema_sql.split(";"):
+                statement = statement.strip()
+                if statement:
+                    conn.execute(statement)
+        else:
+            conn.executescript(schema_sql)
     policy_columns = {
         row[1]
         for row in conn.execute(
@@ -251,6 +276,9 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
         ("job_revision", "INTEGER NOT NULL DEFAULT 0"),
         ("config_hash", "TEXT NOT NULL DEFAULT ''"),
         ("output_contract_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("capability_id", "TEXT NOT NULL DEFAULT ''"),
+        ("execution_contract_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("failure_stage", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in run_columns:
             conn.execute(f"ALTER TABLE automation_runs ADD COLUMN {name} {definition}")
@@ -263,6 +291,8 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
         ("revision", "INTEGER NOT NULL DEFAULT 1"),
         ("output_contract_json", "TEXT NOT NULL DEFAULT '{}'"),
         ("output_contract_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("execution_contract_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("execution_contract_hash", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in job_columns:
             conn.execute(f"ALTER TABLE automation_jobs ADD COLUMN {name} {definition}")
@@ -276,6 +306,50 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
                output_contract_hash=CASE WHEN output_contract_hash='' THEN ? ELSE output_contract_hash END""",
         (contract_json, output_contract_hash(contract)),
     )
+    legacy_rows = conn.execute(
+        """SELECT id,action_type,instruction,parameters_json
+           FROM automation_jobs
+           WHERE execution_contract_json='' OR execution_contract_json='{}'""",
+    ).fetchall()
+    for row in legacy_rows:
+        try:
+            parameters = json.loads(str(row[3] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parameters = {}
+        try:
+            execution_contract = normalize_execution_contract(
+                derive_execution_contract(
+                    str(row[2] or ""),
+                    parameters if isinstance(parameters, dict) else {},
+                    action_type=str(row[1] or "agent"),
+                ),
+            )
+        except (TypeError, ValueError):
+            execution_contract = {
+                "schema_version": 1,
+                "capability_id": None,
+                "arguments": {},
+                "status": "needs_clarification",
+                "missing_inputs": ["execution_contract"],
+                "network_required": False,
+                "output_kind": "agent_task",
+            }
+        execution_json = json.dumps(execution_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if execution_contract.get("status") == "ready":
+            conn.execute(
+                """UPDATE automation_jobs
+                   SET execution_contract_json=?,execution_contract_hash=?
+                   WHERE id=? AND (execution_contract_json='' OR execution_contract_json='{}')""",
+                (execution_json, execution_contract_hash(execution_contract), str(row[0])),
+            )
+        else:
+            conn.execute(
+                """UPDATE automation_jobs
+                   SET execution_contract_json=?,execution_contract_hash=?,
+                       enabled=0,state='disabled',next_due_at=''
+                   WHERE id=? AND (execution_contract_json='' OR execution_contract_json='{}')""",
+                (execution_json, execution_contract_hash(execution_contract), str(row[0])),
+            )
 
 
 __all__ = ["ensure_automation_tables"]

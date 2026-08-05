@@ -76,12 +76,12 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
     ActionDefinition(
         "qq_group_status_read", "ops", "qq.group.status.read",
         "", "low", False, True, "owner_private",
-        "result", "Read one QQ group status from the owning domain.",
+        "result", "Read one QQ group access and participation status.",
     ),
     ActionDefinition(
         "qq_group_diagnose", "ops", "qq.group.diagnose",
-        "", "medium", True, True, "owner_private",
-        "result", "Diagnose a QQ group through the owning domain.",
+        "", "low", False, True, "owner_private",
+        "result", "Read bounded QQ group diagnostic metadata.",
     ),
     ActionDefinition(
         "action.followup.verify", "ops", "action.followup.verify",

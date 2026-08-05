@@ -106,6 +106,27 @@ from bridge_business_health import BusinessHealthService
 from bridge_executor_health import probe_executor
 from bridge_server_status import build_server_status
 from bridge_worker_health import WorkerHealthRegistry
+from bridge_runtime_text_utils import (
+    codex_failure_diagnosis as _codex_failure_diagnosis_impl,
+    extract_codex_last_message as _extract_codex_last_message_impl,
+    human_bytes as _human_bytes_impl,
+    last_index as _last_index_impl,
+    read_meminfo as _read_meminfo_impl,
+    recent_matching_lines as _recent_matching_lines_impl,
+    safe_log_text as _safe_log_text_impl,
+    sanitize_log_text as _sanitize_log_text_impl,
+    strip_ansi as _strip_ansi_impl,
+    trim_output as _trim_output_impl,
+)
+from bridge_runtime_data_mappers import (
+    clip_text as _clip_text_impl,
+    compact_projection as _compact_projection_impl,
+    memory_from_row as _memory_from_row_impl,
+    mode_session_from_row as _mode_session_from_row_impl,
+    qq_event_from_row as _qq_event_from_row_impl,
+    quality_event_from_row as _quality_event_from_row_impl,
+    slugify as _slugify_impl,
+)
 from bridge_gate8_http import Gate8HttpApi
 from bridge_social_virtual_http import SocialVirtualHttpApi
 from bridge_qq_access_http import QqAccessHttpApi
@@ -144,8 +165,9 @@ from bridge_qq_participation_shadow import complete_group_dispatch,finalize_grou
 from bridge_inbound_media import inbound_media_notice, inbound_media_retry_notice
 from bridge_conversation_model_runtime import run_conversation_model_reply
 import bridge_visual_context as visual
+from bridge_group_media_context import prepare_group_visual_context, project_group_visual_context
 from bridge_group_direct_dispatch import apply_group_work_boundary, dispatch_group_control_action, prepare_direct_group_turn, run_admitted_group_turn
-from bridge_group_context_frame import DEFAULT_GROUP_CONTEXT_LIMIT, group_model_history
+from bridge_group_context_frame import DEFAULT_GROUP_CONTEXT_LIMIT
 from bridge_task_dispatch_policy import active_qq_task, dispatch_sandbox as _dispatch_sandbox, dispatch_timeout as _dispatch_timeout, new_task_requested as _new_task_requested, pending_messages as _pending_messages, should_dispatch_as_task as _should_dispatch_as_task
 from bridge_group_participation_policy import natural_group_cutover_plan
 from bridge_group_participation_http import GroupParticipationHttpApi
@@ -218,6 +240,7 @@ from bridge_social_engine import (
     voice_contract_lines,
     expression_plan_lines,
 )
+from bridge_prompt_cache_contract import build_conversation_messages, build_work_cache_layers, with_conversation_cache_contract, with_role_cache_contract
 from bridge_group_participation_policy import group_participation_confidence_floor
 from bridge_capability_registry import (
     build_skill_context,
@@ -231,6 +254,7 @@ from bridge_capability_registry import (
     set_plugin_enabled as set_capability_plugin_enabled,
     set_skill_enabled,
     upsert_skill,
+    validate_skill_contract,
 )
 from bridge_capabilities import CapabilityCatalog, get_fixed_capability, list_fixed_capabilities
 from bridge_plugin_marketplace import (
@@ -276,6 +300,11 @@ from bridge_automation import (
     upsert_proactive_policy,
 )
 from bridge_automation_actions import dispatch_automation_action
+from bridge_automation_execution_contract import (
+    derive_execution_contract,
+    normalize_execution_contract,
+)
+from bridge_automation_capability_runtime import execute_automation_capability
 from bridge_automation_reference_runtime import (
     github_purpose_summaries,
     prepare_github_delivery_payload,
@@ -284,6 +313,7 @@ from bridge_automation_reference_runtime import (
 from bridge_automation_execution import (
     automation_thread_ref as _automation_thread_ref,
     build_skill_execution_contract as _build_skill_execution_contract,
+    classify_automation_failure as _classify_automation_failure,
     is_permanent_error as _automation_error_is_permanent,
     notify_failure as _notify_automation_failure_impl,
     preflight as _automation_preflight,
@@ -303,7 +333,7 @@ from bridge_task_query import (
     list_tasks as query_tasks,
     load_active_and_recent,
 )
-from bridge_light_executor import LightExecutor, github_arguments_from_text
+from bridge_light_executor import LightExecutor
 from bridge_platform_repository import PlatformRepository, ensure_platform_schema
 from bridge_model_registry import (
     bind_model_role,
@@ -312,12 +342,12 @@ from bridge_model_registry import (
     list_role_change_log,
     provider_test_settings,
     record_provider_test,
-    runtime_settings_for_role,
     seed_model_registry,
     upsert_model,
     upsert_provider,
 )
 from bridge_model_discovery import discover_provider_models, discovered_model_validation_settings
+from bridge_model_role_runtime import runtime_settings_for_role_safe
 from bridge_model_probe_log import list_proxy_probe_log, record_proxy_probe
 from bridge_executor_runtime import (
     codex_exec_args as _codex_exec_args,
@@ -778,11 +808,9 @@ def _clear_admin_session(handler: http.server.BaseHTTPRequestHandler) -> str:
             ADMIN_SESSIONS.pop(session_id, None)
     return _cookie_header(ADMIN_SESSION_COOKIE, "", max_age=0)
 
-
 def _clear_all_admin_sessions() -> None:
     with ADMIN_SESSION_LOCK:
         ADMIN_SESSIONS.clear()
-
 
 def _has_admin_session(handler: http.server.BaseHTTPRequestHandler) -> bool:
     session_id = _read_cookie(handler, ADMIN_SESSION_COOKIE)
@@ -796,7 +824,6 @@ def _has_admin_session(handler: http.server.BaseHTTPRequestHandler) -> bool:
             return False
         ADMIN_SESSIONS[session_id] = now + ADMIN_SESSION_TTL
         return True
-
 
 def _recent_login_failures(client_ip: str, now: float | None = None) -> list[float]:
     now = now or time.time()
@@ -919,9 +946,7 @@ def _backfill_phase2_state() -> dict:
 
 
 def _compact_projection(item: dict, fields: tuple[str, ...]) -> dict:
-    """Keep overview payloads small and prevent prompts/results leaking into list views."""
-
-    return {field: item.get(field) for field in fields if item.get(field) not in (None, "")}
+    return _compact_projection_impl(item, fields)
 
 
 def _execution_snapshot(limit: int = 20, *, detailed: bool = False) -> dict:
@@ -1081,8 +1106,6 @@ def _legacy_phase2_delivery_marker(task_id: str, status: str, error: str = "") -
     if status in {"sent", "skipped"}:
         if token and delivery.get("state") == "leased":
             return _phase2_outbox().ack(str(delivery.get("id") or ""), token)
-        # The legacy watcher may have sent the message without claiming first.
-        # Its authenticated callback is the delivery receipt in this path.
         now = _utc_now()
         with _db_connect() as conn:
             conn.execute(
@@ -1218,12 +1241,7 @@ def _assistant_db_connect() -> sqlite3.Connection:
 
 
 def _slugify(value: str, fallback: str = "project") -> str:
-    value = (value or "").strip().lower()
-    slug = re.sub(r"[^a-z0-9._-]+", "-", value).strip("-._")
-    if slug:
-        return slug[:48]
-    digest = hashlib.sha1(value.encode("utf-8", "ignore")).hexdigest()[:8]
-    return f"{fallback}-{digest}"
+    return _slugify_impl(value, fallback)
 
 
 def _init_assistant_db() -> None:
@@ -1231,6 +1249,12 @@ def _init_assistant_db() -> None:
         with _assistant_db_connect() as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
+            # ``group_policies`` is an existing legacy fact source.  Bootstrap
+            # its additive columns before validating a registered database so
+            # an older installation can pass the fail-closed schema audit.
+            # The full social bootstrap remains below with the other legacy
+            # tables and is idempotent.
+            ensure_social_experience_tables(conn)
             am.validate_registered_assistant_core(conn)
             conn.execute(
                 """
@@ -1351,7 +1375,6 @@ def _init_assistant_db() -> None:
             ensure_social_tables(conn)
             ensure_meme_discovery_tables(conn)
             ensure_automation_tables(conn)
-            ensure_social_experience_tables(conn)
             ensure_capability_tables(conn)
             ensure_plugin_market_tables(conn)
             ensure_model_registry_tables(conn)
@@ -1636,8 +1659,6 @@ def _assistant_settings(*, include_secrets: bool = False) -> dict:
                 settings[row["key"]] = row["value"]
             settings = assistant_identity.identity_overlay_settings(conn, settings)
     except sqlite3.Error:
-        # Never impersonate a configured Assistant when its authoritative
-        # Persona Version cannot be read.  Keep only neutral, factual behavior.
         settings = _neutral_assistant_settings("assistant_settings_unavailable")
     except ValueError as exc:
         known_identity_failures = {
@@ -1664,14 +1685,9 @@ def _assistant_settings(*, include_secrets: bool = False) -> dict:
 
 
 def _settings_for_model_role(role: str, fallback_settings: dict | None = None) -> dict:
-    settings = dict(fallback_settings or _assistant_settings(include_secrets=True))
-    try:
-        with _assistant_db_connect() as conn:
-            return runtime_settings_for_role(conn, role, settings)
-    except (sqlite3.Error, ValueError):
-        settings["model_role"] = role
-        settings["model_registry_fallback"] = True
-        return settings
+    return with_role_cache_contract(runtime_settings_for_role_safe(
+        _assistant_db_connect, role, fallback_settings or _assistant_settings(include_secrets=True),
+    ), role=role)
 
 
 def _resolve_executor_snapshot() -> dict:
@@ -1976,17 +1992,7 @@ def _update_admin_appearance(payload: dict) -> dict:
 
 
 def _memory_from_row(row: sqlite3.Row) -> dict:
-    return {
-        "id": row["id"],
-        "user_id": row["user_id"],
-        "kind": row["kind"],
-        "content": row["content"],
-        "source": row["source"],
-        "score": row["score"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-        "last_used_at": row["last_used_at"],
-    }
+    return _memory_from_row_impl(row)
 
 
 def _add_memory(
@@ -2022,25 +2028,11 @@ def _delete_memory(memory_id: str, user_id: str | None = None) -> bool:
 
 
 def _clip_text(value: object, limit: int = 800) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 3)] + "..."
+    return _clip_text_impl(value, limit)
 
 
 def _qq_event_from_row(row: sqlite3.Row) -> dict:
-    return {
-        "id": row["id"],
-        "trace_id": row["trace_id"],
-        "user_id": row["user_id"],
-        "stage": row["stage"],
-        "action": row["action"],
-        "status": row["status"],
-        "task_id": row["task_id"],
-        "message": row["message"],
-        "detail": row["detail"],
-        "created_at": row["created_at"],
-    }
+    return _qq_event_from_row_impl(row)
 
 
 def _record_qq_event(payload: dict) -> dict:
@@ -2092,29 +2084,7 @@ def _list_qq_events(user_id: str = "", trace_id: str = "", limit: int = 30) -> l
 
 
 def _quality_event_from_row(row: sqlite3.Row) -> dict:
-    try:
-        checks = json.loads(row["checks"] or "{}")
-    except json.JSONDecodeError:
-        checks = {}
-    try:
-        issues = json.loads(row["issues"] or "[]")
-    except json.JSONDecodeError:
-        issues = []
-    return {
-        "id": row["id"],
-        "user_id": row["user_id"],
-        "intent": row["intent"],
-        "provider": row["provider"],
-        "request": row["request"],
-        "response": row["response"],
-        "checks": checks,
-        "status": row["status"],
-        "issues": issues,
-        "tool": row["tool"],
-        "fallback": bool(row["fallback"]),
-        "duration": row["duration"],
-        "created_at": row["created_at"],
-    }
+    return _quality_event_from_row_impl(row)
 
 
 def _record_quality_event(
@@ -2191,22 +2161,7 @@ def _list_quality_events(user_id: str = "", status: str = "", limit: int = 20) -
 
 
 def _mode_session_from_row(row: sqlite3.Row | None) -> dict | None:
-    if not row:
-        return None
-    return {
-        "user_id": row["user_id"],
-        "mode": row["mode"],
-        "intent": row["intent"],
-        "confidence": row["confidence"],
-        "reason": row["reason"],
-        "source": row["source"],
-        "work_lifecycle": row["work_lifecycle"],
-        "turn_count": row["turn_count"],
-        "work_turns": row["work_turns"],
-        "expires_at": row["expires_at"],
-        "ended_reason": row["ended_reason"],
-        "updated_at": row["updated_at"],
-    }
+    return _mode_session_from_row_impl(row)
 
 
 def _get_mode_session(user_id: str) -> dict | None:
@@ -2570,42 +2525,18 @@ def _format_assistant_system_prompt(
     )
 
 
-def _assistant_chat_messages(
-    settings: dict,
-    user_id: str,
-    message: str,
-    memories: list[dict],
-    history: list[dict],
-    intent: str = "chat",
-    criteria: list[str] | None = None,
-    policy: dict | None = None,
-    mode_decision: dict | None = None,
-    social_context: dict | None = None,
-    attachment_context: dict | None = None,
-) -> list[dict]:
-    messages = [
-        {
-            "role": "system",
-            "content": _format_assistant_system_prompt(
-                settings,
-                memories,
-                intent=intent,
-                criteria=criteria,
-                policy=policy,
-                mode_decision=mode_decision,
-                social_context=social_context,
-                attachment_context=attachment_context,
-            ),
-        },
-    ]
-    for item in history[-ASSISTANT_HISTORY_LIMIT:]:
-        role = str(item.get("role") or "")
-        role = role if role in {"assistant", "system"} else "user"
-        content = str(item.get("content") or "").strip()
-        if content:
-            messages.append({"role": role, "content": content[-4000:]})
-    messages.append({"role": "user", "content": message})
-    return messages
+def _assistant_chat_messages(settings, user_id, message, memories, history, intent="chat", criteria=None,
+                             policy=None, mode_decision=None, social_context=None, attachment_context=None):
+    resolved_policy = policy or _agent_policy(settings)
+    return build_conversation_messages(
+        settings, message, memories, history, mode_decision=mode_decision, social_context=social_context,
+        attachment_context=attachment_context, history_limit=ASSISTANT_HISTORY_LIMIT,
+        build_work_layers=lambda: build_work_cache_layers(
+            _assistant_identity_prompt_lines(settings, social_context), mode_policy_lines(mode_decision or {}, resolved_policy),
+            _intent_label(intent), criteria or _acceptance_criteria(intent, "", resolved_policy, mode_decision or {}),
+            _current_project() or {}, [f"- {item['content']}" for item in memories] or ["- 暂无相关长期记忆。"], attachment_capability_lines(attachment_context),
+        ),
+    )
 
 
 def _chat_completion_url(base_url: str) -> str:
@@ -2669,7 +2600,6 @@ def _record_model_call(
                 trace_id=trace_id,
             )
     except sqlite3.Error:
-        # Observability must never turn a successful user reply into a failure.
         return
 
 
@@ -2811,26 +2741,11 @@ def _assistant_provider_test(timeout: int = 45, payload: dict | None = None) -> 
 
 
 def _strip_ansi(text: str) -> str:
-    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", str(text or ""))
+    return _strip_ansi_impl(text)
 
 
 def _extract_codex_last_message(text: str) -> str:
-    clean = _strip_ansi(text).replace("\r\n", "\n").strip()
-    if not clean:
-        return ""
-    lines = [line.rstrip() for line in clean.splitlines()]
-    token_indexes = [idx for idx, line in enumerate(lines) if line.strip().lower() == "tokens used"]
-    end = token_indexes[-1] if token_indexes else len(lines)
-    codex_indexes = [idx for idx, line in enumerate(lines[:end]) if line.strip().lower() == "codex"]
-    if codex_indexes:
-        start = codex_indexes[-1] + 1
-        block = [line for line in lines[start:end] if line.strip()]
-        if block:
-            return "\n".join(block).strip()
-    marker = "Reading prompt from stdin..."
-    if marker in clean:
-        return clean.split(marker, 1)[0].strip()
-    return clean
+    return _extract_codex_last_message_impl(text, strip_ansi_fn=_strip_ansi)
 
 
 def _run_codex_assistant_chat(
@@ -3116,6 +3031,7 @@ def _assistant_chat(
     )
     runtime_role = "conversation_reply" if str(mode_decision.get("mode") or "daily") != "work" else "work_planner"
     chat_settings = _settings_for_model_role(runtime_role, settings)
+    chat_settings = with_conversation_cache_contract(chat_settings, group=bool(context.get("group")), work=runtime_role == "work_planner")
     attachment_settings = dict(settings)
     attachment_policy = dict(policy)
     persona_meme_policy = str(
@@ -3142,11 +3058,12 @@ def _assistant_chat(
                            _call_openai_compatible_chat, _record_model_call),
     )
     provider = str(chat_settings.get("chat_provider") or "codex")
-    result = run_conversation_model_reply(
+    result, cache_replay_metadata = run_conversation_model_reply(
         provider, chat_settings, user_id, display_message, memories, history,
         intent=intent, criteria=criteria, policy=policy, mode_decision=mode_decision,
         social_context=social_context, attachment_context=attachment_context,
-        timeout=timeout, build_messages=_assistant_chat_messages,
+        timeout=timeout,
+        build_messages=_assistant_chat_messages,
         format_prompt=_format_assistant_prompt, call_model=_call_openai_compatible_chat,
         record_model=_record_model_call, run_codex=_run_codex_assistant_chat,
         cwd=_default_cwd(),
@@ -3154,7 +3071,16 @@ def _assistant_chat(
     _record_model_call(chat_settings, result, source="assistant_chat", user_id=user_id)
     reply = (result.get("reply") or result.get("output") or "").strip()
     if str(mode_decision.get("mode") or "daily") != "work":
-        reply = normalize_social_reply(reply, group=bool(context.get("group")), request=raw_message)
+        expression_plan = social_context.get("expression_plan") if isinstance(social_context, dict) else None
+        max_group_sentences = None
+        if context.get("group") and isinstance(expression_plan, dict):
+            max_group_sentences = expression_plan.get("sentence_limit")
+        reply = normalize_social_reply(
+            reply,
+            group=bool(context.get("group")),
+            request=raw_message,
+            max_sentences=max_group_sentences,
+        )
     reply, action_truth_guarded = enforce_action_truth(
         reply,
         result.get("action_receipts") if isinstance(result.get("action_receipts"), list) else None,
@@ -3181,6 +3107,14 @@ def _assistant_chat(
         policy=policy,
         mode_decision=mode_decision,
     )
+    if context.get("group"):
+        quality.update({
+            "group_style_gate": result.get("group_style_gate") or "provider_failed",
+            "group_style_retry_attempted": bool(result.get("group_style_retry_attempted")),
+            "group_style_initial_issues": list(result.get("group_style_initial_issues") or []),
+            "group_style_final_issues": list(result.get("group_style_final_issues") or []),
+            "social_action": str((mode_decision or {}).get("social_action") or "silent"),
+        })
     quality_event = None
     saved = []
     if result.get("ok") and reply:
@@ -3201,6 +3135,7 @@ def _assistant_chat(
                 reply,
                 mode_decision,
                 source=request_source, inbound_context=context.get("inbound_context"),
+                exchange_metadata=cache_replay_metadata,
             )
     if policy.get("quality_log_enabled"):
         quality_event = _record_quality_event(
@@ -3391,70 +3326,11 @@ def _ensure_codegraph(cwd: Path, *, phase: str, force: bool = False) -> dict:
 
 
 def _trim_output(text: str) -> str:
-    if len(text) > MAX_OUTPUT_CHARS:
-        return text[-MAX_OUTPUT_CHARS:]
-    return text
+    return _trim_output_impl(text, MAX_OUTPUT_CHARS)
 
 
 def _codex_failure_diagnosis(returncode: int | None, output: str) -> tuple[str, str]:
-    if returncode == 0:
-        return "", ""
-
-    raw = (output or "").strip()
-    lowered = raw.lower()
-    markers = {
-        "quota": (
-            "insufficient_quota",
-            "usage limit",
-            "rate_limit_exceeded",
-            "rate limit",
-            "too many requests",
-            "quota",
-            "billing",
-            "credit balance",
-            "429",
-        ),
-        "auth": (
-            "not logged in",
-            "unauthorized",
-            "authentication",
-            "authenticate",
-            "login required",
-            "device auth",
-            "401",
-            "403",
-            "forbidden",
-        ),
-        "network": (
-            "connection timed out",
-            "timed out",
-            "timeout",
-            "ssl",
-            "tls",
-            "unexpected eof",
-            "connection reset",
-            "proxy",
-            "dns",
-            "network",
-        ),
-    }
-    for kind, words in markers.items():
-        if any(word in lowered for word in words):
-            break
-    else:
-        kind = "empty" if not raw else "codex_failed"
-
-    explanations = {
-        "quota": "Codex failed: account quota, billing, or rate limit appears to be exhausted.",
-        "auth": "Codex failed: authentication appears to be missing or expired.",
-        "network": "Codex failed: network or proxy connection failed.",
-        "empty": f"Codex failed with exit code {returncode}, but produced no output.",
-        "codex_failed": f"Codex failed with exit code {returncode}.",
-    }
-    message = explanations[kind]
-    if raw:
-        message += "\n\nRaw Codex output:\n" + raw
-    return kind, _trim_output(message)
+    return _codex_failure_diagnosis_impl(returncode, output, trim_output_fn=_trim_output)
 
 
 def _run_command(
@@ -3653,12 +3529,10 @@ def _run_codex_for_task(task: dict) -> dict:
         stdout = stdout or ""
         stderr = stderr or ""
 
-        # 代理路径：解析 JSONL
         if adapter in {"codex_custom_provider", "deepseek_proxy"}:
             parsed = _parse_codex_jsonl(stdout)
             result = _finalize_codex_result(proc, parsed, started)
         else:
-            # 原生路径：保持现有流程
             combined_output = _trim_output(stdout + stderr)
             clean_stdout = _trim_output(stdout)
             error_kind, error = _codex_failure_diagnosis(proc.returncode, combined_output)
@@ -4298,68 +4172,128 @@ def _run_automation_job(job: dict) -> dict:
         )
         return {"status": "dispatched", "dispatch": "reminder", "delivery_id": delivery.get("id") or ""}
 
+    raw_contract_text = str(job.get("execution_contract_json") or "").strip()
+    if raw_contract_text and raw_contract_text != "{}":
+        try:
+            raw_contract = json.loads(raw_contract_text)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("automation_execution_contract_invalid") from exc
+        if not isinstance(raw_contract, dict):
+            raise RuntimeError("automation_execution_contract_invalid")
+    else:
+        # Only an absent/legacy-empty field may be derived.  A non-empty
+        # malformed persisted contract is an admission failure, never a hint
+        # to infer another Action from the instruction.
+        try:
+            parameters = json.loads(str(job.get("parameters_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parameters = {}
+        raw_contract = derive_execution_contract(
+            str(job.get("instruction") or ""),
+            parameters if isinstance(parameters, dict) else {},
+            action_type=str(job.get("action_type") or "agent"),
+        )
+    try:
+        execution_contract = normalize_execution_contract(raw_contract)
+    except (TypeError, ValueError, OverflowError, UnicodeError, RecursionError) as exc:
+        # Persisted contracts are an execution boundary.  A schema-invalid
+        # value must stop here rather than being reinterpreted as another
+        # Action or reaching Skill/Capability/Task/Delivery.
+        raise RuntimeError("automation_execution_contract_invalid") from exc
+    if execution_contract.get("status") != "ready":
+        raise RuntimeError("automation_execution_contract_needs_clarification")
+    capability_id = str(execution_contract.get("capability_id") or "").strip()
+    allowed_capabilities = (capability_id,) if capability_id else ()
     skill_context = ""
     skill_plan = {"status": "unavailable"}
     with _assistant_db_connect() as conn:
         skill_plan = discover_skill_plan(
             conn,
             message=str(job.get("instruction") or ""),
-            intent="research" if str(job.get("action_type") or "") == "agent" else "automation",
+            intent="research" if capability_id == "github.trending.read" else "automation",
             capability_ids=PHASE2_CAPABILITY_CATALOG.ids(),
+            allowed_capability_ids=allowed_capabilities,
         )
         if skill_plan.get("status") == "missing_capability":
             raise RuntimeError("automation_skill_capability_missing")
+        if skill_plan.get("status") == "skill_contract_mismatch":
+            raise RuntimeError("automation_skill_contract_mismatch")
         skill_context = str(skill_plan.get("context") or "")
-    if skill_plan.get("status") != "ready":
+    if skill_plan.get("status") not in {"ready", "no_match"}:
         raise RuntimeError("automation_skill_not_resolved")
-    execution_contract = _build_skill_execution_contract(skill_plan)
-
-    # Research schedules must use the fixed, evidence-producing capability
-    # directly.  They must never fall back to a model's training knowledge when
-    # the live source is unavailable.
-    if "github.trending.read" in execution_contract.capability_ids:
-        github_arguments = github_arguments_from_text(
-            f"{job.get('title') or ''}\n{job.get('instruction') or ''}",
+    if skill_plan.get("selected_skills"):
+        skill_contract_check = validate_skill_contract(
+            {"capability_id": capability_id},
+            skill_plan,
         )
-        try:
-            automation_parameters = json.loads(str(job.get("parameters_json") or "{}"))
-        except json.JSONDecodeError:
-            automation_parameters = {}
-        if isinstance(automation_parameters, dict) and automation_parameters.get("output_language") == "zh-CN":
-            github_arguments["output_language"] = "zh-CN"
-        with _assistant_db_connect() as conn:
-            github_arguments["exclude_repos"] = list_automation_seen_items(
-                conn,
-                str(job.get("id") or ""),
-            )
-        light_result = LightExecutor(
+        if not skill_contract_check.get("ok"):
+            raise RuntimeError("automation_skill_contract_mismatch")
+    skill_execution_contract = _build_skill_execution_contract(skill_plan)
+
+    light_capabilities = {
+        "weather.forecast.read",
+        "clock.current.read",
+        "github.trending.read",
+    }
+    if capability_id in light_capabilities:
+        light_executor = LightExecutor(
             catalog=PHASE2_CAPABILITY_CATALOG,
             github_handler=_light_github_handler,
-        ).execute_capability("github.trending.read", github_arguments)
-        if light_result.get("status") != "completed" or light_result.get("fallback"):
-            raise RuntimeError("github_trending_authoritative_source_unavailable")
-        output = light_result.get("output") if isinstance(light_result.get("output"), dict) else {}
-        items = output.get("items") if isinstance(output.get("items"), list) else []
-        summaries = _automation_github_purpose_summaries(job, items)
-        payload = prepare_github_delivery_payload(
-            job, light_result, github_arguments, summaries,
-            assistant_connect=_assistant_db_connect, reserve_items=reserve_automation_items,
         )
-        payload["skill_ids"] = list(execution_contract.skill_ids)
-        delivery = _phase2_outbox().enqueue(
-            dedupe_key=f"qq:automation:{job['id']}:{job['scheduled_for']}",
-            channel="qq",
-            destination=str(job.get("user_id") or ""),
-            payload=payload,
-            max_attempts=100,
-            thread_ref=_automation_thread_ref(job),
-            delivery_class="operational",
+        argument_overrides: dict[str, object] = {}
+        if capability_id == "github.trending.read":
+            with _assistant_db_connect() as conn:
+                argument_overrides["exclude_repos"] = list_automation_seen_items(
+                    conn,
+                    str(job.get("id") or ""),
+                )
+
+        def build_capability_payload(
+            light_result: dict,
+            dispatch_contract: dict,
+            _job: dict,
+        ) -> dict:
+            if capability_id == "github.trending.read":
+                output = light_result.get("output") if isinstance(light_result.get("output"), dict) else {}
+                items = output.get("items") if isinstance(output.get("items"), list) else []
+                summaries = _automation_github_purpose_summaries(job, items)
+                effective_github_arguments = dict(dispatch_contract.get("arguments") or {})
+                payload = prepare_github_delivery_payload(
+                    job,
+                    light_result,
+                    effective_github_arguments,
+                    summaries,
+                    assistant_connect=_assistant_db_connect,
+                    reserve_items=reserve_automation_items,
+                )
+                payload["skill_ids"] = list(skill_execution_contract.skill_ids)
+                return payload
+            content = _format_light_result(dict(light_result))
+            if not content:
+                raise RuntimeError("automation_evidence_or_presentation_missing")
+            return {
+                "kind": "automation_result",
+                "content": content,
+                "job_revision": int(job.get("revision") or job.get("job_revision") or 1),
+                "skill_ids": list(skill_execution_contract.skill_ids),
+            }
+
+        result = execute_automation_capability(
+            job,
+            execution_contract,
+            executor=light_executor,
+            enqueue=_phase2_outbox().enqueue,
+            build_payload=build_capability_payload,
+            argument_overrides=argument_overrides or None,
         )
-        _phase2_outbox().supersede_pending_dedupe_prefix(
-            dedupe_prefix=f"qq:automation-failure:{job['id']}:",
-            superseded_by=str(delivery.get("id") or ""),
-        )
-        return {"status": "dispatched", "dispatch": "capability", "delivery_id": delivery.get("id") or ""}
+        if result.get("status") != "dispatched":
+            raise RuntimeError(str(result.get("error") or "automation_capability_failed"))
+        if capability_id == "github.trending.read":
+            _phase2_outbox().supersede_pending_dedupe_prefix(
+                dedupe_prefix=f"qq:automation-failure:{job['id']}:",
+                superseded_by=str(result.get("delivery_id") or ""),
+            )
+        return result
 
     preflight = _automation_execution_preflight(job)
     if not preflight.get("ok"):
@@ -4372,7 +4306,7 @@ def _run_automation_job(job: dict) -> dict:
             "请完成下面的目标，按项目规则验证结果；不要声称用户此刻在线，也不要主动扩大权限。",
             "",
             f"Skill discovery status: {skill_plan.get('status') or 'unknown'}",
-            f"Skill execution contract: {json.dumps(execution_contract.to_dict(), ensure_ascii=False, sort_keys=True)}",
+            f"Skill execution contract: {json.dumps(skill_execution_contract.to_dict(), ensure_ascii=False, sort_keys=True)}",
             skill_context,
             str(job.get("instruction") or "").strip(),
             f"结构化约束：{job.get('parameters_json') or '{}'}",
@@ -4400,27 +4334,48 @@ def _process_automation_jobs() -> None:
     for job in jobs:
         try:
             result = _run_automation_job(job)
+            result_status = str(result.get("status") or "dispatched")
+            if result_status == "failed":
+                classified = _classify_automation_failure(
+                    result.get("error_code") or result.get("error") or "automation_execution_failed",
+                    stage=str(result.get("failure_stage") or ""),
+                )
+                with _assistant_db_connect() as conn:
+                    finish_automation_run(
+                        conn,
+                        job,
+                        status="failed",
+                        error=classified["error_code"],
+                        failure_stage=classified["stage"],
+                        retryable=classified["retryable"],
+                    )
+                try:
+                    _notify_automation_failure(job, classified)
+                except Exception:
+                    pass
+                continue
             with _assistant_db_connect() as conn:
                 finish_automation_run(
                     conn,
                     job,
-                    status=str(result.get("status") or "dispatched"),
+                    status=result_status,
                     dispatch=str(result.get("dispatch") or ""),
                     task_id=str(result.get("task_id") or ""),
                     delivery_id=str(result.get("delivery_id") or ""),
                 )
         except Exception as exc:
-            error = str(exc)
+            classified = _classify_automation_failure(exc)
             with _assistant_db_connect() as conn:
                 finish_automation_run(
                     conn,
                     job,
                     status="failed",
-                    error=error,
-                    retryable=not _automation_error_is_permanent(error),
+                    error=classified["error_code"],
+                    failure_stage=classified["stage"],
+                    retryable=classified["retryable"],
                 )
             try:
-                _notify_automation_failure(job, error)
+                _notify_automation_failure(job, classified)
             except Exception:
                 pass
 
@@ -5102,7 +5057,6 @@ def _assistant_dispatch_impl(
     })
     if action_followup is not None:
         return action_followup
-
     settings = _assistant_settings(include_secrets=True)
     visual_context = visual.prepare(inbound_context, "qq_private", user_id, inbound_context.get("_external_message_id") or trace_id, message, settings)
     media_retry = inbound_media_retry_notice(
@@ -5402,8 +5356,6 @@ def _assistant_dispatch_impl(
             network_mode=network_mode,
         )
     except (RuntimeError, ValueError) as exc:
-        # A fail-closed executor policy is an expected product outcome, not a
-        # Bridge fault.  Never return the rejected filesystem path to QQ.
         error_kind = str(exc).split(":", 1)[0] or type(exc).__name__
         reply = _user_error_message(error_kind)
         return {
@@ -5499,7 +5451,6 @@ def _assistant_group_dispatch(
             ),
         )
     fallback_settings = _assistant_settings(include_secrets=True)
-    visual_context = visual.prepare(payload, "qq_group", group_id, payload.get("_external_message_id") or payload.get("trace_id"), message, fallback_settings)
     with _assistant_db_connect() as conn:
         capture_owner_group_expression_candidate(
             conn,
@@ -5521,8 +5472,6 @@ def _assistant_group_dispatch(
         prepared["policy"], prepared["current"], prepared["context"], prepared["event"])
     deterministic_decision = prepared.get("deterministic_decision")
     conversation_frame = prepared.get("conversation_frame") or {}
-    current = visual.current(current, visual_context)
-
     if deterministic_decision is not None:
         classifier_settings = {}
         decision = {
@@ -5562,9 +5511,6 @@ def _assistant_group_dispatch(
         _record_model_call(classifier_settings, classifier_result, source="group_engagement", user_id=f"group:{group_id}")
         raw_decision = classifier_result.get("reply") or classifier_result.get("output") or ""
         decision = parse_group_decision(raw_decision, is_mention=False)
-        # Semantic context can exclude expired transient bodies.  Rhythm must
-        # instead use actual chronological metadata so old assistant messages
-        # cannot be promoted into the latest eight turns.
         with _assistant_db_connect() as conn:
             rhythm_history = group_recent_turn_metadata(conn, group_id, 8)
         decision = apply_group_turn_policy(
@@ -5583,6 +5529,15 @@ def _assistant_group_dispatch(
             threshold = group_participation_confidence_floor(policy)
             if float(decision.get("confidence") or 0) < threshold:
                 decision.update({"should_reply": False, "reason": "participation_threshold"})
+
+    visual_context = prepare_group_visual_context(
+        payload,
+        group_id=group_id,
+        message=message,
+        fallback_settings=fallback_settings,
+        is_mention=is_mention,
+        conversation_frame=conversation_frame,
+    )
 
     if not decision.get("should_reply"):
         with _assistant_db_connect() as conn:
@@ -5609,11 +5564,13 @@ def _assistant_group_dispatch(
             "group": policy,
         }
 
-    group_user_id = f"group:{group_id}"
-    group_history = group_model_history(
-        context_items[:-1],
-        limit=int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
+    current, group_history = project_group_visual_context(
+        current,
+        context_items,
+        visual_context,
+        max_context=int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
     )
+    group_user_id = f"group:{group_id}"
     mode_session = None
     if deterministic_decision is not None:
         direct = prepare_direct_group_turn(
@@ -5641,7 +5598,6 @@ def _assistant_group_dispatch(
         mode_session = direct["mode_session"]
         group_history = direct["group_history"]
     group_history = visual.history(group_history, visual_context)
-
     if session:
         with _assistant_db_connect() as conn:
             update_qq_session(conn, group_user_id, session)
@@ -5700,9 +5656,6 @@ def _assistant_group_dispatch(
                     "group_name": policy.get("group_name") or payload.get("group_name") or "",
                     "sender_id": sender_id,
                     "sender_name": sender_name,
-                    # Group feedback was already admitted above from an
-                    # Owner-authorized source. Do not let the reply path infer
-                    # or duplicate a group-wide preference.
                     "allow_group_feedback": False,
                 },
                 "conversation_frame": conversation_frame,
@@ -5725,8 +5678,6 @@ def _assistant_group_dispatch(
             assistant_name=str(fallback_settings.get("display_name") or "助手"),
             conversation_frame=conversation_frame,
         )
-    # Delivery receives authoritative IDs from completion.
-    # only when a reply was actually planned.  Never reintroduce the AC-1 ID here.
     result.update(should_reply=replied, group=policy, group_decision=decision)
     return result
 
@@ -5782,27 +5733,11 @@ def _retry_task(task_id: str) -> tuple[dict | None, str]:
 
 
 def _human_bytes(value: int) -> str:
-    units = ["B", "KiB", "MiB", "GiB", "TiB"]
-    amount = float(value)
-    for unit in units:
-        if amount < 1024 or unit == units[-1]:
-            return f"{amount:.1f} {unit}"
-        amount /= 1024
-    return f"{value} B"
+    return _human_bytes_impl(value)
 
 
 def _read_meminfo() -> dict[str, int]:
-    values: dict[str, int] = {}
-    try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as f:
-            for line in f:
-                key, raw_value = line.split(":", 1)
-                parts = raw_value.strip().split()
-                if parts:
-                    values[key] = int(parts[0]) * 1024
-    except OSError:
-        pass
-    return values
+    return _read_meminfo_impl()
 
 
 def _short_command(
@@ -6393,44 +6328,19 @@ def _proxy_diagnostics(group: str = "Proxies", limit: int = 12, auto_switch: boo
 
 
 def _sanitize_log_text(text: str) -> str:
-    patterns = (
-        re.compile(
-            r"(?i)(token|authorization|api[-_ ]?key|secret|password|passwd)(\s*[:=]\s*)([^\s]+)",
-        ),
-        re.compile(r"(初始密码|密码|密钥)(\s*[:：=]\s*)([^\s]+)"),
-    )
-    for pattern in patterns:
-        text = pattern.sub(r"\1\2[redacted]", text)
-    return text
+    return _sanitize_log_text_impl(text)
 
 
 def _safe_log_text(text: str) -> str:
-    text = re.sub(r"\x1b\[[0-9;]*m", "", text or "")
-    patterns = (
-        re.compile(
-            r"(?i)(token|authorization|api[-_ ]?key|secret|password|passwd)(\s*[:=]\s*)([^\s]+)",
-        ),
-        re.compile(r"(?i)(webui token)(\s*[:=]\s*)([^\s]+)"),
-    )
-    for pattern in patterns:
-        text = pattern.sub(r"\1\2[redacted]", text)
-    text = re.sub(r"https://txz\.qq\.com/p\?k=[^\s]+", "[redacted-qq-login-url]", text)
-    return text
+    return _safe_log_text_impl(text)
 
 
 def _last_index(text: str, needles: tuple[str, ...]) -> int:
-    return max((text.rfind(needle) for needle in needles), default=-1)
+    return _last_index_impl(text, needles)
 
 
 def _recent_matching_lines(text: str, needles: tuple[str, ...], limit: int = 8) -> list[str]:
-    lines = []
-    for line in _safe_log_text(text).splitlines():
-        if any(needle in line for needle in needles):
-            line = line.strip()
-            if len(line) > 240:
-                line = line[:237] + "..."
-            lines.append(line)
-    return lines[-limit:]
+    return _recent_matching_lines_impl(text, needles, limit, safe_log_text_fn=_safe_log_text)
 
 
 def _container_env_value(container: str, name: str) -> str:
@@ -6562,6 +6472,7 @@ def _qq_diagnostics() -> dict:
     if QQ_ADAPTER == "llbot":
         return collect_llbot_diagnostics(
             assistant_connect=_assistant_db_connect,
+            task_connect=_db_connect,
             service_status=_llbot_service_status,
             service_logs=_llbot_service_logs,
             bridge_probe=_bridge_reachable_from_astrbot,
@@ -6571,6 +6482,7 @@ def _qq_diagnostics() -> dict:
         )
     return collect_qq_diagnostics(
         assistant_connect=_assistant_db_connect,
+        task_connect=_db_connect,
         capture_command=_capture_command,
         safe_log_text=_safe_log_text,
         last_index=_last_index,
@@ -7084,10 +6996,6 @@ RELIABILITY_HTTP_API = ReliabilityHttpApi(
 
 class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    # Headers and small JSON bodies are written separately.  Without
-    # TCP_NODELAY, persistent connections can pay the platform delayed-ACK
-    # interval (about 40 ms on Linux) for nearly every small control-plane
-    # response.
     disable_nagle_algorithm = True
     timeout = 30
     identity_http_api = ASSISTANT_IDENTITY_HTTP_API
@@ -7989,10 +7897,6 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                 )
             result = dict(result)
             result["probe_id"] = log_item["id"]
-            # A probe that reached a provider is an application-level result,
-            # including invalid-model and temporary-upstream outcomes. Return
-            # it as JSON so the console retains its typed error instead of
-            # flattening it into a generic HTTP request failure.
             _json_response(self, 200, result)
             return
 

@@ -277,12 +277,23 @@ def conversation_history(
     thread = resolve_thread(conn, legacy_user_id, source=source)
     rows = _rows(conn.execute(
         """
-        SELECT role,content,created_at FROM conversation_messages
+        SELECT role,content,created_at,metadata_json FROM conversation_messages
         WHERE thread_id=? ORDER BY created_at DESC,id DESC LIMIT ?
         """,
         (thread["id"], limit),
     ))
-    return list(reversed(rows))
+    result = []
+    for row in reversed(rows):
+        item = dict(row)
+        try:
+            metadata = json.loads(str(item.pop("metadata_json", "") or "{}"))
+        except json.JSONDecodeError:
+            metadata = {}
+        replay = metadata.get("provider_cache_replay_v3") if isinstance(metadata, dict) else None
+        if item.get("role") == "user" and isinstance(replay, str) and replay:
+            item["provider_cache_replay"] = replay
+        result.append(item)
+    return result
 
 
 def add_memory(

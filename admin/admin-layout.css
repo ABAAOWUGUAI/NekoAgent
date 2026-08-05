@@ -455,6 +455,12 @@
     .operations-card ol { margin: 0; padding-left: 22px; color: var(--muted); }
     .operations-card li + li { margin-top: 8px; }
     #modelUsageSummary { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .cache-slo-panel { margin: 18px 0; }
+    .cache-slo-panel .section-heading p { margin: 4px 0 0; color: var(--muted); max-width: 72ch; }
+    .cache-slo-record .resource-record-main { align-items: center; gap: 12px; }
+    .cache-slo-record small { display: block; margin-top: 3px; color: var(--muted); }
+    .cache-slo-record .resource-model-meta { align-items: end; text-align: right; }
+    .cache-slo-record .status-chip { margin-top: 5px; }
 
     /* Proxy subscriptions are the editable assets; node cards are runtime output. */
     .proxy-workspace .panel-body { padding: clamp(14px, 2vw, 24px); }
@@ -512,6 +518,7 @@
       #modelProviderCatalog { border-right: 0; border-bottom: 1px solid rgba(208, 213, 221, .14); }
       .resource-model-row { grid-template-columns: minmax(0, 1fr) auto; }
       .resource-model-meta { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
+      .cache-slo-record .resource-model-meta { grid-column: auto; grid-row: auto; justify-content: end; }
       .calm-home .execution-spine { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .proxy-management-grid { grid-template-columns: 1fr; }
     }

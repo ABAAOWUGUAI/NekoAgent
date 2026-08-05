@@ -173,10 +173,10 @@
       }).join('') : '<div class="empty-state">尚未读取 Runtime 清单。</div>';
       renderModelPlaygroundOptions();
     }
-
     function renderModelUsage() {
       const report = state.modelUsage || {};
       const summary = report.summary || {};
+      const sloStatus = { passed: ['green', '通过'], failed: ['red', '未通过'], insufficient_evidence: ['amber', '证据不足'], observed: ['blue', '仅观测'], no_evidence: ['amber', '暂无证据'] };
       const metrics = [
         ['调用次数', summary.calls ?? 0, `${report.range_days || 7} 天范围`],
         ['成功率', summary.success_rate == null ? '暂无' : `${summary.success_rate}%`, '按实际返回状态统计'],
@@ -185,10 +185,16 @@
         ['估算费用', summary.estimated_cost ? `$${Number(summary.estimated_cost).toFixed(6)}` : '暂无', '只使用已配置价格'],
       ];
       $('modelUsageSummary').innerHTML = metrics.map(([label, value, detail], index) => `<article class="insight-card blue"><span class="insight-index">0${index + 1}</span><p>${escapeHtml(label)}</p><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join('');
-      $('modelUsageModels').innerHTML = (report.by_model || []).length ? report.by_model.map((item) => `<article class="resource-model-row"><div class="resource-model-copy"><span class="entity-type">MODEL</span><h3>${escapeHtml(item.key)}</h3><p>${escapeHtml(item.calls)} 次调用 · ${escapeHtml(item.known_token_calls)} 次上报 Token</p></div><div class="resource-model-meta"><span>${Number(item.input_tokens || 0).toLocaleString()} 输入</span><span>${Number(item.output_tokens || 0).toLocaleString()} 输出</span><span>${item.estimated_cost ? `${escapeHtml(item.currency)} ${Number(item.estimated_cost).toFixed(6)}` : '费用未知'}</span></div></article>`).join('') : '<div class="empty-state">当前范围内还没有模型调用记录。</div>';
+      const cacheSloRows = (report.cache_slos || []).length ? report.cache_slos.map((item) => {
+        const [tone, status] = sloStatus[item.status] || ['amber', '未知'];
+        const rate = item.warm_hit_rate == null ? '暂无' : `${item.warm_hit_rate}%`;
+        const [target, evidence] = item.target_percent == null ? ['不设百分比门槛', `${item.cache_known_calls || 0} 次上报缓存字段 · ${item.unknown_calls || 0} 次未知`] : [`目标 ≥${item.target_percent}%`, `warm ${item.warm_calls || 0}/${item.minimum_warm_calls || 0} 次 · ${Number(item.warm_hit_tokens || 0).toLocaleString()}/${Number(item.minimum_warm_tokens || 0).toLocaleString()} token`];
+        return `<article class="resource-record cache-slo-record"><div class="resource-record-main"><span><strong>${escapeHtml(item.label || item.id)}</strong><small>${escapeHtml(item.description || '')}</small><small>${escapeHtml(evidence)}</small></span><span class="resource-model-meta"><strong>${escapeHtml(rate)}</strong><small>${escapeHtml(target)}</small><span class="status-chip ${tone}">${escapeHtml(status)}</span></span></div></article>`;
+      }).join('') : '<div class="empty-state">当前范围内尚无可用于缓存分层验收的 Provider 用量。</div>';
+      const modelRows = (report.by_model || []).length ? report.by_model.map((item) => `<article class="resource-model-row"><div class="resource-model-copy"><span class="entity-type">MODEL</span><h3>${escapeHtml(item.key)}</h3><p>${escapeHtml(item.calls)} 次调用 · ${escapeHtml(item.known_token_calls)} 次上报 Token</p></div><div class="resource-model-meta"><span>${Number(item.input_tokens || 0).toLocaleString()} 输入</span><span>${Number(item.output_tokens || 0).toLocaleString()} 输出</span><span>${item.estimated_cost ? `${escapeHtml(item.currency)} ${Number(item.estimated_cost).toFixed(6)}` : '费用未知'}</span></div></article>`).join('') : '<div class="empty-state">当前范围内还没有模型调用记录。</div>';
+      $('modelUsageModels').innerHTML = `<section class="cache-slo-panel" aria-label="缓存分层验收"><div class="section-heading compact-heading"><div><h3>缓存分层验收</h3><p>长可复用上下文以 Provider warm-hit ≥95% 验收；短新对话与多模态只报告真实事实。</p></div></div><div class="entity-grid compact-entities" aria-live="polite">${cacheSloRows}</div></section>${modelRows}`;
       $('modelUsageEvents').innerHTML = (report.events || []).length ? report.events.map((item) => `<article class="resource-record"><div class="resource-record-main"><span><strong>${escapeHtml(item.source || item.role || 'model call')}</strong><small>${escapeHtml(item.model_name || item.model_id || item.provider_kind || 'unknown')} · ${escapeHtml(compactTimestamp(item.created_at))}</small></span><span class="status-chip ${item.status === 'success' ? 'green' : 'red'}">${item.usage_reported ? `${escapeHtml(item.total_tokens || 0)} token` : 'Token 未知'}</span></div></article>`).join('') : '<div class="empty-state">暂无调用记录。</div>';
     }
-
     function renderCodexOperations() {
       const item = state.codexOperations || {};
       const rows = [['版本', item.version || '未检测'], ['安装方式', item.install_method || 'unknown'], ['运行账号', item.service_user || 'unknown'], ['登录状态', item.login_state === 'authenticated' ? '已登录' : '需要登录']];
@@ -197,7 +203,6 @@
       $('codexUpgradeSteps').innerHTML = (item.upgrade_steps || []).map((step) => `<li>${escapeHtml(step)}</li>`).join('');
       renderProxyStatus();
     }
-
     function renderProxyStatus() {
       const item = state.proxyStatus || {};
       const tcp = item.tcp || {};
@@ -213,13 +218,11 @@
         ['最近检测', item.probed_at ? compactTimestamp(item.probed_at) : '未检测'],
       ];
       $('proxyStatusGrid').innerHTML = rows.map(([label, value]) => `<article class="resource-record"><div class="resource-record-main"><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(value)}</small></span></div></article>`).join('');
-
       const probeLocal = $('probeProxyLocalBtn');
       const probeUpstream = $('probeProxyUpstreamBtn');
       if (probeLocal) probeLocal.onclick = () => probeProxy(false);
       if (probeUpstream) probeUpstream.onclick = () => probeProxy(true);
     }
-
     async function loadProxyStatus() {
       try {
         state.proxyStatus = await bridge('/system/proxy/status');
@@ -228,7 +231,6 @@
       }
       renderProxyStatus();
     }
-
     async function probeProxy(upstream) {
       if (upstream && !window.confirm('上游探测会向 DeepSeek 发送最少请求，产生少量 API 费用。是否继续？')) return;
       const btn = upstream ? $('probeProxyUpstreamBtn') : $('probeProxyLocalBtn');
@@ -250,7 +252,6 @@
         btn.textContent = originalLabel;
       }
     }
-
     async function loadModelWorkspaceDetails(view) {
       if (view === 'routing' && window.loadModelRoutingPresets) {
         await window.loadModelRoutingPresets();
@@ -260,7 +261,6 @@
         await Promise.all([loadCodexOperations(), loadProxyStatus()]);
       }
     }
-
     function setModelWorkspace(view, { load = true } = {}) {
       const allowed = new Set(['connections', 'catalog', 'routing', 'playground', 'usage', 'advanced']);
       state.modelWorkspace = allowed.has(view) ? view : 'connections';

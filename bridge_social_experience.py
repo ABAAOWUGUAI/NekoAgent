@@ -123,6 +123,11 @@ def compile_runtime_voice_contract(settings: dict, *, mode: str, group: bool) ->
         "把“说话像 AI、像客服、太官方”这类表达反馈误当成身份盘问",
         "在日常聊天里主动解释自己是 AI、模型、程序或机器人",
     ]
+    if group:
+        forbidden.extend([
+            "在群聊里使用‘主人’、‘爸爸’、‘尊敬的当前助手’等关系角色称呼",
+            "在群聊里使用客服式自我介绍、服务台式开场或后台诊断提示",
+        ])
     forbidden += [item for key in ("boundaries", "avoid_phrases", "prohibited_patterns") for item in _voice_list(source, key, 16, 180)]
     common = {"identity": _clip(settings.get("display_name") or "Assistant", 80), "persona_level": level, "persona_version": version, "contract_degraded": degraded, "mode": mode, "forbidden": list(dict.fromkeys(forbidden))[:24]}
     if level == "off":
@@ -207,11 +212,12 @@ def ensure_social_experience_tables(conn: sqlite3.Connection) -> None:
             allowed_work_senders TEXT NOT NULL DEFAULT '', meme_enabled INTEGER NOT NULL DEFAULT 0,
             participation_mode TEXT NOT NULL DEFAULT '', quiet_gap_seconds INTEGER NOT NULL DEFAULT 8,
             burst_window_seconds INTEGER NOT NULL DEFAULT 12,
-            burst_max_messages INTEGER NOT NULL DEFAULT 6,
-            daily_reply_budget INTEGER NOT NULL DEFAULT 20,
-            continuation_window_seconds INTEGER NOT NULL DEFAULT 120,
-            max_auto_continuations INTEGER NOT NULL DEFAULT 2,
-            last_reply_at TEXT NOT NULL DEFAULT '', message_count INTEGER NOT NULL DEFAULT 0,
+             burst_max_messages INTEGER NOT NULL DEFAULT 6,
+             daily_reply_budget INTEGER NOT NULL DEFAULT 20,
+             continuation_window_seconds INTEGER NOT NULL DEFAULT 120,
+             max_auto_continuations INTEGER NOT NULL DEFAULT 2,
+             media_observation_probability REAL NOT NULL DEFAULT 0.0,
+             last_reply_at TEXT NOT NULL DEFAULT '', message_count INTEGER NOT NULL DEFAULT 0,
             reply_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         )""",
     )
@@ -219,6 +225,23 @@ def ensure_social_experience_tables(conn: sqlite3.Connection) -> None:
         str(row[1]) for row in conn.execute("PRAGMA table_info(group_policies)")
     }
     for name, definition in {
+        # A v23 migration may have created only the additive media column
+        # before the legacy social bootstrap runs.  Backfill every base policy
+        # column here so the single policy fact source remains writable.
+        "group_name": "TEXT NOT NULL DEFAULT ''",
+        "session": "TEXT NOT NULL DEFAULT ''",
+        "enabled": "INTEGER NOT NULL DEFAULT 0",
+        "mention_only": "INTEGER NOT NULL DEFAULT 1",
+        "active_reply": "INTEGER NOT NULL DEFAULT 0",
+        "reply_probability": "REAL NOT NULL DEFAULT 0.2",
+        "cooldown_seconds": "INTEGER NOT NULL DEFAULT 180",
+        "quiet_start": "TEXT NOT NULL DEFAULT '23:30'",
+        "quiet_end": "TEXT NOT NULL DEFAULT '08:30'",
+        "timezone": "TEXT NOT NULL DEFAULT 'Asia/Shanghai'",
+        "max_context": "INTEGER NOT NULL DEFAULT 40",
+        "allow_work": "INTEGER NOT NULL DEFAULT 0",
+        "allowed_work_senders": "TEXT NOT NULL DEFAULT ''",
+        "meme_enabled": "INTEGER NOT NULL DEFAULT 0",
         "participation_mode": "TEXT NOT NULL DEFAULT ''",
         "quiet_gap_seconds": "INTEGER NOT NULL DEFAULT 8",
         "burst_window_seconds": "INTEGER NOT NULL DEFAULT 12",
@@ -226,9 +249,16 @@ def ensure_social_experience_tables(conn: sqlite3.Connection) -> None:
         "daily_reply_budget": "INTEGER NOT NULL DEFAULT 20",
         "continuation_window_seconds": "INTEGER NOT NULL DEFAULT 120",
         "max_auto_continuations": "INTEGER NOT NULL DEFAULT 2",
+        "media_observation_probability": "REAL NOT NULL DEFAULT 0.0",
+        "last_reply_at": "TEXT NOT NULL DEFAULT ''",
+        "message_count": "INTEGER NOT NULL DEFAULT 0",
+        "reply_count": "INTEGER NOT NULL DEFAULT 0",
+        "created_at": "TEXT NOT NULL DEFAULT ''",
+        "updated_at": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if name not in group_policy_columns:
             conn.execute(f"ALTER TABLE group_policies ADD COLUMN {name} {definition}")
+            group_policy_columns.add(name)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS group_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT NOT NULL,

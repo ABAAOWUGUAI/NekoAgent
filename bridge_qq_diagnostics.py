@@ -26,6 +26,7 @@ def _runtime_snapshot(connect) -> dict:
 def collect_qq_diagnostics(
     *,
     assistant_connect,
+    task_connect=None,
     capture_command: Callable,
     safe_log_text: Callable,
     last_index: Callable,
@@ -148,7 +149,7 @@ def collect_qq_diagnostics(
         recommendation = "QQ 到 AstrBot 到 Bridge 的链路基本在线；如单条消息无回复，优先查看插件路由日志和任务详情。"
 
     audit_events = list_events(user_id=allowed_ids[0], limit=16) if allowed_ids else list_events(limit=16)
-    participation = participation_diagnostics(assistant_connect)
+    participation = participation_diagnostics(assistant_connect, task_connect=task_connect)
     audit_recent_reply = any(item["stage"] in {"reply_complete", "task_created", "error"} for item in audit_events[:8])
     checks = [
         {"name": "qq_login", "ok": qq_status == "online" and not needs_login, "label": "QQ 登录"},

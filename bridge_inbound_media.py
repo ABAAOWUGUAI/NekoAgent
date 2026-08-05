@@ -27,6 +27,8 @@ _RECENT_MEDIA_NOTICE_MARKERS = {
     "这张图这次没读出来": "vision_caption_unavailable",
     "这张图这次没有收到可读的图片数据": "media_payload_missing",
     "刚才那张图没有保留": "media_resend_required",
+    "这个视频我这次还没读出来": "video_decode_failed",
+    "这个视频这次没有收到可读的媒体数据": "video_payload_missing",
     # Compatibility for a reply that an older ordinary conversation model
     # generated before this typed Gate was installed.  It only redirects the
     # immediate follow-up to a resend; it does not infer image content.
@@ -159,18 +161,35 @@ def inbound_media_notice(
     if not kinds:
         return None
 
-    images = sum(1 for item in kinds if item == "image")
-    if images:
+    visual_kinds = [item for item in kinds if item in {"image", "video"}]
+    images = sum(1 for item in visual_kinds if item == "image")
+    if visual_kinds:
         states = {
             str(item.get("visual_context_state") or "").strip()
             for item in attachments
-            if isinstance(item, dict) and str(item.get("type") or "").strip().lower() == "image"
+            if isinstance(item, dict) and str(item.get("type") or "").strip().lower() in {"image", "video"}
         }
         if "ready" in states:
             return None
+        if "deferred" in states:
+            return {
+                "ok": True,
+                "dispatch": "silent",
+                "reply": "",
+                "output": "",
+                "capability_limited": True,
+                "reason": "media_observation_deferred",
+                "attachment_kinds": sorted(set(kinds)),
+                "model_role": "conversation_reply",
+                "vision_model_role": "vision_caption" if images else "",
+            }
         if "unavailable" in states:
-            reply = "这张图这次没读出来，你再发一张原图，或者补一句文字也行。"
-            reason = "vision_caption_unavailable"
+            if "video" in visual_kinds and not images:
+                reply = "这个视频我这次还没读出来，你可以截一帧图，或者补一句文字说明。"
+                reason = "video_decode_failed"
+            else:
+                reply = "这张图这次没读出来，你再发一张原图，或者补一句文字也行。"
+                reason = "vision_caption_unavailable"
         elif "none" in states:
             # Report an unbound/misdeclared role honestly before reporting a
             # missing current payload.  Either way, ordinary reply generation
@@ -181,8 +200,12 @@ def inbound_media_notice(
                 images=images,
             )
             if route["status"] == "ready":
-                reply = "这张图这次没有收到可读的图片数据。请重新发送原图，或补一行文字。"
-                reason = "media_payload_missing"
+                if "video" in visual_kinds and not images:
+                    reply = "这个视频这次没有收到可读的媒体数据。请重新发送，或补一行文字。"
+                    reason = "video_payload_missing"
+                else:
+                    reply = "这张图这次没有收到可读的图片数据。请重新发送原图，或补一行文字。"
+                    reason = "media_payload_missing"
             else:
                 reply = route["message"]
                 reason = route["reason"]
@@ -194,11 +217,19 @@ def inbound_media_notice(
                 for item in settings.get("model_capabilities") or []
             }
             if "vision" not in capabilities:
-                reply = "这张图我现在还看不了，先别让我瞎猜。"
-                reason = "conversation_model_vision_unsupported"
+                if "video" in visual_kinds and not images:
+                    reply = "这个视频我现在还读不了，先截一帧图，或者补一句文字说明。"
+                    reason = "conversation_model_vision_unsupported"
+                else:
+                    reply = "这张图我现在还看不了，先别让我瞎猜。"
+                    reason = "conversation_model_vision_unsupported"
             else:
-                reply = "这张图我现在还看不了，先别让我瞎猜。"
-                reason = "channel_media_transport_not_connected"
+                if "video" in visual_kinds and not images:
+                    reply = "这个视频这次还没接到可读画面，先截一帧图，或者补一句文字说明。"
+                    reason = "channel_media_transport_not_connected"
+                else:
+                    reply = "这张图我现在还看不了，先别让我瞎猜。"
+                    reason = "channel_media_transport_not_connected"
         else:
             route = _image_route(
                 vision_settings,
@@ -209,8 +240,12 @@ def inbound_media_notice(
                 # A configured route is not itself image evidence.  This
                 # branch is reachable only when a caller omitted the typed
                 # result from the current visual turn.
-                reply = "这张图这次没有收到可读的图片数据。请重新发送原图，或补一行文字。"
-                reason = "media_payload_missing"
+                if "video" in visual_kinds and not images:
+                    reply = "这个视频这次没有收到可读的媒体数据。请重新发送，或补一行文字。"
+                    reason = "video_payload_missing"
+                else:
+                    reply = "这张图这次没有收到可读的图片数据。请重新发送原图，或补一行文字。"
+                    reason = "media_payload_missing"
             else:
                 reply = route["message"]
                 reason = route["reason"]

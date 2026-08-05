@@ -4,13 +4,42 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from bridge_conversation_participation_engine import deterministic_acknowledgement
 from bridge_group_context_frame import DEFAULT_GROUP_CONTEXT_LIMIT, group_model_history
 from bridge_inbound_media import inbound_media_notice
 from bridge_qq_admin_actions import parse_qq_admin_action
 from bridge_qq_participation_shadow import complete_group_dispatch
+
+
+def _typed_media_state(payload: dict, attachments: object) -> tuple[str, str]:
+    """Project typed media stages onto the legacy notice boundary only."""
+
+    preflight = payload.get("media_preflight_state")
+    if not preflight and isinstance(payload.get("media_preflight"), Mapping):
+        preflight = payload["media_preflight"].get("state")
+    preflight_state = str(preflight or "").strip().lower()
+    visual_state = str(
+        payload.get("visual_context_status")
+        or payload.get("visual_context_state")
+        or ""
+    ).strip().lower()
+    if isinstance(attachments, list) and visual_state in {"ready", "unavailable", "none"}:
+        payload["attachments"] = [
+            {
+                **item,
+                "visual_context_ready": visual_state == "ready",
+                "visual_context_state": visual_state,
+            }
+            if isinstance(item, dict)
+            and str(item.get("type") or "").strip().lower() in {"image", "video"}
+            else item
+            for item in attachments
+        ]
+    if preflight_state:
+        payload["media_preflight_state"] = preflight_state
+    return preflight_state, visual_state
 
 
 def prepare_direct_group_turn(
@@ -34,6 +63,8 @@ def prepare_direct_group_turn(
 ) -> dict:
     assistant_name = str(fallback_settings.get("display_name") or "助手")
     attachments = payload.get("attachments")
+    media_preflight_state, visual_context_state = _typed_media_state(payload, attachments)
+    attachments = payload.get("attachments")
     media_notice = inbound_media_notice(
         get_role_settings("conversation_reply", fallback_settings),
         attachments,
@@ -45,6 +76,11 @@ def prepare_direct_group_turn(
         suppress_repeated_notice=bool((conversation_frame or {}).get("media_gate_active")),
     )
     if media_notice is not None:
+        media_notice.update({
+            "decision_stage": "after_media_preflight",
+            "media_preflight_state": media_preflight_state,
+            "visual_context_status": visual_context_state,
+        })
         return {"result": _complete(
             connect, media_notice, event, deterministic_decision, decision,
             group_id, payload, classifier_settings, current, assistant_name,
@@ -57,6 +93,11 @@ def prepare_direct_group_turn(
     )
     if acknowledgement:
         result = {"ok": True, "dispatch": "deterministic_ack", "reply": acknowledgement}
+        result.update({
+            "decision_stage": "after_media_preflight",
+            "media_preflight_state": media_preflight_state,
+            "visual_context_status": visual_context_state,
+        })
         return {"result": _complete(
             connect, result, event, deterministic_decision, decision,
             group_id, payload, classifier_settings, current, assistant_name,
@@ -86,6 +127,9 @@ def prepare_direct_group_turn(
             "deterministic": True,
             "participation_action": deterministic_decision.action.value,
             "group_conversation_frame": conversation_frame or {},
+            "decision_stage": "after_media_preflight",
+            "media_preflight_state": media_preflight_state,
+            "visual_context_status": visual_context_state,
         },
     }
 

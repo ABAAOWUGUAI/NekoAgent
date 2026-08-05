@@ -603,13 +603,19 @@ class ArtifactService:
                 raise ArtifactError("artifact_database_manifest_mismatch")
         return verified
 
-    def _quarantine_tree(self, root: Path, label: str) -> None:
+    def _quarantine_tree(self, root: Path, label: str) -> bool:
+        """Try to isolate retired bytes without turning one bad tree into an outage."""
+
         if not root.exists():
-            return
+            return True
         target = self.quarantine / (str(label) + "-" + root.name)
         if target.exists():
             target = self.quarantine / (str(label) + "-" + root.name + "-" + secrets_token())
-        os.replace(root, target)
+        try:
+            os.replace(root, target)
+        except OSError:
+            return False
+        return True
 
     def reconcile(self, *, grace_seconds: int = 300) -> dict:
         self.ensure_storage()
@@ -628,8 +634,10 @@ class ArtifactService:
                     with self._connect() as conn:
                         ArtifactRepository(conn).invalidate_version(version["id"], reason="artifact_retention_expired")
                 if final.exists():
-                    self._quarantine_tree(final, "retired")
-                    quarantined.append(storage_key)
+                    if self._quarantine_tree(final, "retired"):
+                        quarantined.append(storage_key)
+                    else:
+                        failed.append(version["id"])
                 continue
             if version["state"] == "preparing":
                 if final.exists():
@@ -675,11 +683,10 @@ class ArtifactService:
                     failed.append(version["id"])
         for final in self.published.iterdir():
             if final.is_dir() and final.name not in known:
-                target = self.quarantine / (final.name + "-orphan")
-                if target.exists():
-                    target = self.quarantine / (final.name + "-orphan-" + secrets_token())
-                os.replace(final, target)
-                quarantined.append(final.name)
+                if self._quarantine_tree(final, "orphan"):
+                    quarantined.append(final.name)
+                else:
+                    failed.append("orphan:" + final.name)
         return {"ok": not failed, "recovered": recovered, "failed": failed, "quarantined": quarantined}
 
 

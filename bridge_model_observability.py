@@ -9,6 +9,43 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 
+CACHE_SLO_CONTRACT_VERSION = "conversation-cache-v2"
+
+CACHE_SLO_POLICIES = (
+    {
+        "id": "long_reusable_context",
+        "label": "长可复用上下文",
+        "target_percent": 95.0,
+        "minimum_warm_calls": 3,
+        "minimum_warm_tokens": 4096,
+        "description": "仅统计 Provider 已报告缓存命中、且输入不少于 1024 token 的对话或工作规划请求。",
+    },
+    {
+        "id": "short_conversation",
+        "label": "短新对话",
+        "target_percent": None,
+        "description": "报告真实命中与未命中；不将每轮新的用户消息伪装为可复用前缀。",
+    },
+    {
+        "id": "group_decision",
+        "label": "群聊决策",
+        "target_percent": None,
+        "description": "群聊参与决策独立统计，不与用户可见回复或长文任务混合。",
+    },
+    {
+        "id": "multimodal_unknown",
+        "label": "多模态/未回报",
+        "target_percent": None,
+        "description": "Provider 未报告缓存字段或视觉角色调用时保持 unknown，不计作零命中。",
+    },
+    {
+        "id": "legacy_or_unclassified",
+        "label": "历史/未分类合同",
+        "target_percent": None,
+        "description": "旧合同或缺少缓存合同版本的记录仅保留历史观测，绝不计入当前 V2 的 95% Gate。",
+    },
+)
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -35,6 +72,8 @@ def ensure_model_usage_tables(conn: sqlite3.Connection) -> None:
             prompt_cache_hit_tokens INTEGER,
             prompt_cache_miss_tokens INTEGER,
             cache_usage_reported INTEGER NOT NULL DEFAULT 0,
+            cache_contract_version TEXT NOT NULL DEFAULT '',
+            cache_variant TEXT NOT NULL DEFAULT '',
             duration_seconds REAL,
             estimated_cost REAL,
             currency TEXT NOT NULL DEFAULT 'USD',
@@ -59,6 +98,8 @@ def ensure_model_usage_tables(conn: sqlite3.Connection) -> None:
         ("prompt_cache_hit_tokens", "INTEGER"),
         ("prompt_cache_miss_tokens", "INTEGER"),
         ("cache_usage_reported", "INTEGER NOT NULL DEFAULT 0"),
+        ("cache_contract_version", "TEXT NOT NULL DEFAULT ''"),
+        ("cache_variant", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in columns:
             conn.execute(f"ALTER TABLE model_usage_events ADD COLUMN {name} {definition}")
@@ -71,6 +112,71 @@ def _int_or_none(value: object) -> int | None:
         return max(0, int(value))
     except (TypeError, ValueError):
         return None
+
+
+def _cache_slo_id(row: dict) -> str:
+    """Classify an event from recorded facts, never guessed user content."""
+
+    role = str(row.get("role") or "")
+    if role == "vision_caption" or not row.get("cache_usage_reported"):
+        return "multimodal_unknown"
+    if role in {"conversation_reply", "work_planner"} and str(row.get("cache_contract_version") or "") != CACHE_SLO_CONTRACT_VERSION:
+        return "legacy_or_unclassified"
+    cache_tokens = (row.get("prompt_cache_hit_tokens") or 0) + (row.get("prompt_cache_miss_tokens") or 0)
+    if role in {"conversation_reply", "work_planner"} and cache_tokens >= 1024:
+        return "long_reusable_context"
+    if role == "conversation_engagement":
+        return "group_decision"
+    return "short_conversation"
+
+
+def _cache_slo_report(rows: list[dict]) -> list[dict]:
+    """Aggregate SLOs without counting cold or unknown work as a false pass."""
+
+    buckets = {
+        policy["id"]: {
+            **policy,
+            "calls": 0,
+            "cache_known_calls": 0,
+            "unknown_calls": 0,
+            "warm_calls": 0,
+            "cold_calls": 0,
+            "warm_hit_tokens": 0,
+            "warm_miss_tokens": 0,
+        }
+        for policy in CACHE_SLO_POLICIES
+    }
+    for row in rows:
+        bucket = buckets[_cache_slo_id(row)]
+        bucket["calls"] += 1
+        if not row.get("cache_usage_reported"):
+            bucket["unknown_calls"] += 1
+            continue
+        bucket["cache_known_calls"] += 1
+        hit = row.get("prompt_cache_hit_tokens") or 0
+        miss = row.get("prompt_cache_miss_tokens") or 0
+        if hit:
+            bucket["warm_calls"] += 1
+            bucket["warm_hit_tokens"] += hit
+            bucket["warm_miss_tokens"] += miss
+        else:
+            bucket["cold_calls"] += 1
+    report = []
+    for bucket in buckets.values():
+        warm_total = bucket["warm_hit_tokens"] + bucket["warm_miss_tokens"]
+        bucket["warm_hit_rate"] = round(bucket["warm_hit_tokens"] / warm_total * 100, 1) if warm_total else None
+        target = bucket["target_percent"]
+        if target is None:
+            bucket["status"] = "observed" if bucket["calls"] else "no_evidence"
+        elif not bucket["warm_calls"]:
+            bucket["status"] = "no_evidence"
+        elif (bucket["warm_calls"] < bucket["minimum_warm_calls"]
+              or warm_total < bucket["minimum_warm_tokens"]):
+            bucket["status"] = "insufficient_evidence"
+        else:
+            bucket["status"] = "passed" if bucket["warm_hit_rate"] >= target else "failed"
+        report.append(bucket)
+    return report
 
 
 def record_model_usage(
@@ -119,8 +225,9 @@ def record_model_usage(
                id, source, user_id, trace_id, role, provider_id, provider_kind,
                model_id, model_name, status, error_kind, input_tokens, output_tokens,
                total_tokens, usage_reported, prompt_cache_hit_tokens, prompt_cache_miss_tokens,
-               cache_usage_reported, duration_seconds, estimated_cost, currency, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               cache_usage_reported, cache_contract_version, cache_variant,
+               duration_seconds, estimated_cost, currency, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             event_id,
             str(source or "")[:80],
@@ -140,6 +247,8 @@ def record_model_usage(
             cache_hit_tokens,
             cache_miss_tokens,
             1 if cache_usage_reported else 0,
+            str(settings.get("prompt_cache_contract_version") or "role-cache-v2")[:80],
+            str(settings.get("prompt_cache_variant") or f"role-{settings.get('model_role') or 'conversation'}")[:80],
             result.get("duration"),
             estimated_cost,
             str(settings.get("model_price_currency") or "USD")[:12].upper(),
@@ -200,10 +309,10 @@ def usage_report(conn: sqlite3.Connection, *, days: int = 7, limit: int = 50) ->
     cache_known = sum(1 for row in rows if row.get("cache_usage_reported"))
     cache_hits = sum(row.get("prompt_cache_hit_tokens") or 0 for row in rows)
     cache_misses = sum(row.get("prompt_cache_miss_tokens") or 0 for row in rows)
-    cache_total = cache_hits + cache_misses
+    aggregate_cache_total = cache_hits + cache_misses
     for bucket in [*by_model.values(), *by_day.values()]:
-        cache_total = bucket["prompt_cache_hit_tokens"] + bucket["prompt_cache_miss_tokens"]
-        bucket["cache_hit_rate"] = round(bucket["prompt_cache_hit_tokens"] / cache_total * 100, 1) if cache_total else None
+        bucket_cache_total = bucket["prompt_cache_hit_tokens"] + bucket["prompt_cache_miss_tokens"]
+        bucket["cache_hit_rate"] = round(bucket["prompt_cache_hit_tokens"] / bucket_cache_total * 100, 1) if bucket_cache_total else None
     return {
         "range_days": days,
         "summary": {
@@ -217,12 +326,13 @@ def usage_report(conn: sqlite3.Connection, *, days: int = 7, limit: int = 50) ->
             "cache_unknown_calls": calls - cache_known,
             "prompt_cache_hit_tokens": cache_hits,
             "prompt_cache_miss_tokens": cache_misses,
-            "cache_hit_rate": round(cache_hits / cache_total * 100, 1) if cache_total else None,
+            "cache_hit_rate": round(cache_hits / aggregate_cache_total * 100, 1) if aggregate_cache_total else None,
             "average_duration": round(sum(durations) / len(durations), 3) if durations else None,
             "p95_duration": round(p95, 3) if p95 is not None else None,
             "estimated_cost": round(sum(row.get("estimated_cost") or 0 for row in rows), 8),
         },
         "by_model": sorted(by_model.values(), key=lambda item: (-item["calls"], item["key"])),
         "by_day": [by_day[key] for key in sorted(by_day)],
+        "cache_slos": _cache_slo_report(rows),
         "events": rows[: max(1, min(int(limit or 50), 200))],
     }

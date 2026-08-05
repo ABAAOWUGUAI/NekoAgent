@@ -714,6 +714,7 @@ def runtime_settings_for_role(conn: sqlite3.Connection, role: str, fallback_sett
             },
         )
     return settings
+
 def list_role_change_log(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     limit = max(1, min(limit, 200))
     rows = conn.execute(

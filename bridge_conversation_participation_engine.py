@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping
 
 from bridge_conversation_participation import stable_decision_id
 from bridge_conversation_participation_contract import (
@@ -30,6 +31,32 @@ from bridge_migrations import utc_now
 
 
 DETERMINISTIC_POLICY_VERSION = "ac2-deterministic-v1"
+
+
+def _media_gate_state(frame: Mapping[str, object]) -> tuple[str, str, str]:
+    """Read the typed media stages without looking at raw adapter payloads."""
+
+    preflight = frame.get("media_preflight_state")
+    if not preflight and isinstance(frame.get("media_preflight"), Mapping):
+        preflight = frame["media_preflight"].get("state")
+    preflight_state = str(preflight or "").strip().lower()
+    visual = str(frame.get("visual_context_state") or "").strip().lower()
+    observation = frame.get("media_observation_decision")
+    if not observation:
+        # M2 used this name while the contract was being introduced; accept
+        # it as a read-only compatibility alias, never as a new source.
+        observation = frame.get("media_observation")
+    if isinstance(observation, Mapping):
+        observation = observation.get("decision")
+    observation_state = str(observation or "").strip().lower()
+    return preflight_state, visual, observation_state
+
+
+def _media_preflight_complete(frame: Mapping[str, object]) -> bool:
+    preflight_state, _visual, _observation = _media_gate_state(frame)
+    return preflight_state in {
+        "ready", "blocked", "unavailable", "preflight_ready", "preflight_blocked",
+    }
 
 
 def deterministic_participation_enabled(conn: sqlite3.Connection) -> bool:
@@ -210,15 +237,29 @@ def deterministic_inbound_decision(
             action=ParticipationAction.SILENT,
             reason=ParticipationReason.MEDIA_GATE_FOLLOWUP_UNADDRESSED,
         )
-    # Passive images and stickers without a Bridge-derived visual description
-    # are ordinary group activity.  A ready description falls through to the
-    # normal engagement role, which can still choose silence rather than
-    # treating the mere presence of an image as an invitation to speak.
+    # Media must have crossed the typed preflight before this engine may call
+    # an ambient turn silent.  Otherwise the downstream dispatch path still
+    # owns the transport/capability notice and can perform the one bounded
+    # visual preparation attempt.
+    preflight_state, visual_state, observation_state = _media_gate_state(frame)
     visual_ready = any(
         bool(item.get("visual_context_ready"))
+        or str(item.get("visual_context_state") or "").strip().lower() == "ready"
         for item in event.attachments
         if isinstance(item, dict)
     )
+    if event.attachments and not _media_preflight_complete(frame):
+        return None
+    # A deterministic observation is an instruction to prepare visual
+    # context, not permission to speak.  Leave the event for the normal
+    # engagement/reply path even if the visual model is unavailable; the
+    # typed status will be rendered by the media boundary.
+    if event.attachments and observation_state == "observe" and preflight_state in {
+        "ready", "preflight_ready",
+    }:
+        return None
+    if visual_state == "ready":
+        visual_ready = True
     if event.attachments and not visual_ready:
         return _decision(
             event,

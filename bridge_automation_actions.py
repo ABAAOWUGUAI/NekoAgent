@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo
 from bridge_action_registry import action_definition
 from bridge_automation import DEFAULT_TIMEZONE, ensure_automation_tables, upsert_automation_job
 from bridge_automation_contracts import normalize_output_contract, output_contract_hash
+from bridge_automation_create_runtime import prepare_automation_create_contract
+from bridge_automation_instruction import extract_instruction as _instruction, extract_parameters as _automation_parameters
 from bridge_automation_conversation import (
     clarification_reply,
     finish_action_plan,
@@ -59,14 +61,6 @@ _CLOCK_RE = re.compile(
     r"(?:(?:每天|每日|每晚|每早)\s*)?"
     r"(?:(凌晨|早上|上午|中午|下午|傍晚|晚上)\s*)?"
     r"([01]?\d|2[0-3])\s*(?:[:：点时])\s*([0-5]?\d)?\s*分?",
-)
-_LEADING_SCHEDULE_RE = re.compile(
-    r"^.*?(?:定时任务|定时计划|定时提醒)\s*[，,：:]?\s*(?:要求)?\s*",
-)
-_DAILY_CLAUSE_RE = re.compile(
-    r"(?:每天|每日|每晚|每早)\s*"
-    r"(?:(?:凌晨|早上|上午|中午|下午|傍晚|晚上)\s*)?"
-    r"(?:[01]?\d|2[0-3])\s*(?:[:：点时])\s*(?:[0-5]?\d)?\s*分?",
 )
 
 
@@ -124,48 +118,6 @@ def _daily_time(text: str) -> str:
     elif period in {"凌晨", "早上", "上午"} and hour == 12:
         hour = 0
     return f"{hour:02d}:{minute:02d}"
-
-
-def _instruction(text: str) -> str:
-    value = _LEADING_SCHEDULE_RE.sub("", str(text or "").strip(), count=1)
-    value = re.sub(r"^(?:\u5462|\u5440|\u5427)\s*[,，:：]?\s*", "", value, count=1)
-    value = value.replace("\u70b9\u949f", "\u70b9")
-    value = _DAILY_CLAUSE_RE.sub("", value, count=1)
-    value = re.sub(r"^(?:请|麻烦|帮我|给我|要求)\s*", "", value)
-    value = re.sub(r"^(?:给我)?推送\s*", "获取并整理", value)
-    value = re.sub(r"[，,。；;\s]+$", "", value).strip(" ，,：:")
-    return _clip(value, 4000)
-
-
-def _automation_parameters(instruction: str) -> dict:
-    """Extract stable business constraints without asking the model to infer them."""
-
-    text = str(instruction or "")
-    parameters: dict[str, object] = {}
-    count = re.search(r"(?:\u6bcf\u5929|\u6bcf\u65e5|\u524d|\u53d6|\u8981|\u5171)\s*(\d+)\s*(?:\u6761|\u4e2a|\u9879)", text)
-    if count:
-        parameters["item_limit"] = max(1, min(int(count.group(1)), 100))
-    lowered = text.lower()
-    if "github" in lowered:
-        parameters["source"] = "github"
-    if "AI" in text.upper() or "aiagent" in lowered or "ai agent" in lowered:
-        parameters["topic"] = "ai_agent"
-    if any(token in text for token in ("\u4e0d\u5141\u8bb8\u51fa\u73b0\u91cd\u590d", "\u4e0d\u8981\u91cd\u590d", "\u53bb\u91cd")):
-        parameters["dedupe_policy"] = "job_history"
-    if any(token in text for token in ("\u804a\u5929\u8bb0\u5f55", "\u804a\u5929\u65b9\u5f0f", "\u53d1\u9001\u6d88\u606f")):
-        parameters["delivery_format"] = "conversation"
-    if any(token in text for token in ("中文", "简体中文", "使用中文", "必须是中文")):
-        parameters["output_language"] = "zh-CN"
-    return parameters
-
-
-# The extraction contract lives in its own bounded module.  Importing these
-# names after the legacy helpers keeps older callers compatible while routing
-# every new schedule through the current-turn objective-preserving parser.
-from bridge_automation_instruction import (  # noqa: E402
-    extract_instruction as _instruction,
-    extract_parameters as _automation_parameters,
-)
 
 
 def parse_automation_action(
@@ -786,36 +738,60 @@ def execute_automation_action(
     try:
         with connect() as conn:
             _authorise_owner(conn, actor_id)
-        if preflight is not None and str(action.get("job_action_type") or "") == "agent":
-            check = dict(preflight(action) or {})
-            if not check.get("ok"):
-                reason = _clip(check.get("error_kind") or check.get("error") or "automation_preflight_failed", 160)
-                return {
-                    "ok": True,
-                    "dispatch": "automation_unavailable",
-                    "reply": "定时 Agent 未创建：执行环境未就绪，任务没有写入。请先完成模型或工作区配置。",
-                    "action_receipts": [_receipt("automation.schedule.create", "blocked", reason=reason)],
-                }
+            ensure_automation_tables(conn)
+            job_id = _job_id(actor_id, action)
+            existing_row = conn.execute(
+                "SELECT * FROM automation_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+        execution_contract = None
+        if existing_row is None:
+            execution_contract, failure = prepare_automation_create_contract(
+                action,
+                preflight=preflight,
+                receipt=_receipt,
+                clip=_clip,
+            )
+            if failure is not None:
+                return failure
         with connect() as conn:
             _authorise_owner(conn, actor_id)
             ensure_automation_tables(conn)
+            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
             job_id = _job_id(actor_id, action)
             existed = conn.execute("SELECT id FROM automation_jobs WHERE id=?", (job_id,)).fetchone()
-            job = upsert_automation_job(
-                conn,
-                {
-                    "id": job_id,
-                    "user_id": actor_id,
-                    "title": action["title"],
-                    "instruction": action["instruction"],
-                    "action_type": action["job_action_type"],
-                    "schedule_type": action["schedule_type"],
-                    "time_of_day": action["time_of_day"],
-                    "timezone": action["timezone"],
-                    "enabled": 1,
-                    "parameters": action.get("parameters") or {},
-                },
-            )
+            if existed:
+                job = dict(conn.execute(
+                    "SELECT * FROM automation_jobs WHERE id=?",
+                    (job_id,),
+                ).fetchone())
+            else:
+                if execution_contract is None:
+                    execution_contract, failure = prepare_automation_create_contract(
+                        action,
+                        preflight=preflight,
+                        receipt=_receipt,
+                        clip=_clip,
+                    )
+                    if failure is not None:
+                        return failure
+                job = upsert_automation_job(
+                    conn,
+                    {
+                        "id": job_id,
+                        "user_id": actor_id,
+                        "title": action["title"],
+                        "instruction": action["instruction"],
+                        "action_type": action["job_action_type"],
+                        "schedule_type": action["schedule_type"],
+                        "time_of_day": action["time_of_day"],
+                        "timezone": action["timezone"],
+                        "enabled": 1,
+                        "parameters": action.get("parameters") or {},
+                        "execution_contract": execution_contract,
+                    },
+                )
             conn.commit()
         status = "no_op" if existed else "completed"
         due = _local_due(job.get("next_due_at"), str(job.get("timezone") or DEFAULT_TIMEZONE))

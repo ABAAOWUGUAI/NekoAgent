@@ -7,6 +7,11 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from bridge_automation_schema import ensure_automation_tables
+from bridge_automation_execution import (
+    FAILURE_STAGE_ACK,
+    FAILURE_STAGE_TASK,
+    classify_automation_failure,
+)
 
 
 def _timestamp(value: datetime) -> str:
@@ -67,16 +72,43 @@ def finish_automation_run(
     task_id: str = "", delivery_id: str = "", error: str = "",
     now: datetime | None = None,
     retryable: bool = True,
+    failure_stage: str = "",
+    capability_id: str = "",
+    execution_contract_hash: str = "",
 ) -> dict:
     ensure_automation_tables(conn)
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     normalized = status if status in {"completed", "dispatched"} else "failed"
+    classified = classify_automation_failure(error, stage=failure_stage) if normalized == "failed" else None
+    if classified:
+        failure_stage = str(classified["stage"])
+        # Keep the durable record useful for operators without copying raw
+        # exception text, chat content, credentials, or media metadata.
+        error = str(classified["error_code"])
+        retryable = bool(retryable and classified["retryable"])
+    else:
+        # A dispatched/completed run is not a failure record.  Never carry an
+        # arbitrary caller-provided string (which may contain private text or
+        # credentials) into the durable run audit row.
+        error = ""
+    existing = conn.execute(
+        "SELECT capability_id,execution_contract_hash,failure_stage FROM automation_runs WHERE id=?",
+        (job["run_id"],),
+    ).fetchone()
+    existing = dict(existing) if existing else {}
+    saved_capability = str(capability_id or existing.get("capability_id") or "")[:120]
+    saved_contract_hash = str(
+        execution_contract_hash or existing.get("execution_contract_hash") or ""
+    )[:128]
+    saved_failure_stage = str(failure_stage or "")[:40] if normalized == "failed" else ""
     conn.execute(
         """UPDATE automation_runs SET status=?,dispatch=?,task_id=?,delivery_id=?,error=?,
+                  capability_id=?,execution_contract_hash=?,failure_stage=?,
                   finished_at=?,lease_owner='',lease_until='',terminal_source=? WHERE id=?""",
         (
             normalized, str(dispatch)[:40], str(task_id)[:80], str(delivery_id)[:80],
-            str(error)[:1000], _timestamp(current) if normalized != "dispatched" else "",
+            str(error)[:1000], saved_capability, saved_contract_hash, saved_failure_stage,
+            _timestamp(current) if normalized != "dispatched" else "",
             str(dispatch)[:40] if normalized != "dispatched" else "", job["run_id"],
         ),
     )
@@ -166,6 +198,8 @@ def settle_automation_dispatch(
         delivery_id=delivery_id,
         task_id=task_id,
         error=error,
+        failure_stage=(FAILURE_STAGE_ACK if delivery_id else FAILURE_STAGE_TASK)
+        if status != "completed" else "",
     ) if row else None
 
 

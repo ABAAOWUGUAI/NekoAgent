@@ -105,6 +105,10 @@ class InteractionPersistenceRuntime:
             if inbound.get(key) not in {None, ""}
         }
         metadata.update(dict(exchange_metadata or {}))
+        assistant_metadata = {
+            key: value for key, value in dict(exchange_metadata or {}).items()
+            if not str(key).startswith("provider_cache_")
+        }
         with self._connect() as conn:
             message_id = record_conversation(
                 conn, user_id, "user", message, source=source,
@@ -120,7 +124,7 @@ class InteractionPersistenceRuntime:
             )
             record_conversation(
                 conn, user_id, "assistant", reply, source=source,
-                metadata=dict(exchange_metadata or {}),
+                metadata=assistant_metadata,
             )
             if message_id and plan_record.get("id"):
                 bind_plan_to_message(

@@ -19,6 +19,7 @@ from .participation_metadata import (
     event_addresses_assistant,
     event_external_message_id,
     event_is_structural_group,
+    event_message_text,
     event_participation_metadata,
     event_visual_media_payloads,
 )
@@ -1314,23 +1315,21 @@ class CodexAgentPlugin(Star):
             "codex_agent group entry message_type=%s structural_group=1",
             message_type or "unknown",
         )
-        # This adapter is the sole owner of the assistant's group-conversation
-        # policy.  Suppress AstrBot's default Agent before any text/mention/
-        # access early return; other plugin handlers may still run unless this
-        # handler explicitly stops the event below.
+        # This adapter owns group policy; stop the default Agent below.
         event.should_call_llm(True)
         started = time.monotonic()
-        raw_text = (event.get_message_str() or "").strip()
+        raw_text = event_message_text(event)
         participation_metadata = event_participation_metadata(event, bot_id=RUNTIME_STATE.actual_bot_id)
         if raw_text.startswith("/"):
             return
+        # At-only/non-self events must fail closed before a second model router.
+        event.stop_event()
         trace_id = uuid.uuid4().hex[:12]
         is_mention = event_addresses_assistant(event, participation_metadata)
         if not raw_text and not is_mention and not participation_metadata["attachments"]:
             logger.debug("codex_agent group silent group=%s reason=empty_non_mention", group_id or "unknown")
             return
 
-        event.stop_event()
         if not group_id:
             logger.warning("codex_agent group rejected reason=missing_group_id")
             if is_mention:
@@ -1373,11 +1372,12 @@ class CodexAgentPlugin(Star):
                 bridge_payload,
             )
             logger.info(
-                "codex_agent group dispatch trace=%s addressed=%s components=%s self_source=%s elapsed_ms=%s queued=%s",
+                "codex_agent group dispatch trace=%s addressed=%s components=%s self_source=%s self_match=%s elapsed_ms=%s queued=%s",
                 trace_id,
                 int(is_mention),
                 len(participation_metadata["message_components"]),
                 participation_metadata.get("self_id_source") or "missing",
+                int(bool(participation_metadata.get("self_id_match"))),
                 round((time.monotonic() - started) * 1000),
                 int(bool(result.get("delivery_queued"))),
             )
@@ -1459,7 +1459,7 @@ class CodexAgentPlugin(Star):
             return
 
         sender = _sender_id(event)
-        raw_text = (event.get_message_str() or "").strip()
+        raw_text = event_message_text(event)
         participation_metadata = event_participation_metadata(event, bot_id=RUNTIME_STATE.actual_bot_id)
         if not raw_text and not participation_metadata["attachments"]:
             return

@@ -1,10 +1,4 @@
-#!/usr/bin/env python3
-"""Durable schedules and bounded proactive-contact policies.
-
-This module owns time calculation, deterministic policy gates and audit state.
-It deliberately does not know HTTP, QQ or model-provider details; callers supply
-execution, generation and Delivery Outbox adapters.
-"""
+"""Durable schedules and bounded proactive-contact policy."""
 from __future__ import annotations
 
 import json
@@ -22,6 +16,12 @@ from bridge_automation_contracts import (
     normalize_output_contract,
     output_contract_hash,
 )
+from bridge_automation_execution_contract import (
+    derive_execution_contract,
+    execution_contract_hash,
+    normalize_execution_contract,
+    validate_json_budget,
+)
 from bridge_automation_runs import (
     finish_automation_run,
     list_automation_seen_items,
@@ -31,7 +31,7 @@ from bridge_automation_runs import (
 from bridge_reliability_service import stage_proactive_delivery
 from bridge_proactive_messaging_policy import policy_gate_if_present
 import bridge_group_proactive_scheduler as group_proactive
-
+from bridge_automation_proactive_delivery import attach_proactive_delivery, mark_proactive_delivery, note_user_activity, record_proactive_failure, seconds_until_next_event
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -93,10 +93,6 @@ def _timezone(value: object):
     try:
         return ZoneInfo(name)
     except Exception as exc:
-        # Some minimal Windows Python distributions ship without the system
-        # IANA database. Keep deterministic local tests and emergency admin
-        # operations usable for the two built-in zones; production Linux still
-        # uses ZoneInfo and arbitrary validated IANA names.
         if name in {"UTC", "Etc/UTC"}:
             return timezone.utc
         if name == "Asia/Shanghai":
@@ -189,17 +185,33 @@ def _job_payload(payload: dict, existing: dict | None = None) -> dict:
     output_contract = normalize_output_contract(
         payload.get("output_contract", current.get("output_contract_json") or DEFAULT_OUTPUT_CONTRACT),
     )
+    raw_parameters = payload.get("parameters", current.get("parameters_json") or {})
+    if isinstance(raw_parameters, str):
+        try:
+            raw_parameters = json.loads(raw_parameters)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw_parameters = {}
+    parameters = raw_parameters if isinstance(raw_parameters, dict) else {}
+    try:
+        validate_json_budget(parameters)
+        parameters_json = json.dumps(
+            parameters, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        )
+        parameters_size = len(parameters_json.encode("utf-8"))
+    except (TypeError, ValueError, OverflowError, RecursionError, UnicodeEncodeError) as exc:
+        raise ValueError("automation_parameters_invalid") from exc
+    if parameters_size > 4000:
+        raise ValueError("automation_parameters_too_large")
+    execution_contract = normalize_execution_contract(
+        payload.get("execution_contract")
+        or derive_execution_contract(instruction, parameters, action_type=action_type),
+    )
     return {
         "user_id": user_id,
         "title": title,
         "instruction": instruction,
-        "parameters_json": json.dumps(
-            payload.get("parameters", current.get("parameters_json") or {}),
-            ensure_ascii=False,
-            sort_keys=True,
-        ) if isinstance(payload.get("parameters", current.get("parameters_json") or {}), (dict, list)) else str(
-            payload.get("parameters", current.get("parameters_json") or "{}")
-        )[:4000],
+        "parameters_json": parameters_json,
         "action_type": action_type,
         "schedule_type": schedule_type,
         "run_at": timestamp(parsed_run_at) if parsed_run_at else "",
@@ -212,6 +224,10 @@ def _job_payload(payload: dict, existing: dict | None = None) -> dict:
             output_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         ),
         "output_contract_hash": output_contract_hash(output_contract),
+        "execution_contract_json": json.dumps(
+            execution_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ),
+        "execution_contract_hash": execution_contract_hash(execution_contract),
     }
 
 
@@ -220,6 +236,9 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
     job_id = _clip(payload.get("id"), 80) or uuid.uuid4().hex
     existing = _row(conn.execute("SELECT * FROM automation_jobs WHERE id = ?", (job_id,)).fetchone())
     values = _job_payload(payload, existing)
+    execution_contract = json.loads(values["execution_contract_json"])
+    if values["enabled"] and execution_contract.get("status") != "ready":
+        raise ValueError("execution_contract_not_ready")
     now = utc_now()
     requested_due = parse_datetime(payload.get("next_due_at"))
     if values["enabled"]:
@@ -235,9 +254,10 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
         INSERT INTO automation_jobs(
             id, user_id, title, action_type, instruction, parameters_json,
             revision, output_contract_json, output_contract_hash, schedule_type, run_at,
+            execution_contract_json, execution_contract_hash,
             time_of_day, weekdays, interval_minutes, timezone, enabled, state,
             next_due_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id=excluded.user_id, title=excluded.title,
             action_type=excluded.action_type, instruction=excluded.instruction,
@@ -245,6 +265,8 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
             revision=automation_jobs.revision+1,
             output_contract_json=excluded.output_contract_json,
             output_contract_hash=excluded.output_contract_hash,
+            execution_contract_json=excluded.execution_contract_json,
+            execution_contract_hash=excluded.execution_contract_hash,
             schedule_type=excluded.schedule_type, run_at=excluded.run_at,
             time_of_day=excluded.time_of_day, weekdays=excluded.weekdays,
             interval_minutes=excluded.interval_minutes, timezone=excluded.timezone,
@@ -256,6 +278,7 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
             values["instruction"], values["parameters_json"],
             1, values["output_contract_json"], values["output_contract_hash"],
             values["schedule_type"], values["run_at"],
+            values["execution_contract_json"], values["execution_contract_hash"],
             values["time_of_day"], values["weekdays"], values["interval_minutes"],
             values["timezone"], values["enabled"], state,
             timestamp(next_due) if next_due else "", timestamp(now), timestamp(now),
@@ -322,21 +345,41 @@ def claim_due_jobs(conn: sqlite3.Connection, *, now: datetime | None = None, lim
             run_id = str(existing["id"])
             conn.execute(
                 """UPDATE automation_runs SET lease_owner=?,lease_until=?,
-                          attempt_count=attempt_count+1,error='',finished_at=''
+                          attempt_count=attempt_count+1,error='',finished_at='',failure_stage=''
                    WHERE id=? AND status='running'""",
                 (owner, lease_until, run_id),
             )
         else:
+            try:
+                execution_payload = json.loads(str(item.get("execution_contract_json") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                execution_payload = {}
+            capability_id = ""
+            persisted_contract_hash = ""
+            if isinstance(execution_payload, dict):
+                try:
+                    normalized_contract = normalize_execution_contract(execution_payload)
+                    computed_contract_hash = execution_contract_hash(normalized_contract)
+                except (TypeError, ValueError, RecursionError):
+                    normalized_contract = None
+                    computed_contract_hash = ""
+                if computed_contract_hash and computed_contract_hash == str(item.get("execution_contract_hash") or ""):
+                    capability_id = str(normalized_contract.get("capability_id") or "")
+                    persisted_contract_hash = computed_contract_hash
             conn.execute(
                 """INSERT INTO automation_runs(
                        id,job_id,user_id,scheduled_for,status,started_at,
                        lease_owner,lease_until,attempt_count,job_revision,
-                       config_hash,output_contract_hash
-                   ) VALUES(?,?,?,?,'running',?,?,?,1,?,?,?)""",
+                       config_hash,output_contract_hash,capability_id,
+                       execution_contract_hash,failure_stage
+                   ) VALUES(?,?,?,?,'running',?,?,?,1,?,?,?,?,?,?)""",
                 (
                     run_id, item["id"], item["user_id"], scheduled_for,
                     current_text, owner, lease_until, int(item.get("revision") or 1),
                     automation_config_hash(item), str(item.get("output_contract_hash") or ""),
+                    capability_id,
+                    persisted_contract_hash,
+                    "",
                 ),
             )
         item.update({"lease_until": lease_until, "run_id": run_id, "scheduled_for": scheduled_for})
@@ -787,62 +830,6 @@ def record_proactive_decision(
     if action == "send" and stage_proactive_delivery(conn, policy, event_id, message):
         saved["action_staged"] = True
     return saved
-
-
-def record_proactive_failure(conn: sqlite3.Connection, policy: dict, error: str, *, now: datetime | None = None) -> None:
-    current = (now or utc_now()).astimezone(timezone.utc)
-    _defer_policy(conn, policy["user_id"], "retry_wait", _clip(error, 300), current + timedelta(minutes=15), current)
-    conn.execute(
-        """UPDATE proactive_events SET error=? WHERE id=(
-               SELECT id FROM proactive_events WHERE user_id=? AND action='send'
-                 AND delivery_id='' AND error='' ORDER BY decision_at DESC LIMIT 1
-           )""",
-        (_clip(error, 1000), policy["user_id"]),
-    )
-    conn.execute(
-        "UPDATE proactive_policies SET failed_count=failed_count+1 WHERE user_id=?",
-        (policy["user_id"],),
-    )
-
-
-def attach_proactive_delivery(conn: sqlite3.Connection, event_id: str, delivery_id: str) -> dict | None:
-    ensure_automation_tables(conn)
-    conn.execute(
-        "UPDATE proactive_events SET delivery_id=? WHERE id=?",
-        (_clip(delivery_id, 80), _clip(event_id, 80)),
-    )
-    return _row(conn.execute("SELECT * FROM proactive_events WHERE id=?", (_clip(event_id, 80),)).fetchone())
-
-
-def mark_proactive_delivery(conn: sqlite3.Connection, delivery_id: str, *, error: str = "", now: datetime | None = None) -> dict | None:
-    ensure_automation_tables(conn)
-    from bridge_proactive_feedback import mark_delivery
-
-    return mark_delivery(conn, delivery_id, error=error, now=now)
-
-
-def note_user_activity(conn: sqlite3.Connection, user_id: str, *, now: datetime | None = None) -> dict | None:
-    ensure_automation_tables(conn)
-    from bridge_proactive_feedback import note_activity
-
-    return note_activity(conn, user_id, now=now)
-
-
-def seconds_until_next_event(conn: sqlite3.Connection, *, now: datetime | None = None, maximum: float = 60.0) -> float:
-    ensure_automation_tables(conn)
-    current = (now or utc_now()).astimezone(timezone.utc)
-    rows = conn.execute(
-        """SELECT next_due_at AS due FROM automation_jobs WHERE enabled=1 AND next_due_at<>''
-           UNION ALL
-           SELECT next_check_at AS due FROM proactive_policies
-           WHERE enabled=1 AND authorized=1 AND next_check_at<>''"""
-    ).fetchall()
-    delays = []
-    for row in rows:
-        due = parse_datetime(row["due"])
-        if due:
-            delays.append(max(0.0, (due - current).total_seconds()))
-    return min([max(0.25, float(maximum)), *delays]) if delays else max(0.25, float(maximum))
 
 
 __all__ = [

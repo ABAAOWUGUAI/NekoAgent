@@ -49,6 +49,7 @@ def _service_event_lines(text: str, limit: int = 12) -> list[str]:
 def collect_llbot_diagnostics(
     *,
     assistant_connect,
+    task_connect=None,
     service_status: Callable[[], dict],
     service_logs: Callable[[], tuple[bool, str]],
     bridge_probe: Callable[[], dict],
@@ -106,7 +107,7 @@ def collect_llbot_diagnostics(
         qq_status = "online"
         recommendation = "LLBot、OneBot、AstrBot 插件和 Bridge 均在线；消息异常时优先查看消息审计与 Delivery 状态。"
 
-    participation = participation_diagnostics(assistant_connect)
+    participation = participation_diagnostics(assistant_connect, task_connect=task_connect)
     checks = [
         {"name": "llbot_service", "ok": service_active, "label": "LLBot 服务"},
         {"name": "qq_login", "ok": qq_online, "label": "QQ 登录"},
