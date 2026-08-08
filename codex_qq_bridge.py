@@ -6772,24 +6772,14 @@ def _github_search_fallback(
         "https://api.github.com/search/repositories"
         f"?q={quote(query, safe=':')}&sort=stars&order=desc&per_page={per_page}"
     )
-    ok, body = _short_command(
-        [
-            "curl",
-            "-fsSL",
-            "--http1.1",
-            "--connect-timeout",
-            "8",
-            "--max-time",
-            "20",
-            "-A",
-            "Mozilla/5.0",
-            "-H",
-            "Accept: application/vnd.github+json",
-            url,
-        ],
-        timeout=25,
-        env=_direct_command_env(),
-    )
+    gh_token = os.environ.get("GITHUB_TOKEN") or ""  # authenticated Search quota
+    curl_args = ["curl", "-fsSL", "--http1.1", "--connect-timeout", "8",
+                 "--max-time", "20", "-A", "Mozilla/5.0",
+                 "-H", "Accept: application/vnd.github+json"]
+    if gh_token.strip():
+        curl_args += ["-H", "Authorization: Bearer " + gh_token.strip()]
+    curl_args.append(url)
+    ok, body = _short_command(curl_args, timeout=25, env=_direct_command_env())
     if not ok:
         return None, body or "GitHub Search API fetch failed"
 
@@ -6862,23 +6852,9 @@ def _github_trending(
         }
     url = f"https://github.com/trending?since={since}"
     ok, body = _short_command(
-        [
-            "curl",
-            "-fsSL",
-            "--compressed",
-            "--http1.1",
-            "--retry",
-            "2",
-            "--retry-delay",
-            "2",
-            "--connect-timeout",
-            "8",
-            "--max-time",
-            "25",
-            "-A",
-            "Mozilla/5.0",
-            url,
-        ],
+        ["curl", "-fsSL", "--compressed", "--http1.1", "--retry", "2",
+         "--retry-delay", "2", "--connect-timeout", "8", "--max-time", "25",
+         "-A", "Mozilla/5.0", url],
         timeout=35,
     )
     if not ok:
