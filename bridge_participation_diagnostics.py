@@ -76,6 +76,7 @@ def _delivery_projection_rows(conn, limit: int) -> list[dict]:
         SELECT d.decision_json,
                o.id AS delivery_id,
                CASE
+                 WHEN o.superseded_by<>'' THEN 'superseded'
                  WHEN o.dead_letter=1 THEN 'failed'
                  WHEN o.acked_at<>'' AND o.delivery_certainty='confirmed' THEN 'delivered'
                  WHEN o.delivery_certainty IN (
@@ -85,6 +86,7 @@ def _delivery_projection_rows(conn, limit: int) -> list[dict]:
                  ELSE 'pending'
                END AS delivery_state,
                CASE
+                 WHEN o.superseded_by<>'' THEN 'failed'
                  WHEN o.acked_at<>'' AND o.delivery_certainty='confirmed' THEN 'confirmed'
                  WHEN o.dead_letter=1 OR o.delivery_certainty IN ('failed','rejected') THEN 'failed'
                  WHEN o.delivery_certainty='ambiguous' THEN 'ambiguous'
@@ -134,6 +136,7 @@ def _cross_database_media_projection_rows(
                 SELECT o.engagement_decision_id,
                        o.id AS delivery_id,
                        CASE
+                         WHEN o.superseded_by<>'' THEN 'superseded'
                          WHEN o.dead_letter=1 THEN 'failed'
                          WHEN o.acked_at<>'' AND o.delivery_certainty='confirmed' THEN 'delivered'
                          WHEN o.delivery_certainty IN (
@@ -143,6 +146,7 @@ def _cross_database_media_projection_rows(
                          ELSE 'pending'
                        END AS delivery_state,
                        CASE
+                         WHEN o.superseded_by<>'' THEN 'failed'
                          WHEN o.acked_at<>'' AND o.delivery_certainty='confirmed' THEN 'confirmed'
                          WHEN o.dead_letter=1 OR o.delivery_certainty IN ('failed','rejected') THEN 'failed'
                          WHEN o.delivery_certainty='ambiguous' THEN 'ambiguous'

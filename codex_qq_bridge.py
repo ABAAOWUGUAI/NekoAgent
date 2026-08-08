@@ -4444,15 +4444,15 @@ def _process_group_participation_queue() -> None:
     process_group_participation_queue(globals())
 
 
-def process_knowledge_ingestion(runtime: dict) -> None:
-    """Bounded knowledge-ingestion pass inside the existing automation worker."""
-    from bridge_knowledge_ingestion_runtime import run_knowledge_ingestion
-    from bridge_knowledge_ingestion_worker import maybe_run_knowledge_ingestion
+def process_knowledge_ingestion(runtime: dict) -> dict:
+    """Bounded knowledge-ingestion pass inside the existing automation worker.
 
-    connect = runtime.get("_assistant_db_connect")
-    if connect is None:
-        return
-    maybe_run_knowledge_ingestion(connect, run_ingestion=run_knowledge_ingestion)
+    Returns the worker summary so the loop can consume it; fatal failures are
+    surfaced via health + structured logs inside the worker module.
+    """
+    from bridge_knowledge_ingestion_worker import process_knowledge_ingestion_pass
+
+    return process_knowledge_ingestion_pass(runtime)
 
 
 def _automation_worker() -> None:
@@ -7016,7 +7016,7 @@ ARTIFACT_RUNTIME = ArtifactRuntime(
 VOICE_OUTPUT_RUNTIME = VoiceOutputRuntime(_assistant_db_connect, ARTIFACT_RUNTIME.service)
 VOICE_DELIVERY_RUNTIME = VoiceDeliveryRuntime(_phase2_outbox, ARTIFACT_RUNTIME.service)
 WORKER_HEALTH = WorkerHealthRegistry()
-for worker_id in ("approval_expiry","automation"):
+for worker_id in ("approval_expiry","automation","knowledge_ingestion"):
     WORKER_HEALTH.register(worker_id,stale_after_seconds=180)
 
 

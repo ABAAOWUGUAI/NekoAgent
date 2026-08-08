@@ -62,6 +62,16 @@ def main() -> int:
         smoke_tests.test_continuity_terminal_outcomes_settle_plan_and_empty_skill_state()
         smoke_tests.test_owner_private_voice_output_is_policy_owned_and_opt_in()
         tests = 8
+        reliability_test_path = ROOT / "tests" / "test_reliability_regression_public.py"
+        if reliability_test_path.is_file():
+            reliability_tests = _load("public_reliability_regression_tests", "tests/test_reliability_regression_public.py")
+            reliability_tests.test_knowledge_worker_passes_connection_and_surfaces_fatal_connect_failure()
+            reliability_tests.test_knowledge_worker_surfaces_error_persistence_failure_as_fatal()
+            reliability_tests.test_knowledge_worker_per_source_failure_is_visible_not_swallowed()
+            reliability_tests.test_automation_business_verdict_blocks_off_topic_ai_agent_results()
+            reliability_tests.test_automation_business_verdict_passes_on_topic_ai_agent_results()
+            reliability_tests.test_superseded_delivery_projects_terminal_not_pending()
+            tests += 6
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")

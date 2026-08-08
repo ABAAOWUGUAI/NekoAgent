@@ -16,6 +16,7 @@ from bridge_automation_execution_contract import (
     normalize_execution_contract,
     validate_json_budget,
 )
+from bridge_automation_business_gate import evaluate_automation_business_verdict
 
 
 _FORBIDDEN_TRANSPORT_KEYS = frozenset(
@@ -125,6 +126,22 @@ def execute_automation_capability(
         _validate_safe_transport_value(evidence)
     except (TypeError, ValueError, OverflowError, RecursionError, UnicodeEncodeError):
         return _failed("evidence_invalid", stage="evidence")
+    # Enforce the server-owned business verdict before any delivery is enqueued.
+    # Only ``github.trending.read`` is bound to a structured verdict; other
+    # capabilities keep their existing evidence-based contract here.  A result
+    # that fails the business contract (insufficient items, duplicate repo,
+    # off-topic for a requested ``topic``) must never be reported as success.
+    if capability_id == "github.trending.read":
+        verdict = evaluate_automation_business_verdict(
+            capability_id,
+            result,
+            contract_arguments=dispatch_contract.get("arguments"),
+        )
+        if not verdict.get("passed"):
+            return _failed(
+                str(verdict.get("error_kind") or "github_trending_business_gate"),
+                stage="evidence",
+            )
     action_contract_hash = execution_contract_hash(normalized)
     dispatch_contract_hash = execution_contract_hash(dispatch_contract)
     payload = {

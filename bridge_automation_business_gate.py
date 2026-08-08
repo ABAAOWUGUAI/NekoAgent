@@ -69,6 +69,39 @@ def _item_source_url(item: Mapping) -> str:
     return str(item.get("url") or item.get("html_url") or "").strip()
 
 
+# Closed-set topic keywords for the GitHub AI / AI Agent contract.  Matching is
+# deliberately conservative: only clearly AI/agent signal counts, so the "10 条
+# AI/AI Agent 热门项目" business contract is actually enforced rather than
+# reported as success on generic trending repos.
+_TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "ai-agent": (
+        "ai agent", "agent", "llm", "autonomous", "langchain", "llamaindex",
+        "copilot", "mcp", "assistant", "chatbot", "chat bot", "rag", "genai",
+        "multiagent", "multi-agent", "智能体", "代理", "大模型", "模型",
+        "gpt", "claude", "ollama", "openai", "anthropic",
+    ),
+    "ai": (
+        "ai", "artificial intelligence", "llm", "machine learning", "deep learning",
+        "neural", "transformer", "gpt", "claude", "diffusion", "genai", "rag",
+        "model", "大模型", "人工智能", "机器学习", "模型",
+    ),
+}
+
+
+def _item_topic_relevant(item: Mapping, topic: str) -> bool:
+    """Deterministic topic-relevance check over repo identity + description."""
+    keywords = _TOPIC_KEYWORDS.get(topic)
+    if not keywords:
+        return True  # no topic requested -> any repo satisfies the contract
+    text = " ".join(
+        (
+            str(item.get("repo") or item.get("name") or ""),
+            str(item.get("description") or ""),
+        )
+    ).lower()
+    return any(keyword in text for keyword in keywords)
+
+
 def evaluate_automation_business_verdict(
     capability_id: str,
     result: Mapping,
@@ -127,6 +160,7 @@ def evaluate_automation_business_verdict(
             "reason": f"insufficient_items_{len(items)}_of_{limit}",
             "error_kind": "github_trending_insufficient_items",
         }
+    topic = str(args.get("topic") or "").strip().lower()
     seen: set[str] = set()
     for item in items:
         if not isinstance(item, Mapping):
@@ -160,6 +194,13 @@ def evaluate_automation_business_verdict(
                 "error_kind": "github_trending_duplicate_item",
             }
         seen.add(key)
+        if not _item_topic_relevant(item, topic):
+            return {
+                "passed": False,
+                "status": "blocked",
+                "reason": f"item_off_topic:{identity}",
+                "error_kind": "github_trending_topic_mismatch",
+            }
     return {"passed": True, "status": "passed", "reason": "", "error_kind": ""}
 
 
