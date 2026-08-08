@@ -385,11 +385,12 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
             projection_bonus = 3.0 if projected_item else 0.0
             score = overlap * 10.0 + projection_bonus + freshness_bonus
             reason = "fts_bm25" if projected_item else "keyword_overlap" if overlap else "recent_published"
+            backend = (projected_item or {}).get("backend") or reason
             item["retrieval"] = {
                 "reason": reason,
                 "score": score,
                 "freshness": freshness,
-                "backend": (projected_item or {}).get("backend", "recent"),
+                "backend": backend,
             }
             scored.append((score, item))
     scored.sort(key=lambda item: (item[0], str(item[1]["updated_at"])), reverse=True)
