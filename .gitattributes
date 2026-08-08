@@ -1,0 +1,6 @@
+# Narrow line-ending policy: the starter-pack appearance manifest is
+# hash-verified against the value recorded in manifest.json.  A CRLF checkout
+# (core.autocrlf=true) would change the bytes on disk and fail the public Gate
+# on Windows, so this file is pinned to LF on every platform.  Everything else
+# follows the repository default.
+starter-packs/xiaofei/appearance/pet-xiaofei-animated.json text eol=lf

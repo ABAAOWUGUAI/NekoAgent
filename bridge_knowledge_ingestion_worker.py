@@ -4,6 +4,12 @@ The knowledge ingestion worker reuses the existing Automation/Proactive worker
 loop; it is not a second unsupervised process.  ``maybe_run_knowledge_ingestion``
 is called from the bounded worker and only acts when at least one enabled,
 Owner-configured source exists.
+
+Failure policy: every failure path returns a summary the caller can consume and
+persist.  ``fatal`` is set when the worker could not even list sources or
+persist its error rows — the caller must surface that (structured log + worker
+health) instead of treating it as a normal empty run.  Errors never bring the
+loop down, but they are never silently swallowed either.
 """
 
 from __future__ import annotations
@@ -20,9 +26,20 @@ def list_enabled_ingestion_sources(conn: sqlite3.Connection) -> list[dict]:
             """SELECT id,source_type,root_path,enabled,config_revision,config_json
                FROM assistant_knowledge_sources WHERE enabled=1"""
         ).fetchall()
-    except sqlite3.Error:
-        return []
+    except sqlite3.Error as exc:
+        raise ValueError("knowledge_source_listing_failed") from exc
     return [dict(row) for row in rows]
+
+
+def _summary(results: list[dict]) -> dict:
+    return {
+        "ran": sum(1 for item in results if item.get("ok")),
+        "skipped": sum(1 for item in results if not item.get("ok") and item.get("reason") == "disabled"),
+        "errors": [item for item in results if "error" in item],
+        "sources": results,
+        "fatal": "",
+        "summary_json": json.dumps(results, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    }
 
 
 def maybe_run_knowledge_ingestion(
@@ -30,6 +47,7 @@ def maybe_run_knowledge_ingestion(
     *,
     run_ingestion: Callable[..., dict],
     persist_errors: bool = True,
+    log_event: Callable[[dict], None] | None = None,
 ) -> dict:
     """Run one pass per enabled source; never publishes; bounded and idempotent.
 
@@ -40,14 +58,37 @@ def maybe_run_knowledge_ingestion(
     ``persist_errors`` is set, mirrored into the run-metadata table so a source
     that never reaches the runner stays observable instead of silently
     vanishing.
+
+    Returns a summary with ``fatal`` set (non-empty) when the worker could not
+    even list sources or could not persist its own error rows.  ``log_event``
+    receives sanitized structured failure records so the caller can emit logs
+    and reflect failures into worker health without duplicating the message.
     """
 
-    results = []
+    # Stage 1: source listing.  A connect/list failure is not a normal empty
+    # run — it is the worker being unable to reach its own metadata table.
     try:
         with assistant_connect() as conn:
             sources = list_enabled_ingestion_sources(conn)
-    except (sqlite3.Error, ValueError):
-        return {"ran": 0, "skipped": 0, "errors": [], "sources": []}
+    except (sqlite3.Error, ValueError) as exc:
+        failure = {
+            "stage": "source_listing",
+            "error": "knowledge_source_listing_failed",
+            "detail": _safe_detail(exc),
+        }
+        if log_event is not None:
+            log_event(failure)
+        return {
+            "ran": 0,
+            "skipped": 0,
+            "errors": [],
+            "sources": [],
+            "fatal": "source_listing_failed",
+            "error_kind": "knowledge_source_listing_failed",
+            "error": _safe_detail(exc),
+            "summary_json": json.dumps(failure, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        }
+    results = []
     for source in sources:
         config = {
             "source_type": str(source.get("source_type") or ""),
@@ -69,20 +110,29 @@ def maybe_run_knowledge_ingestion(
             )
             continue
         results.append(result)
-    summary = {
-        "ran": sum(1 for item in results if item.get("ok")),
-        "skipped": sum(1 for item in results if not item.get("ok") and item.get("reason") == "disabled"),
-        "errors": [item for item in results if "error" in item],
-        "sources": results,
-        "summary_json": json.dumps(results, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-    }
+    summary = _summary(results)
     if persist_errors and summary["errors"]:
         try:
             with assistant_connect() as conn:
                 record_worker_error_runs(conn, summary)
-        except Exception:  # noqa: BLE001 - observability must never break the loop
-            pass
+        except Exception as exc:  # noqa: BLE001 - persistence failure surfaced below
+            summary["fatal"] = "error_persistence_failed"
+            summary["error_kind"] = "knowledge_worker_error_persistence_failed"
+            summary["error"] = _safe_detail(exc)
+            if log_event is not None:
+                log_event(
+                    {
+                        "stage": "error_persistence",
+                        "error": "knowledge_worker_error_persistence_failed",
+                        "detail": _safe_detail(exc),
+                    },
+                )
     return summary
+
+
+def _safe_detail(exc: Exception) -> str:
+    """A short, sanitised error label — never raw paths, bodies or identifiers."""
+    return str(type(exc).__name__)[:80]
 
 
 def record_worker_error_runs(
@@ -106,7 +156,6 @@ def record_worker_error_runs(
     for item in errors:
         source_id = str(item.get("source_id") or "")
         error_kind = str(item.get("error_kind") or type(item.get("error") or "").__name__)[:80]
-        detail = str(item.get("error") or "")[:160]
         now = utc_now()
         run_id = "knrun-" + uuid.uuid4().hex
         conn.execute(
@@ -126,8 +175,52 @@ def record_worker_error_runs(
     return written
 
 
+def process_knowledge_ingestion_pass(runtime: Mapping) -> dict:
+    """Run one bounded pass inside the automation worker with health reflection.
+
+    The Bridge's automation loop invokes this; the worker module owns the
+    orchestration so the legacy bridge file does not grow.  ``runtime`` must
+    carry ``_assistant_db_connect`` and optionally ``WORKER_HEALTH``.  A fatal
+    worker failure (source listing or error persistence) is surfaced through
+    worker health and a sanitized structured log line; the loop itself keeps
+    running.
+    """
+
+    from bridge_knowledge_ingestion_runtime import run_knowledge_ingestion
+
+    connect = runtime.get("_assistant_db_connect")
+    if connect is None:
+        return {"fatal": "worker_unavailable", "ran": 0, "skipped": 0, "errors": [], "sources": []}
+    health = runtime.get("WORKER_HEALTH")
+    worker_id = "knowledge_ingestion"
+    if health is not None:
+        health.begin(worker_id)
+
+    def log_failure(event: Mapping) -> None:
+        # Sanitized structured log: stable error labels only, never raw paths,
+        # bodies or identifiers.
+        print(
+            "knowledge:" + str(event.get("stage") or "") + ":" + str(event.get("error") or ""),
+            flush=True,
+        )
+
+    summary = maybe_run_knowledge_ingestion(
+        connect,
+        run_ingestion=run_knowledge_ingestion,
+        log_event=log_failure,
+    )
+    fatal = str(summary.get("fatal") or "")
+    if health is not None:
+        if fatal:
+            health.failure(worker_id, RuntimeError(fatal))
+        else:
+            health.success(worker_id)
+    return summary
+
+
 __all__ = [
     "list_enabled_ingestion_sources",
     "maybe_run_knowledge_ingestion",
+    "process_knowledge_ingestion_pass",
     "record_worker_error_runs",
 ]
