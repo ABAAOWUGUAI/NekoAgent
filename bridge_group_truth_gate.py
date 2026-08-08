@@ -44,17 +44,29 @@ SEND_STATE_BLOCKED = "blocked"
 SEND_STATE_DEGRADED = "degraded"
 
 # Closed set of signature tokens (B5).  Server-configurable bounds live in
-# ``signature_budget_limits``; the default is 4/10 and max 2 consecutive.
+# ``signature_budget_limits``; the default is 3/10 (~30% meow ratio, leaving
+# headroom under the 35% owner cap) and max 1 consecutive meow ending.
 SIGNATURE_TOKENS = ("喵", "～")
+MEOW_TOKEN = "喵"
 DEFAULT_SIGNATURE_BUDGET_WINDOW = 10
-DEFAULT_SIGNATURE_BUDGET_MAX = 4
-DEFAULT_SIGNATURE_BUDGET_MAX_CONSECUTIVE = 2
+DEFAULT_SIGNATURE_BUDGET_MAX = 3
+DEFAULT_SIGNATURE_BUDGET_MAX_CONSECUTIVE = 1
 SIGNATURE_MIN_WINDOW = 4
 SIGNATURE_MAX_WINDOW = 40
 SIGNATURE_MIN_MAX = 0
 SIGNATURE_MAX_MAX = 10
 SIGNATURE_MIN_CONSECUTIVE = 1
 SIGNATURE_MAX_CONSECUTIVE = 5
+
+# Serious-category replies default to no meow token regardless of window
+# ratio: identity clarification, error/diagnostic, factual negative, refusal,
+# capability boundary, and strong personal boundary.  These read as "trying
+# hard to stay cute" when a 喵 is bolted on, which is exactly the template feel
+# the owner rejected.  The reply is still allowed — just without the token.
+_SERIOUS_REPLY_PATTERNS = (
+    re.compile(r"(?:不是真人|不是人|AI助手|我是(?:个)?助手|我没有|我没法|无法|做不到|不能直接|暂时没有|没有符合|请检查|网络代理|连接异常|异常|抱歉|不哄|认真|不答应|不同意|拒绝|说不|不行)", re.IGNORECASE),
+    re.compile(r"(?:澄清|纠正|更正|说明一下|解释一下|意思是|我是说)"),
+)
 
 
 def normalize_signature_budget(value: Mapping | None) -> dict:
@@ -89,6 +101,14 @@ def _has_signature_token(text: str) -> bool:
     return any(token in value for token in SIGNATURE_TOKENS)
 
 
+def _has_meow_token(text: str) -> bool:
+    return MEOW_TOKEN in str(text or "")
+
+
+def _is_serious_reply(draft: str) -> bool:
+    return any(pattern.search(str(draft or "")) for pattern in _SERIOUS_REPLY_PATTERNS)
+
+
 def signature_budget_issues(
     draft: str,
     recent_confirmed: Sequence[Mapping],
@@ -99,20 +119,31 @@ def signature_budget_issues(
 
     ``recent_confirmed`` is the rolling window of *confirmed* assistant group
     projections (post-ACK), never model drafts or failed deliveries.
+
+    Two independent gates (owner directive, 2026-08-09):
+
+    - cadence: the ratio of replies carrying the meow token within the window
+      must stay within ``max_tokens`` (default 3/10 = 30%, under the 35% cap),
+      and consecutive meow endings must not exceed ``max_consecutive``.
+    - category: clarification / error / factual-negative / refusal / boundary
+      replies default to *no* meow token regardless of the window ratio.
     """
 
     limits = normalize_signature_budget(budget)
     issues: list[str] = []
     if not _has_signature_token(draft):
         return issues
+    if _is_serious_reply(draft):
+        issues.append(ISSUE_SIGNATURE_OVERUSE)
+        return issues
     window = int(limits["window"])
     recent = [item for item in recent_confirmed if isinstance(item, Mapping)][-window:]
-    used = sum(1 for item in recent if _has_signature_token(str(item.get("content") or "")))
+    used = sum(1 for item in recent if _has_meow_token(str(item.get("content") or "")))
     if used >= int(limits["max_tokens"]):
         issues.append(ISSUE_SIGNATURE_OVERUSE)
     consecutive = 0
     for item in reversed(recent):
-        if _has_signature_token(str(item.get("content") or "")):
+        if _has_meow_token(str(item.get("content") or "")):
             consecutive += 1
             if consecutive >= int(limits["max_consecutive"]):
                 issues.append(ISSUE_SIGNATURE_OVERUSE)
@@ -147,6 +178,15 @@ _MEDIA_CLAIM_PATTERNS = (
     re.compile(r"(?:这个|这张|这图|图中|图片|画面|杯子|玩偶|立牌|手办).{0,20}(?:是|像|颜色|造型|立体|材质)", re.IGNORECASE),
     re.compile(r"(?:我看到|看起来|看上去|颜色是|造型是)", re.IGNORECASE),
 )
+# Visual-experience claims that describe having *looked at* media.  These are
+# only checked while observation is not ``ready``; a factual visual statement
+# requires an observation.  Meta statements about media transport ("你们发了
+# 不少媒体内容") are intentionally not matched here.
+_VISUAL_EXPERIENCE_PATTERNS = (
+    re.compile(r"(?:刚看|刚看到|刚才看到|看过).{0,8}(?:图|图片|照片|画面|视频|动画|图吧|刷图)", re.IGNORECASE),
+    re.compile(r"(?:看到|看见了|看见|看到了).{0,8}(?:刷图|发图|发图片|发照片|晒图|发视频|动图)", re.IGNORECASE),
+    re.compile(r"(?:这张|这图|那图|图片|截图).{0,8}(?:我)?(?:看了|看过|看过了)", re.IGNORECASE),
+)
 _SENSORY_CLAIM_PATTERNS = (
     re.compile(r"(?:我听到|听过|在循环|播放的是|这首歌是|声音.{0,6}(?:是|像))", re.IGNORECASE),
 )
@@ -172,6 +212,9 @@ def _media_claim_without_evidence(reply: str, envelope: Mapping) -> str | None:
         if pattern.search(reply):
             return ISSUE_MEDIA_CLAIM_WITHOUT_EVIDENCE
     for pattern in _SENSORY_CLAIM_PATTERNS:
+        if pattern.search(reply):
+            return ISSUE_MEDIA_CLAIM_WITHOUT_EVIDENCE
+    for pattern in _VISUAL_EXPERIENCE_PATTERNS:
         if pattern.search(reply):
             return ISSUE_MEDIA_CLAIM_WITHOUT_EVIDENCE
     return None

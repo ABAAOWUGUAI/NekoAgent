@@ -573,12 +573,12 @@ def complete_group_dispatch(
     conversation_frame: dict | None = None,
 ) -> bool:
     reply = str(result.get("reply") or "").strip()
-    # Carry only bounded media lifecycle categories into the Delivery payload;
-    # raw attachment data remains at the media boundary.
     result.update(media_trace_categories(conversation_frame))
-    # Uninvited targeted judgement is cancelled before the final truth gate.
     reply = apply_group_safety_gate(result, payload, conversation_frame, reply)
-
+    # Cadence budget needs the confirmed-projection window (defect-3).
+    sql = ("SELECT content FROM group_messages WHERE group_id=? AND sender_id='bot'"
+           " AND replied=1 AND content<>'' ORDER BY id DESC LIMIT 10")
+    result["recent_confirmed"] = [{"content": r[0] or ""} for r in conn.execute(sql, (str(group_id or "").strip(),)).fetchall()]
     # Final truth gate (B4): a ``degraded`` style result is no longer sendable,
     # and deterministic truth issues (media claim without evidence, fabricated
     # experience, unsupported fact, target mismatch, sycophantic agreement,
