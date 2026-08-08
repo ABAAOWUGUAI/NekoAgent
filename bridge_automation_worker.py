@@ -22,6 +22,16 @@ def run_automation_worker(runtime: dict) -> None:
                 assistant_connect, task_connect, limit=50,
             )
             runtime["process_proactive_policies"](runtime)
+            # Knowledge ingestion reuses this same bounded worker loop.  It only
+            # scans Owner-configured enabled sources and never publishes; a
+            # missing/disabled config is a no-op.
+            process_knowledge_ingestion = runtime.get("process_knowledge_ingestion")
+            if process_knowledge_ingestion is not None:
+                try:
+                    process_knowledge_ingestion(runtime)
+                except Exception:
+                    # A bounded worker must never be taken down by one source.
+                    pass
             with assistant_connect() as conn:
                 wait_seconds = runtime["seconds_until_next_event"](
                     conn, maximum=60.0,

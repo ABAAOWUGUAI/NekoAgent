@@ -351,5 +351,27 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
                 (execution_json, execution_contract_hash(execution_contract), str(row[0])),
             )
 
+    # Contract-repair audit ledger.  Every deterministic migration of a
+    # persisted execution contract writes one row here, retaining the old
+    # values.  This is operational metadata only; the business truth continues
+    # to live in automation_jobs/automation_runs.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS automation_contract_repairs (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            repaired_at TEXT NOT NULL,
+            derivation_version INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT '',
+            persisted_capability_id TEXT NOT NULL DEFAULT '',
+            derived_capability_id TEXT NOT NULL DEFAULT '',
+            persisted_contract_json TEXT NOT NULL DEFAULT '{}',
+            derived_contract_json TEXT NOT NULL DEFAULT '{}',
+            persisted_hash TEXT NOT NULL DEFAULT '',
+            derived_hash TEXT NOT NULL DEFAULT '',
+            network_required_rose INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(job_id) REFERENCES automation_jobs(id)
+        )"""
+    )
+
 
 __all__ = ["ensure_automation_tables"]

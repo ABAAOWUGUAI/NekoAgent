@@ -110,33 +110,51 @@ def group_context(
     conn: sqlite3.Connection,
     group_id: str,
     limit: int = DEFAULT_GROUP_CONTEXT_LIMIT,
+    *,
+    preserve_latest_message_id: int | None = None,
 ) -> list[dict]:
     columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(group_messages)")}
     if "retention_class" in columns and participation_shadow_enabled(conn):
         now = _utc_now()
-        conn.execute(
-            """
-            UPDATE group_messages SET content='',body_redacted_at=?
-            WHERE retention_class='transient' AND content<>''
-              AND expires_at<>'' AND expires_at<=?
-            """,
-            (now, now),
-        )
+        if preserve_latest_message_id:
+            conn.execute(
+                """
+                UPDATE group_messages SET content='',body_redacted_at=?
+                WHERE retention_class='transient' AND content<>''
+                  AND expires_at<>'' AND expires_at<=? AND id<>?
+                """,
+                (now, now, int(preserve_latest_message_id)),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE group_messages SET content='',body_redacted_at=?
+                WHERE retention_class='transient' AND content<>''
+                  AND expires_at<>'' AND expires_at<=?
+                """,
+                (now, now),
+            )
         rows = conn.execute(
             """
             SELECT id,sender_id,sender_name,content,is_mention,replied,created_at,
-                   retention_class,expires_at
+                   retention_class,expires_at,external_message_id,metadata_json
             FROM group_messages
             WHERE group_id=? AND content<>'' AND retention_class<>'metadata_only'
-              AND (expires_at='' OR expires_at>?)
+                  AND (expires_at='' OR expires_at>? OR id=?)
             ORDER BY id DESC LIMIT ?
             """,
-            (str(group_id or "").strip(), now, normalize_group_context_limit(limit)),
+            (
+                str(group_id or "").strip(),
+                now,
+                int(preserve_latest_message_id or 0),
+                normalize_group_context_limit(limit),
+            ),
         ).fetchall()
         return [dict(row) for row in reversed(rows)]
     rows = conn.execute(
         """
-        SELECT id,sender_id,sender_name,content,is_mention,replied,created_at
+        SELECT id,sender_id,sender_name,content,is_mention,replied,created_at,
+               external_message_id,metadata_json
         FROM group_messages WHERE group_id=? ORDER BY id DESC LIMIT ?
         """,
         (str(group_id or "").strip(), normalize_group_context_limit(limit)),

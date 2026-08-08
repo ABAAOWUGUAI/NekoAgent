@@ -22,6 +22,58 @@ _SCHEDULE_WRAPPER_RE = re.compile(
     r"(?:一个)?(?:定时任务|定时计划|定时提醒)(?:\s*(?:给到我|发给我|推送给我|提醒我))?\s*$",
 )
 
+# Server-owned, closed-set source aliases.  ``githu`` is the historical real
+# misspelling from the 2026-08-06/08 incident; an alias only normalises when it
+# also appears in an explicit GitHub trending context below, so ordinary text
+# mentioning the string alone is never coerced.
+_SOURCE_ALIASES: dict[str, str] = {"githu": "github"}
+
+# Only normalise a source alias when GitHub trending/topic context is present,
+# so a bare misspelling elsewhere does not route to a capability.
+_GITHUB_CONTEXT_RE = re.compile(
+    r"(?:github|githu|gh)\s*"
+    r"(?:[^，。；;,]{0,20}?)?"
+    r"(?:trending|趋势|热门|热榜|话题|top|排行榜|项目|仓库)",
+    re.IGNORECASE,
+)
+_GITHUB_TRENDING_WORDS = (
+    "trending",
+    "趋势",
+    "热门",
+    "热榜",
+    "话题",
+    "top",
+    "排行榜",
+    "项目",
+    "仓库",
+    "repo",
+    "github 热榜",
+)
+
+
+def normalise_source_alias(text: str) -> str:
+    """Normalise a closed-set source alias only under explicit GitHub context.
+
+    Returns ``github`` when the text mentions GitHub directly or a known alias
+    (``githu``) together with GitHub trending context.  Returns ``""`` when the
+    alias appears without trending context, so ordinary text is never coerced
+    into the GitHub capability.
+    """
+
+    lowered = str(text or "").lower()
+    if "github" in lowered:
+        return "github"
+    for alias, canonical in _SOURCE_ALIASES.items():
+        if alias not in lowered:
+            continue
+        if any(token in lowered for token in _GITHUB_TRENDING_WORDS):
+            return canonical
+    return ""
+
+
+def _normalise_source(text: str, lowered: str) -> str:
+    return normalise_source_alias(text)
+
 
 def _clip(value: object, limit: int) -> str:
     return str(value or "").strip()[:limit]
@@ -60,8 +112,9 @@ def extract_parameters(instruction: str) -> dict:
     if count:
         parameters["item_limit"] = max(1, min(int(count.group(1)), 100))
     lowered = text.lower()
-    if "github" in lowered:
-        parameters["source"] = "github"
+    normalised_source = _normalise_source(text, lowered)
+    if normalised_source:
+        parameters["source"] = normalised_source
     if "AI" in text.upper() or "aiagent" in lowered or "ai agent" in lowered:
         parameters["topic"] = "ai_agent"
     if "天气" in text:
@@ -82,4 +135,4 @@ def extract_parameters(instruction: str) -> dict:
     return parameters
 
 
-__all__ = ["extract_instruction", "extract_parameters"]
+__all__ = ["extract_instruction", "extract_parameters", "normalise_source_alias"]

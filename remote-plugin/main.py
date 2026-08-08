@@ -293,6 +293,7 @@ def _compact_output(text: str) -> str:
     return "...(truncated)\n" + text[-max_chars:]
 
 
+
 def _bridge_http_status(result: dict) -> int:
     try:
         status = int(result.get("status") or 0)
@@ -377,46 +378,24 @@ def _display_text(result: dict) -> str:
 
 
 def _display_task_output(task: dict) -> str:
-    failure = _failure_output(task)
-    if failure:
-        return failure
-    if task.get("ok") and (task.get("stdout") or "").strip():
-        return _compact_output(task.get("stdout", ""))
-    return _compact_output(
-        task.get("output", "")
-        or task.get("stdout", "")
-        or task.get("stderr", "")
-        or task.get("error", "")
+    from .task_format import display_task_output
+
+    return display_task_output(
+        task,
+        reply_max_chars=RUNTIME_STATE.reply_max_chars,
+        error_kind_messages=ERROR_KIND_MESSAGES,
     )
 
 
 def _format_task(task: dict, include_output: bool = False) -> str:
-    task_id = task.get("id", "?")
-    status = task.get("status", "?")
-    sandbox = task.get("sandbox", "?")
-    duration = task.get("duration", "?")
-    returncode = task.get("returncode", "?")
-    summary = task.get("summary", "")
-    status_text = {
-        "queued": "排队中",
-        "running": "执行中",
-        "done": "已完成",
-        "failed": "失败",
-        "timeout": "超时",
-        "cancelled": "已取消",
-    }.get(status, status)
-    lines = [f"任务 #{task_id}", f"- 状态：{status_text}", f"- 权限：{sandbox}"]
-    if duration not in (None, "?"):
-        lines.append(f"- 耗时：{duration}s")
-    if summary:
-        lines.append(f"- 内容：{summary}")
-    pending_count = int(task.get("pending_message_count") or 0)
-    if pending_count:
-        lines.append(f"- 执行期间收到补充：{pending_count} 条（已保留在任务记录）")
-    if include_output:
-        lines.append("")
-        lines.append(_display_task_output(task))
-    return "\n".join(lines)
+    from .task_format import format_task
+
+    return format_task(
+        task,
+        reply_max_chars=RUNTIME_STATE.reply_max_chars,
+        error_kind_messages=ERROR_KIND_MESSAGES,
+        include_output=include_output,
+    )
 
 
 def _format_task_list(tasks: list[dict]) -> str:

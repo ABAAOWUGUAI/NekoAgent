@@ -304,6 +304,7 @@ FIXED_CAPABILITY_MANIFESTS: tuple[CapabilityManifest, ...] = (
                 "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                 "topic": {"type": "string", "enum": ["", "ai", "ai-agent"]},
                 "output_language": {"type": "string", "enum": ["auto", "zh-CN"]},
+                "dedupe_policy": {"type": "string", "enum": ["job_history", "none"]},
                 "exclude_repos": {
                     "type": "array",
                     "items": {"type": "string"},

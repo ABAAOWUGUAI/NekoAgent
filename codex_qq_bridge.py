@@ -149,6 +149,7 @@ from bridge_persona_runtime_http import PersonaRuntimeHttpApi
 from bridge_assistant_home import AssistantHomeService
 from bridge_assistant_home_http import AssistantHomeHttpApi
 from bridge_continuity_kernel import ContinuityKernel
+from bridge_action_commitment import ActionCommitmentRepository
 from bridge_action_followup import dispatch_action_followup_context
 from bridge_route_dispatch import dispatch_deterministic_route
 from bridge_pet_http import PetHttpApi
@@ -301,6 +302,7 @@ from bridge_automation import (
 )
 from bridge_automation_actions import dispatch_automation_action
 from bridge_automation_execution_contract import (
+    audit_execution_contract_repair,
     derive_execution_contract,
     normalize_execution_contract,
 )
@@ -320,6 +322,14 @@ from bridge_automation_execution import (
 )
 from bridge_reliability_runtime import drain_action_outbox
 from bridge_automation_reliability import reconcile_automation_tasks
+from bridge_automation_business_gate import (
+    automation_leak_gate as _automation_leak_gate,
+    evaluate_automation_business_verdict as _automation_business_verdict,
+)
+
+# Public alias surface used by tests and the reconciler.
+automation_leak_gate = _automation_leak_gate
+evaluate_automation_business_verdict = _automation_business_verdict
 from bridge_automation_worker import run_automation_worker
 from bridge_inbound_idempotency import (
     InboundConflictError, InboundProcessingError, execute_once as execute_inbound_once,
@@ -1803,7 +1813,11 @@ def _parse_codex_jsonl(stdout: str) -> dict:
 
 
 def _finalize_codex_result(proc, parsed, started, timeout_expired=False):
-    """综合 JSONL 解析结果和进程退出状态。"""
+    """综合 JSONL 解析结果和进程退出状态。
+
+    ``turn.completed`` only proves the executor round ended (process terminal),
+    never business success; the final body must pass the internal-prose gate.
+    """
     if timeout_expired:
         return {"ok": False, "status": "failed", "error_kind": "process_timeout",
                 "error": "任务执行超时。", "duration": round(time.monotonic() - started, 2)}
@@ -1827,21 +1841,50 @@ def _finalize_codex_result(proc, parsed, started, timeout_expired=False):
     error_type = parsed.get("error_type") or ""
     error_summary = parsed.get("error_summary") or ""
     final_output = parsed.get("final_output") or ""
+    summary = {
+        "tool_calls": parsed["tool_call_count"],
+        "tool_failures": len(parsed["tool_failures"]),
+        "terminal_event": parsed["terminal_event"],
+        "usage": parsed.get("usage", {}),
+    }
+
+    if status != "completed":
+        return {
+            "ok": False,
+            "status": "failed",
+            "returncode": proc.returncode if proc else 1,
+            "duration": round(time.monotonic() - started, 2),
+            "output": final_output if final_output else error_summary,
+            "error_kind": error_type or "task_execution_failed",
+            "error": error_summary or (final_output or "")[:500],
+            "jsonl_summary": summary,
+        }
+
+    # turn.completed only establishes the process terminal.  A final body that
+    # is internal runtime/tooling/sandbox prose must not be surfaced as
+    # success or as a user-visible result.
+    leak = _automation_leak_gate(final_output)
+    if not leak.get("ok"):
+        return {
+            "ok": False,
+            "status": "failed",
+            "returncode": proc.returncode if proc else 1,
+            "duration": round(time.monotonic() - started, 2),
+            "output": "",
+            "error_kind": leak.get("error_kind") or "no_business_evidence",
+            "error": "执行器回合结束，但没有可验证的业务结果。",
+            "jsonl_summary": summary,
+        }
 
     return {
-        "ok": status == "completed",
-        "status": "done" if status == "completed" else "failed",
+        "ok": True,
+        "status": "done",
         "returncode": proc.returncode if proc else 1,
         "duration": round(time.monotonic() - started, 2),
-        "output": final_output if final_output else error_summary,
-        "error_kind": error_type if status != "completed" else "",
-        "error": error_summary if status != "completed" else "",
-        "jsonl_summary": {
-            "tool_calls": parsed["tool_call_count"],
-            "tool_failures": len(parsed["tool_failures"]),
-            "terminal_event": parsed["terminal_event"],
-            "usage": parsed.get("usage", {}),
-        },
+        "output": final_output,
+        "error_kind": "",
+        "error": "",
+        "jsonl_summary": summary,
     }
 
 
@@ -2365,6 +2408,7 @@ def _record_conversation(
 
 
 INTERACTION_STORE = InteractionPersistenceRuntime(_assistant_db_connect)
+ACTION_COMMITMENTS = ActionCommitmentRepository(_assistant_db_connect)
 CONTINUITY_KERNEL = ContinuityKernel(_assistant_db_connect)
 
 
@@ -4400,6 +4444,17 @@ def _process_group_participation_queue() -> None:
     process_group_participation_queue(globals())
 
 
+def process_knowledge_ingestion(runtime: dict) -> None:
+    """Bounded knowledge-ingestion pass inside the existing automation worker."""
+    from bridge_knowledge_ingestion_runtime import run_knowledge_ingestion
+    from bridge_knowledge_ingestion_worker import maybe_run_knowledge_ingestion
+
+    connect = runtime.get("_assistant_db_connect")
+    if connect is None:
+        return
+    maybe_run_knowledge_ingestion(connect, run_ingestion=run_knowledge_ingestion)
+
+
 def _automation_worker() -> None:
     run_automation_worker(globals())
 
@@ -5093,6 +5148,7 @@ def _assistant_dispatch_impl(
         resolve_automation_target=_resolve_automation_conversation_target,
         get_fallback=lambda: _assistant_settings(include_secrets=True),
         get_role_settings=_settings_for_model_role, readiness_check=_assistant_provider_ready,
+        action_commitments=ACTION_COMMITMENTS,
     )
     if routed is not None:
         if routed.get("intent") == "automation":
@@ -5478,6 +5534,8 @@ def _assistant_group_dispatch(
             sender_name=sender_name, session=session, message=message,
             is_mention=is_mention,
         )
+    if prepared["blocked"] and prepared["blocked"].get("natural_queue"):
+        AUTOMATION_EVENT.set()
     if prepared["blocked"]:
         return prepared["blocked"]
     policy, current, context_items, participation_event = (
@@ -5668,6 +5726,7 @@ def _assistant_group_dispatch(
                     "group_name": policy.get("group_name") or payload.get("group_name") or "",
                     "sender_id": sender_id,
                     "sender_name": sender_name,
+                    "is_mention": is_mention,
                     "allow_group_feedback": False,
                 },
                 "conversation_frame": conversation_frame,

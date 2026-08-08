@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from zoneinfo import ZoneInfo
 
 from bridge_capabilities import CapabilityCatalog
+from bridge_automation_instruction import normalise_source_alias
 
 
 EXECUTION_CONTRACT_SCHEMA_VERSION = 1
@@ -233,6 +234,11 @@ def derive_execution_contract(
         contract["arguments"] = {"location": location, "forecast_days": forecast_days}
         return _finalize(contract)
 
+    # Source alias normalisation is server-owned and closed-set: only an exact
+    # known misspelling combined with GitHub trending context binds the
+    # capability.  It never lets arbitrary text infer a capability.
+    if not source and not structured_topic:
+        source = normalise_source_alias(text)
     if source == "github" or (not structured_topic and "github" in text):
         contract = _base(
             capability_id="github.trending.read",
@@ -246,6 +252,7 @@ def derive_execution_contract(
             "limit": _bounded_int(facts.get("item_limit"), default=10, lower=1, upper=20),
             "topic": topic_map.get(topic_value, ""),
             "output_language": _text(facts.get("output_language"), 16) or "auto",
+            "dedupe_policy": _text(facts.get("dedupe_policy"), 32) or "job_history",
         }
         return _finalize(contract)
 
@@ -338,8 +345,113 @@ def execution_contract_hash(contract: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+# Contract derivation version.  Bump when a new rule changes how persisted
+# contracts are derived; the version travels with the contract so a later
+# audit can distinguish "derived under an older rule" from "hand-written".
+CONTRACT_DERIVATION_VERSION = 2
+
+# Closed set of read-only capabilities that a persisted generic contract may
+# be safely repaired into.  Anything else requires explicit human review.
+_AUTO_REPAIRABLE_CAPABILITIES = frozenset({"github.trending.read"})
+
+
+def audit_execution_contract_repair(
+    instruction: str,
+    parameters: Mapping[str, object] | None,
+    *,
+    persisted_contract: Mapping[str, object],
+    action_type: str = "agent",
+) -> dict:
+    """Deterministic audit of whether a persisted contract may be repaired.
+
+    The production 59bb268a defect was a persisted ``capability_id=null``
+    contract (from a ``githu`` misspelling) that the runtime refused to
+    re-derive.  This function re-derives a candidate from the same server-owned
+    rules and reports exactly what changed, why, and whether the migration is
+    safe to apply.  It never uses a model to decide a capability or grant
+    permission, and network_required only ever rises because the target
+    capability declares it.
+    """
+
+    try:
+        persisted = normalize_execution_contract(persisted_contract)
+    except (TypeError, ValueError, OverflowError, UnicodeError, RecursionError) as exc:
+        return {
+            "repairable": False,
+            "reason": "persisted_contract_invalid",
+            "detail": str(exc)[:160],
+        }
+    if persisted.get("capability_id") is not None:
+        return {
+            "repairable": False,
+            "reason": "capability_already_bound",
+            "persisted_capability_id": str(persisted["capability_id"]),
+        }
+    if persisted.get("output_kind") not in {"agent_task"}:
+        return {
+            "repairable": False,
+            "reason": "not_a_generic_agent_task_contract",
+            "persisted_output_kind": str(persisted.get("output_kind")),
+        }
+    facts = dict(parameters or {})
+    try:
+        candidate = normalize_execution_contract(
+            derive_execution_contract(
+                str(instruction or ""),
+                facts,
+                action_type=action_type,
+            )
+        )
+    except (TypeError, ValueError, OverflowError, UnicodeError, RecursionError):
+        return {
+            "repairable": False,
+            "reason": "candidate_derivation_failed",
+            "persisted_capability_id": "",
+        }
+    candidate_capability = str(candidate.get("capability_id") or "")
+    if candidate_capability not in _AUTO_REPAIRABLE_CAPABILITIES:
+        return {
+            "repairable": False,
+            "reason": "candidate_not_auto_repairable",
+            "persisted_capability_id": "",
+            "derived_capability_id": candidate_capability or "",
+        }
+    if candidate.get("status") != "ready":
+        return {
+            "repairable": False,
+            "reason": "candidate_not_ready",
+            "persisted_capability_id": "",
+            "derived_capability_id": candidate_capability,
+        }
+    if candidate.get("network_required") and not persisted.get("network_required"):
+        # Network may only rise because the fixed capability declares it; the
+        # candidate is derived from the fixed capability catalog, so this is
+        # safe.  The audit records the fact explicitly.
+        network_change = "fixed_capability_requires_network"
+    else:
+        network_change = ""
+    old_hash = execution_contract_hash(persisted)
+    new_hash = execution_contract_hash(candidate)
+    return {
+        "repairable": True,
+        "reason": "misspelled_source_known_read_capability",
+        "persisted_capability_id": "",
+        "derived_capability_id": candidate_capability,
+        "persisted_contract": dict(persisted),
+        "derived_contract": dict(candidate),
+        "persisted_hash": old_hash,
+        "derived_hash": new_hash,
+        "network_required_rose": bool(network_change),
+        "network_change_reason": network_change,
+        "derivation_version": CONTRACT_DERIVATION_VERSION,
+        "repair": dict(candidate),
+    }
+
+
 __all__ = [
+    "CONTRACT_DERIVATION_VERSION",
     "EXECUTION_CONTRACT_SCHEMA_VERSION",
+    "audit_execution_contract_repair",
     "derive_execution_contract",
     "execution_contract_hash",
     "normalize_execution_contract",
