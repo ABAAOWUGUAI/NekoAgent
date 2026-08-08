@@ -140,14 +140,16 @@ def build_media_delivery_trace(
         "media_observation_decision": media_observation_decision,
     })
     delivery = str(delivery_state or "pending").strip().lower().replace("-", "_")
-    delivery = delivery if delivery in {"pending", "queued", "claimed", "sending", "sent", "failed", "rejected", "ambiguous", "confirmed", "delivered"} else "pending"
+    delivery = delivery if delivery in {"pending", "queued", "claimed", "sending", "sent", "failed", "rejected", "ambiguous", "confirmed", "delivered", "superseded"} else "pending"
     ack = str(ack_state or "").strip().lower().replace("-", "_")
     if not ack:
         ack = "confirmed" if delivery in {"confirmed", "delivered"} else "pending"
     ack = ack if ack in {"pending", "confirmed", "failed", "ambiguous"} else "pending"
     delivery_linked = bool(str(delivery_id or "").strip())
     confirmed_delivery_state = delivery in {"sent", "confirmed", "delivered"}
-    if ack == "confirmed" and delivery_linked and confirmed_delivery_state:
+    if delivery == "superseded":
+        outcome = "delivery_superseded"
+    elif ack == "confirmed" and delivery_linked and confirmed_delivery_state:
         outcome = "delivery_confirmed"
     elif ack == "confirmed" and (not delivery_linked or not confirmed_delivery_state):
         outcome = "delivery_ambiguous"

@@ -707,18 +707,18 @@ class DeliveryOutbox:
         clauses: list[str] = []
         params: list[object] = []
         if state == "pending":
-            clauses.append("acked_at = '' AND dead_letter = 0")
+            clauses.append("acked_at = '' AND dead_letter = 0 AND superseded_by = ''")
         elif state == "available":
             clauses.append(
-                "acked_at = '' AND dead_letter = 0 AND available_at <= ? "
+                "acked_at = '' AND dead_letter = 0 AND superseded_by = '' AND available_at <= ? "
                 "AND (lease_expires_at = '' OR lease_expires_at <= ?)"
             )
             params.extend((current_ts, current_ts))
         elif state == "scheduled":
-            clauses.append("acked_at = '' AND dead_letter = 0 AND available_at > ?")
+            clauses.append("acked_at = '' AND dead_letter = 0 AND superseded_by = '' AND available_at > ?")
             params.append(current_ts)
         elif state == "leased":
-            clauses.append("acked_at = '' AND dead_letter = 0 AND lease_expires_at > ?")
+            clauses.append("acked_at = '' AND dead_letter = 0 AND superseded_by = '' AND lease_expires_at > ?")
             params.append(current_ts)
         elif state == "delivered":
             clauses.append("acked_at <> ''")

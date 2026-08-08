@@ -18,6 +18,7 @@ from bridge_automation_execution_contract import (
     audit_execution_contract_repair,
     execution_contract_hash,
 )
+from bridge_automation_instruction import extract_parameters as _extract_parameters
 from bridge_migrations import utc_now as _utc_now
 
 
@@ -46,7 +47,26 @@ def repair_legacy_execution_contract(
         parameters_json = json.loads(str(job["parameters_json"] or "{}"))
     except (TypeError, ValueError, json.JSONDecodeError):
         parameters_json = {}
-    effective_parameters = dict(parameters if isinstance(parameters, dict) else parameters_json)
+    # Enrich the persisted parameters with deterministic instruction-derived
+    # structure (source/topic/limit/dedupe_policy/output_language/delivery_format)
+    # so the re-derived contract carries a real ``topic=ai-agent`` instead of
+    # the legacy empty value that shipped in production.  The instruction is the
+    # ground truth for a natural-language schedule; the caller may still pass
+    # explicit ``parameters`` that take precedence over both sources.
+    persisted_params = dict(parameters_json) if isinstance(parameters_json, dict) else {}
+    derived_params = _extract_parameters(str(job["instruction"] or ""))
+    effective_parameters = dict(persisted_params)
+    for key, value in derived_params.items():
+        if value not in (None, "", [], {}):
+            effective_parameters.setdefault(key, value)
+    if isinstance(parameters, dict):
+        effective_parameters.update(dict(parameters))
+    enriched_parameters_json = json.dumps(
+        effective_parameters,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     audit = audit_execution_contract_repair(
         str(job["instruction"] or ""),
         effective_parameters,
@@ -66,9 +86,9 @@ def repair_legacy_execution_contract(
         cursor = conn.execute(
             """UPDATE automation_jobs
                SET execution_contract_json=?, execution_contract_hash=?,
-                   revision=revision+1, updated_at=?
+                   parameters_json=?, revision=revision+1, updated_at=?
                WHERE id=? AND execution_contract_json=?""",
-            (repair_json, execution_contract_hash(repair), current_now, job_id, persisted_json),
+            (repair_json, execution_contract_hash(repair), enriched_parameters_json, current_now, job_id, persisted_json),
         )
         if cursor.rowcount != 1:
             raise ValueError("automation_job_contract_changed_concurrently")
@@ -104,6 +124,7 @@ def repair_legacy_execution_contract(
         "derived_contract": repair,
         "derived_hash": str(audit.get("derived_hash") or ""),
         "network_required_rose": bool(audit.get("network_required_rose")),
+        "parameters_json": enriched_parameters_json,
         "audit_id": repair_id,
         "revision": int(updated["revision"] or 1),
     }
