@@ -156,6 +156,43 @@ def test_automation_business_verdict_blocks_off_topic_ai_agent_results() -> None
     assert verdict["error_kind"] == "github_trending_topic_mismatch"
 
 
+def test_bound_github_empty_topic_contract_is_enriched_to_ai_agent() -> None:
+    # A contract already bound to github.trending.read but with an empty topic
+    # (the 2026-08-08 production job) must be enriched deterministically to
+    # topic=ai-agent when the instruction implies an AI / AI Agent topic.
+    from bridge_automation_execution_contract import (
+        audit_execution_contract_repair,
+        normalize_execution_contract,
+    )
+
+    bound = {
+        "schema_version": 1,
+        "capability_id": "github.trending.read",
+        "arguments": {
+            "dedupe_policy": "job_history",
+            "limit": 10,
+            "output_language": "zh-CN",
+            "period": "daily",
+            "topic": "",
+        },
+        "status": "ready",
+        "missing_inputs": [],
+        "network_required": True,
+        "output_kind": "github_trending",
+    }
+    audit = audit_execution_contract_repair(
+        "呢，钟给我统计一下目前githu上关于ai或者aiagent的热门相关话题，我需要每天10条，不允许出现重复",
+        {"source": "github", "topic": "ai_agent", "item_limit": 10, "dedupe_policy": "job_history"},
+        persisted_contract=normalize_execution_contract(bound),
+        action_type="agent",
+    )
+    assert audit["repairable"] is True
+    assert audit["reason"] == "bound_github_empty_topic_enriched"
+    assert audit["derived_capability_id"] == "github.trending.read"
+    assert audit["network_required_rose"] is False
+    assert audit["repair"]["arguments"]["topic"] == "ai-agent"
+
+
 def test_automation_business_verdict_passes_on_topic_ai_agent_results() -> None:
     from bridge_automation_business_gate import evaluate_automation_business_verdict
 
