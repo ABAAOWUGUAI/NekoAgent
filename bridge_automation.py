@@ -298,6 +298,18 @@ def list_automation_jobs(conn: sqlite3.Connection, *, limit: int = 100) -> list[
     return [dict(row) for row in rows]
 
 
+def repair_legacy_execution_contract(
+    conn: sqlite3.Connection,
+    job_id: str,
+    *,
+    parameters: dict | None = None,
+) -> dict:
+    """Delegate to the dedicated contract-repair module (A2)."""
+    from bridge_automation_contract_repair import repair_legacy_execution_contract as _repair
+
+    return _repair(conn, job_id, parameters=parameters)
+
+
 def list_automation_runs(conn: sqlite3.Connection, *, limit: int = 80) -> list[dict]:
     ensure_automation_tables(conn)
     rows = conn.execute(

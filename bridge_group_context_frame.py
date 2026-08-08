@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import json
 import math
 import re
+from collections.abc import Mapping
 
 
 DEFAULT_GROUP_CONTEXT_LIMIT = 40
@@ -106,6 +107,25 @@ def _message_kind(item: dict) -> str:
 
 def _turn(item: dict) -> dict:
     assistant = str(item.get("sender_id") or "") == "bot"
+    try:
+        metadata = json.loads(str(item.get("metadata_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        metadata = {}
+    media_observation = str(
+        item.get("media_observation")
+        or metadata.get("media_observation")
+        or "none"
+    )
+    media_preflight = str(
+        item.get("media_preflight")
+        or metadata.get("media_preflight")
+        or "none"
+    )
+    visual_context = str(
+        item.get("visual_context")
+        or metadata.get("visual_context")
+        or "none"
+    )
     return {
         "role": "assistant" if assistant else "member",
         "actor_id": "assistant" if assistant else str(item.get("sender_id") or ""),
@@ -114,6 +134,21 @@ def _turn(item: dict) -> dict:
         "created_at": str(item.get("created_at") or ""),
         "is_mention": bool(item.get("is_mention")),
         "message_kind": _message_kind(item),
+        "row_id": str(item.get("id") or ""),
+        "external_message_id": str(
+            item.get("external_message_id")
+            or metadata.get("external_message_id")
+            or ""
+        ),
+        "reply_to_external_message_id": str(
+            item.get("reply_to_external_message_id")
+            or metadata.get("reply_to_external_message_id")
+            or ""
+        ),
+        "reply_to_assistant": bool(item.get("reply_to_assistant") or metadata.get("reply_to_assistant")),
+        "media_observation": media_observation,
+        "media_preflight": media_preflight,
+        "visual_context": visual_context,
     }
 
 
@@ -127,6 +162,159 @@ def _topic_summary(turns: list[dict], current: dict) -> str:
         label = "[助手/self]" if item.get("role") == "assistant" else f"[成员:{item.get('speaker') or '成员'}]"
         lines.append(f"{label} {content[:240]}")
     return "\n".join(lines)[:800]
+
+
+def _reply_target_id_for(current_turn: dict) -> str:
+    return str(current_turn.get("reply_to_external_message_id") or "").strip()
+
+
+def _resolve_reply_target(current_turn: dict, turns: list[dict]) -> tuple[str, str, str]:
+    """Resolve the Reply edge, returning (target_id, target_actor, target_mid).
+
+    ``target_id`` is the external_message_id of the message being replied to
+    (empty when none).  ``target_actor`` is that author's actor_ref.  ``target_mid``
+    is the store row id (integer) when available.
+    """
+
+    reply_to = _reply_target_id_for(current_turn)
+    if not reply_to:
+        return "", "", ""
+    target_turn = next(
+        (item for item in turns if item.get("external_message_id") == reply_to),
+        None,
+    )
+    if target_turn is None:
+        return reply_to, "", ""
+    return reply_to, str(target_turn.get("actor_id") or ""), str(target_turn.get("row_id") or "")
+
+
+def _topic_root_id(reply_target_id: str, turns: list[dict]) -> str:
+    """Return a stable topic root/anchor id.
+
+    When a Reply edge exists, the anchor is the reply target itself.  Otherwise
+    it is the most recent prior member turn's external id within the bounded
+    topic window, or empty when none exists.
+    """
+
+    if reply_target_id:
+        return reply_target_id
+    for item in reversed(turns):
+        if item["role"] == "member" and item.get("external_message_id"):
+            return str(item["external_message_id"])
+    return ""
+
+
+def _ambiguous_target(
+    current_turn: dict,
+    reply_target_id: str,
+    turns: list[dict],
+    *,
+    member_actor: str,
+) -> bool:
+    """Flag when the Reply edge is absent and the short utterance is ambiguous.
+
+    Single-char/question/pronoun/"这个/那个/可以" utterances with no explicit
+    reply edge must not be assigned a fabricated target.
+    """
+
+    if reply_target_id:
+        return False
+    text = str(current_turn.get("content") or "").strip()
+    if not text or len(text) <= 4 or any(token in text for token in ("？", "?", "这个", "那个", "可以", "嗯")):
+        return True
+    # Two different members both addressed the same recent message with no
+    # reply edge: the target is genuinely ambiguous.
+    if member_actor:
+        recent_members = [item["actor_id"] for item in turns[-4:] if item["role"] == "member"]
+        if len({actor for actor in recent_members if actor and actor != member_actor}) >= 1 and len(text) <= 12:
+            return True
+    return False
+
+
+def build_grounding_envelope(
+    current_turn: dict,
+    turns: list[dict],
+    *,
+    reply_target_id: str,
+    topic_root_id: str,
+    ambiguous: bool,
+) -> dict:
+    """Build the server-owned Grounding Envelope (B2).
+
+    The envelope is derived only from server facts; a model may never raise
+    media state inside it.  ``allowed_claim_types`` lists what this turn may
+    truthfully claim; ``forbidden_claim_types`` lists what must be blocked.
+    """
+
+    media_kind = str(current_turn.get("message_kind") or "text")
+    if media_kind == "attachment" and current_turn.get("attachments"):
+        media_kind = "image"
+    media_observation = str(current_turn.get("media_observation") or "none")
+    media_preflight = str(current_turn.get("media_preflight") or "none")
+    visual_context = str(current_turn.get("visual_context") or "none")
+
+    # Inherit the most recent attachment's media state within the bounded
+    # topic window when the current turn itself carries no media fact.  A
+    # follow-up question about an already-observed attachment may then
+    # truthfully reference it, while an unobserved one stays blocked.
+    if visual_context not in {"ready", "blocked"} or media_observation in {"none", ""}:
+        for item in reversed(turns):
+            item_kind = str(item.get("message_kind") or "")
+            if item_kind not in {"attachment", "image", "mixed", "video", "audio"}:
+                continue
+            if item.get("visual_context"):
+                visual_context = str(item.get("visual_context") or visual_context)
+            if item.get("media_observation"):
+                media_observation = str(item.get("media_observation") or media_observation)
+            if item.get("media_preflight"):
+                media_preflight = str(item.get("media_preflight") or media_preflight)
+            media_kind = "image" if item_kind in {"attachment", "image"} else item_kind
+            break
+
+    allowed: list[str] = []
+    forbidden: list[str] = []
+    verification_required = False
+    if visual_context != "ready":
+        forbidden.append("visual_details")
+        verification_required = True
+    else:
+        allowed.append("limited_visual_facts")
+    if media_observation in {"none", "deferred", "blocked"}:
+        forbidden.append("sensory_experience")
+        verification_required = True
+    else:
+        allowed.append("observed_media_facts")
+    # No memory/knowledge/action evidence is threaded here, so experience and
+    # researched claims are forbidden unless a caller later attaches evidence.
+    forbidden.extend(("heard_song", "audio_listen", "researched_claim", "remembered_claim", "executed_claim"))
+    allowed.extend(("subjective_opinion", "greeting"))
+    if not reply_target_id or ambiguous:
+        forbidden.append("concrete_attribution")
+    else:
+        allowed.append("referenced_reply")
+        # A reply that points at a concrete member statement may agree with
+        # reference (the observed fact is in-window); echoing an unverified
+        # specific number/price/legal claim is still forbidden below.
+        allowed.append("agree_with_reference")
+    return {
+        "target": {
+            "actor_ref": "opaque",
+            "source_message_id": str(current_turn.get("external_message_id") or ""),
+            "reply_target_id": reply_target_id,
+            "topic_root_id": topic_root_id,
+            "ambiguous": ambiguous,
+        },
+        "text_evidence_ids": [],
+        "media": {
+            "kind": media_kind,
+            "observation": media_observation,
+            "preflight": media_preflight,
+            "visual_context": visual_context,
+        },
+        "allowed_claim_types": allowed,
+        "forbidden_claim_types": forbidden,
+        "verification_required": verification_required,
+    }
 
 
 def build_group_conversation_frame(
@@ -249,8 +437,33 @@ def build_group_conversation_frame(
         and seconds_since_topic is not None
         and seconds_since_topic <= ACTIVE_TOPIC_SECONDS
     )
+
+    # Frame v3: Reply edge and topic anchor (identifier-only).  No new
+    # conversation table is created; the reply fact is the persisted
+    # ``reply_to_external_message_id`` projected into this turn.
+    reply_target_id, reply_target_actor, reply_target_mid = _resolve_reply_target(
+        current_turn, turns,
+    )
+    topic_root_id = _topic_root_id(reply_target_id, turns)
+    ambiguous = _ambiguous_target(
+        current_turn,
+        reply_target_id,
+        turns,
+        member_actor=current_actor,
+    )
+    direct_addressee = reply_target_actor if reply_target_id else (
+        "" if ambiguous else current_actor
+    )
+    reply_target_in_window = bool(reply_target_id and reply_target_mid)
+    grounding_envelope = build_grounding_envelope(
+        current_turn,
+        turns,
+        reply_target_id=reply_target_id,
+        topic_root_id=topic_root_id,
+        ambiguous=ambiguous,
+    )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "context_limit": limit,
         "context_turn_count": len(turns),
         "participant_count": len(participant_ids),
@@ -274,6 +487,14 @@ def build_group_conversation_frame(
         "topic_summary": topic_summary,
         "topic_evidence": bool(topic_summary),
         "topic_active": topic_active,
+        # v3 identifier-only target/topic projection
+        "reply_target_id": reply_target_id,
+        "reply_target_actor": reply_target_actor,
+        "reply_target_in_window": reply_target_in_window,
+        "direct_addressee": direct_addressee,
+        "topic_anchor_id": topic_root_id,
+        "ambiguous_target": ambiguous,
+        "grounding_envelope": grounding_envelope,
     }
 
 
@@ -346,8 +567,28 @@ def audit_group_conversation_frame(frame: dict | None) -> dict:
         "active_continuation", "continuation_window_seconds",
         "continuation_assistant_turns", "continuation_strength", "acknowledgement_only",
         "attachment_only", "message_kind", "topic_evidence", "topic_active",
+        # v3 identifier/category-only projection.  No reply text is retained;
+        # only the opaque external ids, whether the target is in-window, and
+        # the ambiguous flag are persisted.
+        "reply_target_id", "reply_target_in_window", "direct_addressee",
+        "topic_anchor_id", "ambiguous_target",
     )
-    return {key: source.get(key) for key in keys}
+    result = {key: source.get(key) for key in keys}
+    envelope = source.get("grounding_envelope")
+    if isinstance(envelope, Mapping):
+        # Keep only categories/counts from the envelope, never media data.
+        result["grounding_envelope"] = {
+            "media": {
+                "kind": str(envelope.get("media", {}).get("kind") or "") if isinstance(envelope.get("media"), Mapping) else "",
+                "observation": str(envelope.get("media", {}).get("observation") or "") if isinstance(envelope.get("media"), Mapping) else "",
+                "preflight": str(envelope.get("media", {}).get("preflight") or "") if isinstance(envelope.get("media"), Mapping) else "",
+                "visual_context": str(envelope.get("media", {}).get("visual_context") or "") if isinstance(envelope.get("media"), Mapping) else "",
+            },
+            "allowed_claim_types": list(envelope.get("allowed_claim_types") or []),
+            "forbidden_claim_types": list(envelope.get("forbidden_claim_types") or []),
+            "verification_required": bool(envelope.get("verification_required")),
+        }
+    return result
 
 
 __all__ = [

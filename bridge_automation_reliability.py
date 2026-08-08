@@ -4,12 +4,42 @@
 from __future__ import annotations
 
 from bridge_automation import settle_automation_dispatch
+from bridge_automation_business_gate import automation_leak_gate
 from bridge_continuity_kernel import ContinuityKernel
 from bridge_continuity_reconciliation import reconcile_continuity_state
 
 
 FINAL_SUCCESS = {"done"}
 FINAL_FAILURE = {"failed", "timeout", "cancelled"}
+
+
+def _task_is_business_success(task: dict | None) -> tuple[bool, str]:
+    """A ``done`` task is a business success only with no failure marker.
+
+    The 2026-08-08 defect was ``status=done`` from a completed turn being
+    treated as automation success even though the body was an internal
+    sandbox/limitation note.  Here we additionally require: the row is a
+    terminal ``done``, ``ok`` is truthy, there is no error_kind, and the final
+    body is not internal runtime prose.
+    """
+
+    if task is None:
+        return False, "task_missing"
+    status = str(task.get("status") or "")
+    if status not in FINAL_SUCCESS | FINAL_FAILURE:
+        return False, "task_not_terminal"
+    if status not in FINAL_SUCCESS:
+        return False, str(task.get("error") or status)
+    if not task.get("ok"):
+        return False, "task_ok_false"
+    error_kind = str(task.get("error_kind") or "")
+    if error_kind:
+        return False, f"task_error_kind_{error_kind}"
+    output = str(task.get("output") or "")
+    leak = automation_leak_gate(output)
+    if not leak.get("ok"):
+        return False, "no_business_evidence"
+    return True, ""
 
 
 def reconcile_automation_tasks(assistant_connect, task_connect, *, limit: int = 50) -> dict:
@@ -27,8 +57,8 @@ def reconcile_automation_tasks(assistant_connect, task_connect, *, limit: int = 
         success = False
         error = ""
         if delivery_id:
-            with task_connect() as task_conn:
-                delivery = task_conn.execute(
+            with task_connect() as conn:
+                delivery = conn.execute(
                     """SELECT acked_at,dead_letter,last_error,delivery_certainty
                        FROM delivery_outbox WHERE id=?""",
                     (delivery_id,),
@@ -42,12 +72,24 @@ def reconcile_automation_tasks(assistant_connect, task_connect, *, limit: int = 
             else:
                 continue
         else:
-            with task_connect() as task_conn:
-                task = task_conn.execute("SELECT status,error FROM tasks WHERE id=?", (task_id,)).fetchone()
+            with task_connect() as conn:
+                task = conn.execute(
+                    """SELECT status,error,ok,output,error_kind FROM tasks WHERE id=?""",
+                    (task_id,),
+                ).fetchone()
             if not task or str(task[0]) not in FINAL_SUCCESS | FINAL_FAILURE:
                 continue
-            success = str(task[0]) in FINAL_SUCCESS
-            error = "" if success else str(task[1] or task[0])
+            success, task_error = _task_is_business_success(
+                {
+                    "status": str(task[0] or ""),
+                    "error": str(task[1] or ""),
+                    "ok": task[2],
+                    "output": str(task[3] or ""),
+                    "error_kind": str(task[4] or ""),
+                }
+            )
+            if not success:
+                error = task_error or str(task[1] or task[0])
         with assistant_connect() as conn:
             settle_automation_dispatch(
                 conn,

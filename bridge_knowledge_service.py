@@ -447,6 +447,23 @@ def get_knowledge_workspace(conn: sqlite3.Connection) -> dict:
     result["items"] = list_knowledge(conn, limit=100)
     result["memory_candidates"] = list_memory_candidates(conn, status="pending", limit=100)
     result["memories"] = list_memories(conn, limit=20, owner_management=True)
+    # C4: promotable memories are active, non-sensitive records that an Owner
+    # may explicitly turn into a Knowledge Draft.  This is a read-only
+    # projection; promotion still requires ``promote_memory`` with scope
+    # confirmation.
+    try:
+        result["promotable_memories"] = [
+            dict(row)
+            for row in conn.execute(
+                """SELECT id,content,scope_type,sensitivity,consent_basis,updated_at
+                   FROM memory_records
+                   WHERE status='active' AND sensitivity<>'sensitive'
+                         AND scope_type NOT IN ('sensitive_private','global_preference')
+                   ORDER BY updated_at DESC LIMIT 50"""
+            ).fetchall()
+        ]
+    except sqlite3.Error:
+        result["promotable_memories"] = []
     result["conversation_threads"] = list_threads(conn, limit=50)
     result["recent_messages"] = []
     if result["conversation_threads"]:

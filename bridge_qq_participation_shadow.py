@@ -50,8 +50,11 @@ from bridge_group_context_frame import (
     DEFAULT_GROUP_CONTEXT_LIMIT,
     build_group_conversation_frame,
 )
-from bridge_social_reply import group_reply_style_issues
 from bridge_group_message_store import group_context, record_group_message
+from bridge_group_truth_gate import (
+    apply_group_final_truth_gate,
+    apply_group_safety_gate,
+)
 from bridge_social_engine import (
     get_group_policy,
     group_hard_gate,
@@ -141,6 +144,12 @@ def prepare_group_shadow(
     metadata = {
         "event_id": event.event_id,
         "message_kind": event.message_kind.value,
+        # Identifier-only Reply fact projected into the group message store so
+        # the frame can reconstruct target/topic without a second table.  No
+        # body text or actor identity is retained here.
+        "reply_to_external_message_id": str(
+            payload.get("reply_to_external_message_id") or ""
+        )[:300],
     }
     if _has_visual_attachment(event.attachments):
         media_policy = project_media_observation_policy(policy)
@@ -204,15 +213,11 @@ def record_group_inbound(
             **shadow_payload,
         },
     )
-    context = group_context(
-        conn, group_id, int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
-    )
-    # The current inbound message is required for the immediate decision
-    # pipeline even when its transient retention window has already elapsed
-    # because the external event timestamp was delayed or skewed.  Keep it in
-    # this in-memory context only; the retention filter still governs all
-    # subsequent reads from the durable group message store.
     current_id = int(current.get("id") or 0)
+    context = group_context(conn, group_id, int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT), preserve_latest_message_id=current_id)
+    # Preserve the current inbound body through this turn even when its
+    # external event timestamp is delayed; later context reads still apply
+    # retention and redaction rules.
     if current_id and not any(int(item.get("id") or 0) == current_id for item in context):
         context.append(current)
     return event, current, context
@@ -571,20 +576,14 @@ def complete_group_dispatch(
     # Carry only bounded media lifecycle categories into the Delivery payload;
     # raw attachment data remains at the media boundary.
     result.update(media_trace_categories(conversation_frame))
-    if (
-        reply
-        and str((conversation_frame or {}).get("attention") or "") == "active_continuation"
-        and "uninvited_targeted_judgement" in group_reply_style_issues(
-            str(payload.get("message") or ""), reply, uninvited=True,
-        )
-    ):
-        result.update({
-            "reply": "",
-            "output": "",
-            "group_safety_blocked": True,
-            "group_safety_reason": "uninvited_targeted_judgement",
-        })
-        reply = ""
+    # Uninvited targeted judgement is cancelled before the final truth gate.
+    reply = apply_group_safety_gate(result, payload, conversation_frame, reply)
+
+    # Final truth gate (B4): a ``degraded`` style result is no longer sendable,
+    # and deterministic truth issues (media claim without evidence, fabricated
+    # experience, unsupported fact, target mismatch, sycophantic agreement,
+    # signature overuse) block the Delivery enqueue.
+    reply = apply_group_final_truth_gate(result, conversation_frame)
     planned_reply = bool(result.get("ok") and reply)
     finalize_group_shadow(
         conn,

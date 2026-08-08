@@ -110,6 +110,12 @@ from bridge_group_topic_window_schema import (
     apply_group_topic_window_v1,
     require_group_topic_window_schema,
 )
+from bridge_action_commitment_schema import (
+    ACTION_COMMITMENT_MIGRATION_CHECKSUM,
+    apply_action_commitment_v1,
+    require_action_commitment_schema,
+)
+from bridge_knowledge_ingestion_schema import KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM, apply_knowledge_ingestion_v1, require_knowledge_ingestion_schema
 from bridge_social_virtual_schema import (
     SOCIAL_VIRTUAL_MIGRATION_CHECKSUM,
     apply_social_virtual_v1,
@@ -505,6 +511,13 @@ ASSISTANT_CORE_MIGRATIONS = (
         apply=apply_group_topic_window_v1,
         checksum=GROUP_TOPIC_WINDOW_MIGRATION_CHECKSUM,
     ),
+    Migration(
+        version=37,
+        name="interaction_action_commitment_v1",
+        apply=apply_action_commitment_v1,
+        checksum=ACTION_COMMITMENT_MIGRATION_CHECKSUM,
+    ),
+    Migration(version=38, name="knowledge_ingestion_v1", apply=apply_knowledge_ingestion_v1, checksum=KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM),
 )
 
 
@@ -555,6 +568,8 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     conversation_participation_routing_schema = None
     group_participation_schema = None
     group_topic_window_schema = None
+    action_commitment_schema = None
+    knowledge_ingestion_schema = None
     social_virtual_schema = None
     proactive_messaging_schema = None
     learning_schema = None
@@ -605,6 +620,10 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         group_participation_schema = require_group_participation_schema(conn)
     if 36 in versions:
         group_topic_window_schema = require_group_topic_window_schema(conn)
+    if 37 in versions:
+        action_commitment_schema = require_action_commitment_schema(conn)
+    if 38 in versions:
+        knowledge_ingestion_schema = require_knowledge_ingestion_schema(conn)
     if 24 in versions:
         social_virtual_schema = require_social_virtual_schema(conn)
     if 25 in versions:
@@ -666,6 +685,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         "voice_input_schema": voice_input_schema,
         "voice_output_schema": voice_output_schema,
         "voice_response_policy_schema": voice_response_policy_schema,
+        "knowledge_ingestion_schema": knowledge_ingestion_schema,
         "applied": applied,
         "pending": pending,
         "would_apply": [item["version"] for item in pending],
@@ -739,6 +759,10 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
     group_topic_window_schema = (
         require_group_topic_window_schema(conn) if 36 in versions else None
     )
+    action_commitment_schema = (
+        require_action_commitment_schema(conn) if 37 in versions else None
+    )
+    knowledge_ingestion_schema = require_knowledge_ingestion_schema(conn) if 38 in versions else None
     social_virtual_schema = (
         require_social_virtual_schema(conn) if 24 in versions else None
     )
