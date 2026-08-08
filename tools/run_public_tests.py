@@ -71,7 +71,8 @@ def main() -> int:
             reliability_tests.test_automation_business_verdict_blocks_off_topic_ai_agent_results()
             reliability_tests.test_automation_business_verdict_passes_on_topic_ai_agent_results()
             reliability_tests.test_superseded_delivery_projects_terminal_not_pending()
-            tests += 6
+            reliability_tests.test_bound_github_empty_topic_contract_is_enriched_to_ai_agent()
+            tests += 7
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")

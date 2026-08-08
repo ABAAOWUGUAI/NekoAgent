@@ -381,6 +381,25 @@ def audit_execution_contract_repair(
             "reason": "persisted_contract_invalid",
             "detail": str(exc)[:160],
         }
+    persisted_capability = str(persisted.get("capability_id") or "")
+    persisted_args = dict(persisted.get("arguments") or {})
+    # A contract already bound to the known read-only GitHub capability may
+    # still carry a legacy empty ``topic`` (the 2026-08-08 production job was
+    # repaired to github.trending.read before topic enrichment existed).  When
+    # the instruction deterministically implies an AI / AI Agent topic, we can
+    # safely upgrade only the missing argument values (topic/limit/dedupe) in
+    # place — never the capability or its network requirement.  This mirrors
+    # the legacy-null repair contract: transaction + audit + hash update.
+    if persisted_capability in _AUTO_REPAIRABLE_CAPABILITIES:
+        bound_result = _audit_bound_capability_enrichment(
+            persisted,
+            persisted_args,
+            instruction,
+            parameters,
+            action_type=action_type,
+        )
+        if bound_result is not None:
+            return bound_result
     if persisted.get("capability_id") is not None:
         return {
             "repairable": False,
@@ -443,6 +462,77 @@ def audit_execution_contract_repair(
         "derived_hash": new_hash,
         "network_required_rose": bool(network_change),
         "network_change_reason": network_change,
+        "derivation_version": CONTRACT_DERIVATION_VERSION,
+        "repair": dict(candidate),
+    }
+
+
+def _audit_bound_capability_enrichment(
+    persisted: dict,
+    persisted_args: dict,
+    instruction: str,
+    parameters: Mapping[str, object] | None,
+    *,
+    action_type: str,
+) -> dict | None:
+    """Audit an already-bound GitHub contract whose topic/limit/dedupe are empty.
+
+    The 2026-08-08 production job was repaired to ``github.trending.read`` under
+    an older rule and its persisted ``arguments.topic`` stayed empty, so the
+    "10 条 AI / AI Agent 热门项目" contract was never actually enforced.  This
+    deterministic upgrade fills only the missing argument values from the same
+    server-owned derivation rules.  Returns ``None`` when no safe enrichment
+    applies (caller falls through to the generic bound/unbound paths).
+    """
+
+    facts = dict(parameters or {})
+    instruction_text = str(instruction or "")
+    topic_value = _text(facts.get("topic"), 40).lower()
+    topic_map = {"ai_agent": "ai-agent", "ai-agent": "ai-agent", "ai": "ai"}
+    mapped_topic = topic_map.get(topic_value, "")
+    # Only an instruction that deterministically implies an AI / AI Agent topic
+    # may enrich; otherwise the empty topic is left alone (generic trending).
+    if not mapped_topic:
+        return None
+    if str(persisted_args.get("topic") or "") == mapped_topic:
+        return None  # already correct, nothing to upgrade
+    # Build the candidate by filling missing argument values only; the
+    # capability and network requirement are unchanged.
+    limit_value = persisted_args.get("limit")
+    try:
+        limit = int(limit_value) if limit_value is not None else 10
+        limit = max(1, min(limit, 20))
+    except (TypeError, ValueError, OverflowError):
+        limit = 10
+    period = str(persisted_args.get("period") or "daily")
+    output_language = str(persisted_args.get("output_language") or "auto")
+    dedupe = str(persisted_args.get("dedupe_policy") or "job_history")
+    candidate_args = {
+        "period": period,
+        "limit": limit,
+        "topic": mapped_topic,
+        "output_language": output_language,
+        "dedupe_policy": dedupe,
+    }
+    candidate = dict(persisted)
+    candidate["arguments"] = candidate_args
+    try:
+        candidate = normalize_execution_contract(candidate)
+    except (TypeError, ValueError, OverflowError, UnicodeError, RecursionError):
+        return None
+    old_hash = execution_contract_hash(persisted)
+    new_hash = execution_contract_hash(candidate)
+    return {
+        "repairable": True,
+        "reason": "bound_github_empty_topic_enriched",
+        "persisted_capability_id": str(persisted.get("capability_id") or ""),
+        "derived_capability_id": str(persisted.get("capability_id") or ""),
+        "persisted_contract": dict(persisted),
+        "derived_contract": dict(candidate),
+        "persisted_hash": old_hash,
+        "derived_hash": new_hash,
+        "network_required_rose": False,
+        "network_change_reason": "",
         "derivation_version": CONTRACT_DERIVATION_VERSION,
         "repair": dict(candidate),
     }
