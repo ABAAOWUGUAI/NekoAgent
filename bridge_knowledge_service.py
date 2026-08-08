@@ -89,6 +89,34 @@ def _keyword_set(text: str) -> set[str]:
     return words
 
 
+def _keyword_candidate_where(text: str, terms: set[str]) -> tuple[str, list[object]]:
+    """Bounded LIKE pre-filter so keyword overlap can run without a full scan.
+
+    FTS trigram requires a contiguous substring match, which compound and
+    natural-language queries rarely satisfy.  When FTS returns nothing we
+    still must avoid both an unconditional early return (the old defect) and a
+    full-corpus scan.  This narrows candidates to items sharing at least one
+    query keyword in title/summary/content/tags, then ``search_published``
+    scores that bounded set by overlap.
+    """
+
+    used: list[str] = []
+    for term in sorted(terms):
+        if len(term) < 2:
+            continue
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        used.append(f"(title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\')")
+    if not used:
+        return " AND 1=0", []
+    params: list[object] = []
+    for term in sorted(terms):
+        if len(term) < 2:
+            continue
+        pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        params.extend([pattern] * 4)
+    return " AND (" + " OR ".join(used) + ")", params
+
+
 def list_knowledge(
     conn: sqlite3.Connection,
     *,
@@ -311,7 +339,7 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
     assistant_id = _assistant_id(conn)
     projected = search_projection(conn, assistant_id, text, limit=100) if str(text or "").strip() else []
     projection = {item["item_id"]: item for item in projected}
-    if str(text or "").strip() and not projection:
+    if str(text or "").strip() and not projection and not terms:
         record_retrieval_audit(
             conn,
             assistant_id=assistant_id,
@@ -330,6 +358,13 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
     if projection:
         where += " AND id IN (" + ",".join("?" for _ in projection) + ")"
         params.extend(projection)
+    else:
+        # FTS produced no projection: fall back to a bounded keyword candidate
+        # set so natural-language / compound queries can still be scored by
+        # overlap without scanning the whole published corpus.
+        keyword_where, keyword_params = _keyword_candidate_where(text, terms)
+        where += keyword_where
+        params.extend(keyword_params)
     params.append(100)
     rows = conn.execute(
         f"""SELECT * FROM assistant_knowledge_items WHERE {where}
@@ -345,7 +380,7 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
         if freshness == "expired":
             continue
         projected_item = projection.get(str(item.get("id")))
-        if overlap or projected_item or not terms:
+        if overlap or projected_item:
             freshness_bonus = {"fresh": 2.0, "unverified": 0.0, "stale": -1.0}.get(freshness, 0.0)
             projection_bonus = 3.0 if projected_item else 0.0
             score = overlap * 10.0 + projection_bonus + freshness_bonus
@@ -377,16 +412,23 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
             reason=str(retrieval["reason"]),
         )
     if not selected:
+        if projection or rows:
+            reason = "no_authorized_match"
+        else:
+            reason = "no_match"
         record_retrieval_audit(
             conn,
             assistant_id=assistant_id,
             query=text,
             channel=channel,
             item_id="",
-            signals={"backend": "filtered", "audience": audience},
+            signals={
+                "backend": "filtered" if reason == "no_authorized_match" else "none",
+                "audience": audience,
+            },
             score=0,
             injected=False,
-            reason="no_authorized_match",
+            reason=reason,
         )
     conn.commit()
     return selected

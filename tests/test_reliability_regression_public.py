@@ -228,3 +228,77 @@ def test_superseded_delivery_projects_terminal_not_pending() -> None:
     )
     assert trace["delivery_state"] == "superseded"
     assert trace["outcome_category"] == "delivery_superseded"
+
+
+def test_group_media_claim_without_observation_is_blocked() -> None:
+    """S11 regression: ``刚看你们刷图`` with observation=deferred is blocked."""
+    from bridge_group_truth_gate import group_final_truth_issues
+
+    envelope = {
+        "media": {"kind": "image", "observation": "deferred", "preflight": "none", "visual_context": "none"},
+        "allowed_claim_types": ["observed_media_facts", "subjective_opinion", "greeting"],
+        "forbidden_claim_types": ["visual_details"],
+    }
+    issues = group_final_truth_issues("刚看你们刷图呢～今天这么热闹？", envelope)
+    assert "media_claim_without_evidence" in issues
+    # Verifiable transport metadata stays allowed.
+    safe = group_final_truth_issues("看到你们发了不少媒体内容，我还没细看。", envelope)
+    assert "media_claim_without_evidence" not in safe
+
+
+def test_serious_reply_meow_defaults_to_overuse() -> None:
+    """Defect-3: clarification / refusal / boundary replies default to no 喵."""
+    from bridge_group_truth_gate import signature_budget_issues
+
+    issues = signature_budget_issues(
+        draft="这种定制壳我没法直接变一个出来给你喵。",
+        recent_confirmed=[],
+    )
+    assert "persona_signature_overuse" in issues
+    plain = signature_budget_issues(
+        draft="这种定制壳我没法直接变一个出来给你。",
+        recent_confirmed=[],
+    )
+    assert "persona_signature_overuse" not in plain
+
+
+def test_meow_cadence_budget_blocks_over_35_percent() -> None:
+    """Defect-3: 4/10 meow replies must block a new 喵 reply (default 3/10)."""
+    from bridge_group_truth_gate import signature_budget_issues
+
+    history = [
+        {"content": f"样本 {i} 喵" if i in {0, 1, 2, 3} else f"样本 {i}"}
+        for i in range(10)
+    ]
+    issues = signature_budget_issues(draft="再来一条喵", recent_confirmed=history)
+    assert "persona_signature_overuse" in issues
+    # 2/10 meow leaves room for one more (3/10 = 30% <= 35%).
+    sparse = [
+        {"content": f"样本 {i} 喵" if i in {0, 1} else f"样本 {i}"}
+        for i in range(10)
+    ]
+    ok = signature_budget_issues(draft="再来一条喵", recent_confirmed=sparse)
+    assert "persona_signature_overuse" not in ok
+
+
+def test_retrieval_keyword_fallback_is_bounded_and_compound() -> None:
+    """Defect-1: compound/natural queries must reach the keyword overlap path.
+
+    ``_keyword_candidate_where`` is the bounded pre-filter that replaced the
+    unconditional early return.  It must produce a bounded LIKE condition for
+    compound Chinese/English queries and an empty condition (1=0) when there
+    are no searchable terms, so unrelated queries do not inject anything.
+    """
+    from bridge_knowledge_service import _keyword_candidate_where, _keyword_set
+
+    terms = _keyword_set("平台当前生产运行事实 助手实例标识 schema迁移版本")
+    where, params = _keyword_candidate_where("平台当前生产运行事实 助手实例标识 schema迁移版本", terms)
+    assert "LIKE" in where
+    assert len(params) >= 4
+    # No-term queries must produce a no-candidate condition (1=0), never a
+    # full-corpus "recent published" injection.
+    empty_where, empty_params = _keyword_candidate_where("", set())
+    assert "1=0" in empty_where
+    assert empty_params == []
+
+

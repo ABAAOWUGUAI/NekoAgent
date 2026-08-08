@@ -72,7 +72,11 @@ def main() -> int:
             reliability_tests.test_automation_business_verdict_passes_on_topic_ai_agent_results()
             reliability_tests.test_superseded_delivery_projects_terminal_not_pending()
             reliability_tests.test_bound_github_empty_topic_contract_is_enriched_to_ai_agent()
-            tests += 7
+            reliability_tests.test_group_media_claim_without_observation_is_blocked()
+            reliability_tests.test_serious_reply_meow_defaults_to_overuse()
+            reliability_tests.test_meow_cadence_budget_blocks_over_35_percent()
+            reliability_tests.test_retrieval_keyword_fallback_is_bounded_and_compound()
+            tests += 11
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")

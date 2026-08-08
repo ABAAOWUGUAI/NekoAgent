@@ -112,6 +112,24 @@ def enqueue_qq_response(
         }
 
     dispatch = str(result.get("dispatch") or ("error" if not result.get("ok") else "chat"))
+    # Structural group-chat boundary (not a string blacklist): a social
+    # ``chat`` Delivery requires a genuine model reply.  If the turn failed or
+    # produced no reply text, ``_text`` would otherwise fill an internal
+    # diagnostic (provider/connection/proxy/console wording) into a group as a
+    # normal social reply — the C24941 / C16636 bypass.  Block that here so the
+    # internal detail never reaches the group, regardless of engagement id.
+    if scope == "group" and dispatch == "chat":
+        genuine_reply = str(result.get("reply") or result.get("output") or "").strip()
+        failed_turn = not result.get("ok") or (not genuine_reply and bool(result.get("error_kind") or result.get("error")))
+        if failed_turn:
+            return {
+                **result,
+                "ok": False,
+                "dispatch": "blocked",
+                "delivery_queued": False,
+                "group_error_blocked": True,
+                "group_error_reason": "group_chat_without_genuine_reply",
+            }
     response_id = logical_response_id(
         channel="qq",
         thread_ref=thread_ref,
