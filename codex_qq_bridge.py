@@ -7999,7 +7999,8 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
             except Exception as exc:
                 _json_response(self, 400, {"ok": False, "error": str(exc)})
                 return
-            _json_response(self, 200, {"ok": True, "verification": result, **registry})
+            # G2: ok mirrors status; failure never shown as success.
+            _json_response(self, 200, {"ok": result.get("status") == "verified", "verification": result, **registry})
             return
 
         if path == "/assistant/models/test":
@@ -8028,8 +8029,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
             except Exception as exc:
                 _json_response(self, 500, {"ok": False, "error": str(exc)})
                 return
-            # The provider completed the request even when it rejected the
-            # selected model. Preserve typed guidance instead of a generic 5xx.
+            # Provider answered even when rejecting the model; keep typed guidance.
             _json_response(self, 200, result)
             return
 

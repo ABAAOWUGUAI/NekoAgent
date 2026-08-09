@@ -24,6 +24,7 @@ BRIDGE_POST_ROUTES = frozenset(
         "/assistant/models/test",
         "/assistant/models/discover",
         "/assistant/models/playground",
+        "/assistant/models/executor/verify",
         "/assistant/expressions",
         "/assistant/groups",
         "/assistant/group/dispatch",
