@@ -82,7 +82,8 @@ def main() -> int:
             reliability_tests.test_existing_failed_executor_binding_resave_is_an_explicit_no_op()
             reliability_tests.test_executor_verify_route_and_truthful_status_are_publicly_pinned()
             reliability_tests.test_executor_configuration_action_opens_and_prefills_connection_editor()
-            tests += 17
+            reliability_tests.test_executor_v39_schema_can_be_validated_before_v40_column_exists()
+            tests += 18
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")

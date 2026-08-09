@@ -477,7 +477,10 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     if 38 in versions:
         knowledge_ingestion_schema = require_knowledge_ingestion_schema(conn)
     if 39 in versions:
-        executor_verification_schema = require_executor_verification_schema(conn)
+        executor_verification_schema = require_executor_verification_schema(
+            conn,
+            version=40 if 40 in versions else 39,
+        )
     if 24 in versions:
         social_virtual_schema = require_social_virtual_schema(conn)
     if 25 in versions:
@@ -618,7 +621,10 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
         require_action_commitment_schema(conn) if 37 in versions else None
     )
     knowledge_ingestion_schema = require_knowledge_ingestion_schema(conn) if 38 in versions else None
-    executor_verification_schema = require_executor_verification_schema(conn) if 39 in versions else None
+    executor_verification_schema = (
+        require_executor_verification_schema(conn, version=40 if 40 in versions else 39)
+        if 39 in versions else None
+    )
     social_virtual_schema = (
         require_social_virtual_schema(conn) if 24 in versions else None
     )
