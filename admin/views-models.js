@@ -28,13 +28,22 @@
       ] : [['配置', '待保存', false], ['Profile', '待检测', false], ['沙箱', '待检测', false], ['工作目录', '待检测', false]];
       target.innerHTML = facts.map(([label, value, ok]) => `<div><dt>${escapeHtml(label)}</dt><dd class="${ok ? 'ready' : ''}">${escapeHtml(value)}</dd></div>`).join('');
     }
+    function executorVerificationMessage(v) {
+      const reason = v?.reason_code || v?.last_error || '';
+      if (v?.status === 'verified') return ['隔离工作模式验证已通过（文件/命令/哈希/最终正文均完成）。', 'ok'];
+      if (v?.status === 'failed') return [`验证失败：${reason || 'executor_verify_failed'}。`, 'error'];
+      if (v?.status === 'stale') return [`配置已变化，验证结果过期，需重新验证。${reason || ''}`, 'pending'];
+      return [reason ? `验证未完成：${reason}。` : '尚未完成验证。', 'pending'];
+    }
     async function verifyExecutorWorkMode() {
       const status = $('modelExecutorVerificationStatus'), button = $('verifyExecutorWorkModeBtn');
       if (!status || !button) return;
       button.disabled = true;
       try {
         const r = await bridge('/assistant/models/executor/verify', { provider_id: $('modelProviderId').value.trim(), timeout: 120 });
-        status.textContent = r.ok ? '隔离工作模式验证已通过（文件/命令/哈希/最终正文均完成）。' : `验证失败：${r.error || 'executor_verify_failed'}`;
+        const [text, tone] = executorVerificationMessage(r.verification);
+        status.className = `provider-status ${tone}`;
+        status.textContent = text;
       } finally { button.disabled = false; }
     }
 
@@ -62,6 +71,13 @@
       syncExecutorUpstreamModels(profile?.upstream_model_id || $('modelExecutorUpstreamModel').value);
     }
 
+    function syncExecutorConfigureEntry() {
+      const entry = $('modelExecutorConfigureEntry');
+      if (!entry) return;
+      const model = state.modelCatalog.find((item) => item.id === $('modelExecutorUpstreamModel').value);
+      entry.classList.toggle('hidden', !(model && model.executor_eligibility && model.executor_eligibility.can_configure));
+    }
+
     function syncExecutorProfileFields(profile = null) {
       const visible = isCustomCodexTransport();
       $('modelExecutorFields').classList.toggle('hidden', !visible);
@@ -71,6 +87,7 @@
       }
       if (visible) syncExecutorUpstreamOptions(profile);
       renderExecutorRuntimeSummary(profile);
+      syncExecutorConfigureEntry();
     }
 
     function renderModelRegistry() {
@@ -159,11 +176,15 @@
         const executor = item.role === 'work_executor';
         const predicate = (model) => Number(model.enabled) && Number(model.provider_enabled);
         const primary = state.modelCatalog.find((model) => model.id === item.primary_model_id);
+        const elig = executor && primary ? (primary.executor_eligibility || {}) : null;
+        const needsConfig = !!(elig && elig.can_configure);
+        const bindWarning = executor && primary && elig && !elig.can_bind ? `<p class="route-capability-note">${escapeHtml(elig.reason_zh || '不可绑定')}。${needsConfig ? '请先在“编辑连接”中配置执行器后重新验证。' : '历史绑定仍运行，但工作验证未通过/待重验。'}</p>` : '';
         return `<article class="route-card">
           <div class="route-marker" aria-hidden="true"></div>
           <header><div><span class="entity-type mono">${escapeHtml(item.role)}</span><h3>${escapeHtml(item.label)}</h3></div><span class="status-chip ${primary ? 'green' : 'amber'}">${primary ? '已路由' : '待配置'}</span></header>
           <p>${escapeHtml(item.description || '')}</p>
           ${item.role === 'vision_caption' ? '<p class="route-capability-note">独立识图路由：必须绑定同时声明 text + vision 的模型；不会替换对话回复。</p>' : ''}
+          ${bindWarning}
           <div class="route-selects">
             <label>主模型<select data-role-primary="${escapeHtml(item.role)}">${modelOptions(item.primary_model_id, predicate, '选择主模型', { executor })}</select></label>
             ${executor ? '' : `<label>备用模型<select data-role-fallback="${escapeHtml(item.role)}">${modelOptions(item.fallback_model_id, predicate)}</select></label>`}
@@ -503,22 +524,12 @@
     async function loadModelRegistry() {
       const providerEditorOpen = $('modelProviderEditor').open;
       const providerDraft = providerEditorOpen ? {
-        template: $('modelProviderTemplate').value,
-        id: $('modelProviderId').value,
-        name: $('modelProviderName').value,
-        kind: $('modelProviderKind').value,
-        transport: $('modelProviderTransport').value,
-        billing: $('modelProviderBilling').value,
-        baseUrl: $('modelProviderBaseUrl').value,
-        apiKey: $('modelProviderApiKey').value,
-        clearApiKey: $('modelProviderClearKey').checked,
-        timeout: $('modelProviderTimeout').value,
-        enabled: $('modelProviderEnabled').checked,
-        trusted: $('modelProviderTrusted').checked,
-        executorProfileName: $('modelExecutorProfileName').value,
-        executorEnabled: $('modelExecutorEnabled').checked,
-        executorUpstreamProvider: $('modelExecutorUpstreamProvider').value,
-        executorUpstreamModel: $('modelExecutorUpstreamModel').value,
+        template: $('modelProviderTemplate').value, id: $('modelProviderId').value, name: $('modelProviderName').value,
+        kind: $('modelProviderKind').value, transport: $('modelProviderTransport').value, billing: $('modelProviderBilling').value,
+        baseUrl: $('modelProviderBaseUrl').value, apiKey: $('modelProviderApiKey').value, clearApiKey: $('modelProviderClearKey').checked,
+        timeout: $('modelProviderTimeout').value, enabled: $('modelProviderEnabled').checked, trusted: $('modelProviderTrusted').checked,
+        executorProfileName: $('modelExecutorProfileName').value, executorEnabled: $('modelExecutorEnabled').checked,
+        executorUpstreamProvider: $('modelExecutorUpstreamProvider').value, executorUpstreamModel: $('modelExecutorUpstreamModel').value,
       } : null;
       const result = await bridge('/assistant/models');
       state.modelProviders = result.providers || [];
@@ -530,25 +541,16 @@
       $('modelProviderTemplate').innerHTML = '<option value="">自定义连接</option>' + state.modelConnectionTemplates.map((item) => (
         `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)}</option>`
       )).join('');
-      if (state.modelConnectionTemplates.some((item) => item.key === selectedTemplate)) {
-        $('modelProviderTemplate').value = selectedTemplate;
-      }
+      if (state.modelConnectionTemplates.some((item) => item.key === selectedTemplate)) $('modelProviderTemplate').value = selectedTemplate;
       renderModelRegistry();
       if (providerDraft) {
-        $('modelProviderTemplate').value = providerDraft.template;
-        $('modelProviderId').value = providerDraft.id;
-        $('modelProviderName').value = providerDraft.name;
-        $('modelProviderKind').value = providerDraft.kind;
-        $('modelProviderTransport').value = providerDraft.transport;
-        $('modelProviderBilling').value = providerDraft.billing;
-        $('modelProviderBaseUrl').value = providerDraft.baseUrl;
-        $('modelProviderApiKey').value = providerDraft.apiKey;
-        $('modelProviderClearKey').checked = providerDraft.clearApiKey;
-        $('modelProviderTimeout').value = providerDraft.timeout;
-        $('modelProviderEnabled').checked = providerDraft.enabled;
-        $('modelProviderTrusted').checked = providerDraft.trusted;
-        $('modelExecutorProfileName').value = providerDraft.executorProfileName;
-        $('modelExecutorEnabled').checked = providerDraft.executorEnabled;
+        $('modelProviderTemplate').value = providerDraft.template; $('modelProviderId').value = providerDraft.id;
+        $('modelProviderName').value = providerDraft.name; $('modelProviderKind').value = providerDraft.kind;
+        $('modelProviderTransport').value = providerDraft.transport; $('modelProviderBilling').value = providerDraft.billing;
+        $('modelProviderBaseUrl').value = providerDraft.baseUrl; $('modelProviderApiKey').value = providerDraft.apiKey;
+        $('modelProviderClearKey').checked = providerDraft.clearApiKey; $('modelProviderTimeout').value = providerDraft.timeout;
+        $('modelProviderEnabled').checked = providerDraft.enabled; $('modelProviderTrusted').checked = providerDraft.trusted;
+        $('modelExecutorProfileName').value = providerDraft.executorProfileName; $('modelExecutorEnabled').checked = providerDraft.executorEnabled;
         syncExecutorProfileFields(state.modelProviders.find((item) => item.id === providerDraft.id)?.executor_profile || null);
         $('modelExecutorUpstreamProvider').value = providerDraft.executorUpstreamProvider;
         syncExecutorUpstreamModels(providerDraft.executorUpstreamModel);
@@ -789,6 +791,7 @@
       $('modelProviderTransport').addEventListener('change', () => syncExecutorProfileFields());
       $('modelExecutorUpstreamProvider').addEventListener('change', () => syncExecutorUpstreamModels());
       $('verifyExecutorWorkModeBtn').addEventListener('click', () => verifyExecutorWorkMode().catch((error) => setConnection(error.message || String(error), 'error')));
+      $('modelExecutorConfigureEntry').addEventListener('click', () => { setModelWorkspace('routing'); });
       $('modelProviderId').addEventListener('input', () => {
         if (isCustomCodexTransport() && !$('modelExecutorProfileName').value.trim()) {
           $('modelExecutorProfileName').value = $('modelProviderId').value.trim();

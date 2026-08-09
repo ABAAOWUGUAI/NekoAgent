@@ -35,6 +35,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,8 +45,18 @@ from bridge_executor_profiles import (
     executor_runtime_status,
     get_executor_profile,
 )
+from bridge_executor_runtime import (
+    codex_exec_env,
+    validate_executor_sandbox_and_cwd,
+)
 from bridge_model_control import capabilities_from_row
 
+
+# G1 (2026-08-09 directive): the work-mode verification must run under a real
+# writable sandbox so file operations are possible; ordinary chat stays
+# read-only and must not be widened by this fix.
+CHAT_SANDBOX_POLICY = "read-only"
+VERIFY_SANDBOX_POLICY = "workspace-write"
 
 # ---------------------------------------------------------------------------
 # Reason vocabulary (E1).  Ordered; the first hit wins.
@@ -95,6 +106,7 @@ VERIFICATION_COLUMNS = (
     "applied_version_at_verify",
     "upstream_model_id_at_verify",
     "status",
+    "reason_code",
     "last_error",
     "evidence_json",
     "created_at",
@@ -117,6 +129,7 @@ def _public_verification(row: sqlite3.Row | dict | None) -> dict:
             "status": "",
             "verified_at": "",
             "verification_hash": "",
+            "reason_code": "",
             "last_error": "",
         }
     item = {key: row[key] for key in row.keys()}
@@ -126,6 +139,7 @@ def _public_verification(row: sqlite3.Row | dict | None) -> dict:
         evidence = {}
     item["evidence"] = evidence
     item.pop("evidence_json", None)
+    item.setdefault("reason_code", "")
     return item
 
 
@@ -175,8 +189,9 @@ def verification_hash_inputs(conn: sqlite3.Connection, provider_id: str) -> dict
     if upstream_model:
         item.update({k: upstream_model[k] for k in upstream_model.keys()})
     # Sandbox / tool / workspace policy is deployment-owned; include the policy
-    # facts that affect execution, not secrets.
-    item["sandbox_policy"] = "read-only"
+    # facts that affect execution, not secrets.  G1-9: the verification sandbox
+    # is workspace-write (real file ops), NOT the chat read-only policy.
+    item["sandbox_policy"] = VERIFY_SANDBOX_POLICY
     item["tool_policy"] = "controlled"
     item["workspace_root"] = os.environ.get("CODEX_EXECUTOR_WORKSPACE_ROOT", "/opt/agent-workspace")
     return item
@@ -385,6 +400,115 @@ WORK_VERIFY_FIXED_CONTENT = "executor-work-mode-verification\n"
 WORK_VERIFY_EXPECTED_SHA256 = hashlib.sha256(WORK_VERIFY_FIXED_CONTENT.encode("utf-8")).hexdigest()
 
 
+def _codex_work_verify_args(
+    *,
+    profile_name: str,
+    model_name: str,
+    network_mode: str = "none",
+) -> list[str]:
+    """G1: dedicated codex args for work-mode verification.
+
+    Uses ``workspace-write`` so real file operations are possible, pins no
+    network access, and never widens the ordinary chat (read-only) path.
+    """
+
+    args = [
+        "/usr/local/bin/codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--profile",
+        profile_name,
+        "--json",
+        "--ephemeral",
+        "--model",
+        model_name,
+        "--sandbox",
+        VERIFY_SANDBOX_POLICY,
+        "--color",
+        "never",
+    ]
+    if str(network_mode or "none") != "none":
+        raise ValueError("executor_verify_network_not_allowed")
+    return args
+
+
+def _parse_work_verify_output(raw: str) -> dict:
+    """Extract the final assistant body from codex JSONL output.
+
+    Mirrors the task-path parse: the last ``agent_message`` item is the model's
+    final text.  Startup/usage prose is rejected by ``_looks_like_startup_log``
+    at the caller.
+    """
+
+    final_text = ""
+    for line in str(raw or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            item = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if item.get("type") == "item.completed" and item.get("item", {}).get("type") == "agent_message":
+            final_text = str(item.get("item", {}).get("text") or "").strip()
+    return {"final_text": final_text}
+
+
+def _run_codex_work_verify(
+    prompt: str,
+    *,
+    cwd: Path,
+    timeout: int,
+    settings: dict,
+) -> dict:
+    """G1: dedicated workspace-write verification runner.
+
+    Invokes the Codex CLI Proxy directly (not the chat runner), sandboxed to
+    workspace-write with no network, cwd restricted to the unique temp dir.
+    Returns ok / output / reply / error_kind like the old injected runner so the
+    harness contract is unchanged.
+    """
+
+    import shutil
+
+    profile_name = str(settings.get("executor_profile", {}).get("profile_name") or "").strip()
+    model_name = str(settings.get("codex_model") or "").strip()
+    provider_id = str(settings.get("provider_id") or "").strip()
+    if not profile_name or not model_name:
+        return {"ok": False, "output": "", "error_kind": "executor_profile_missing"}
+    if not shutil.which("bwrap"):
+        return {"ok": False, "output": "", "error_kind": "executor_sandbox_unavailable"}
+    try:
+        validate_executor_sandbox_and_cwd(VERIFY_SANDBOX_POLICY, "codex_custom_provider", cwd)
+    except ValueError as exc:
+        return {"ok": False, "output": "", "error_kind": "executor_verify_cwd_not_allowed", "error": str(exc)}
+    profile = {
+        "profile_name": profile_name,
+        "credential_source": str(settings.get("executor_profile", {}).get("credential_source") or "proxy_access_key"),
+    }
+    env = codex_exec_env("codex_custom_provider", profile, http_proxy="", socks_proxy="")
+    args = _codex_work_verify_args(profile_name=profile_name, model_name=model_name, network_mode="none")
+    try:
+        proc = subprocess.run(
+            args,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(cwd),
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "output": "", "error_kind": "executor_verify_timeout"}
+    parsed = _parse_work_verify_output(proc.stdout or "")
+    final_text = parsed["final_text"]
+    if proc.returncode != 0:
+        return {"ok": False, "output": final_text, "error_kind": "executor_verify_codex_failed", "returncode": proc.returncode}
+    if not final_text:
+        return {"ok": False, "output": "", "error_kind": "executor_verify_no_final_body", "returncode": proc.returncode}
+    return {"ok": True, "output": final_text, "reply": final_text, "error_kind": ""}
+
+
 def _run_work_verify(
     *,
     runner,
@@ -429,15 +553,52 @@ def _run_work_verify(
             "mutated": mutated,
             "final_body_present": has_final_body,
             "output_chars": len(final_body),
-            "sandbox": "read-only",
+            "sandbox": VERIFY_SANDBOX_POLICY,
             "network": "none",
         }
         return {
             "ok": bool(ok and mutated and has_final_body and not error_kind),
             "output": output,
             "error_kind": error_kind,
+            "reason_code": _work_verify_reason(ok, mutated, has_final_body, error_kind, output),
             "evidence": evidence,
         }
+
+
+def _looks_like_read_only_block(text: str) -> bool:
+    """Detect model output reporting that the sandbox forbade writes.
+
+    G1-7: if the model says it cannot write because the sandbox is read-only /
+    permission denied / needs write permissions, that is a harness/sandbox
+    problem, not evidence the model cannot perform work.
+    """
+
+    lowered = str(text or "").lower()
+    markers = (
+        "read-only", "read only", "permission denied", "cannot write",
+        "can't write", "can not write", "not writable", "need write permission",
+        "grant write permissions", "sandboxed shell couldn't launch",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _work_verify_reason(ok: bool, mutated: bool, has_final_body: bool, error_kind: str, output: str) -> str:
+    """Classify a verification outcome.
+
+    - ``verified``: real file/tool operation completed.
+    - ``verification_harness_read_only``: writes were blocked by the sandbox;
+      a harness problem, never "model cannot work".
+    - ``verification_harness_sandbox``: sandbox/cwd bootstrap failed.
+    - ``file_not_mutated``: model returned prose without the required file op.
+    """
+
+    if ok and mutated and has_final_body:
+        return "verified"
+    if error_kind in {"executor_sandbox_unavailable", "executor_verify_cwd_not_allowed", "executor_verify_codex_failed"}:
+        return "verification_harness_sandbox"
+    if not mutated and _looks_like_read_only_block(output):
+        return "verification_harness_read_only"
+    return "file_not_mutated"
 
 
 def _looks_like_startup_log(text: str) -> bool:
@@ -474,9 +635,11 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
 
     if runner is None:
         def runner(prompt, *, cwd, timeout, settings):
-            from codex_qq_bridge import _run_codex_assistant_chat
+            # G1: dedicated workspace-write runner, never the fixed read-only
+            # chat runner.  A write-permission failure is a harness/sandbox
+            # problem, not evidence the model cannot work.
             settings_override = _executor_verify_settings(conn, provider_id, profile)
-            return _run_codex_assistant_chat(prompt, cwd=cwd, timeout=timeout, settings_override=settings_override)
+            return _run_codex_work_verify(prompt, cwd=cwd, timeout=timeout, settings=settings_override)
 
     workspace_root = Path(os.environ.get("CODEX_EXECUTOR_WORKSPACE_ROOT", "/opt/agent-workspace"))
     outcome = _run_work_verify(runner=runner, workspace_root=workspace_root, timeout=timeout)
@@ -488,9 +651,9 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
             INSERT INTO executor_verification_state(
                 provider_id,adapter_type,verification_hash,verified_at,
                 config_version_at_verify,applied_version_at_verify,
-                upstream_model_id_at_verify,status,last_error,evidence_json,
+                upstream_model_id_at_verify,status,reason_code,last_error,evidence_json,
                 created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(provider_id) DO UPDATE SET
                 adapter_type=excluded.adapter_type,
                 verification_hash=excluded.verification_hash,
@@ -498,7 +661,7 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
                 config_version_at_verify=excluded.config_version_at_verify,
                 applied_version_at_verify=excluded.applied_version_at_verify,
                 upstream_model_id_at_verify=excluded.upstream_model_id_at_verify,
-                status='verified',last_error='',
+                status='verified',reason_code='verified',last_error='',
                 evidence_json=excluded.evidence_json,updated_at=excluded.updated_at
             """,
             (
@@ -507,7 +670,7 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
                 int(profile.get("config_version") or 0),
                 int(profile.get("applied_version") or 0),
                 str(profile.get("upstream_model_id") or ""),
-                VERIFICATION_STATUS_VERIFIED, "",
+                VERIFICATION_STATUS_VERIFIED, "verified", "",
                 json.dumps(outcome["evidence"], ensure_ascii=False, sort_keys=True),
                 now, now,
             ),
@@ -518,14 +681,15 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
             (provider_id,),
         ).fetchone())
     error = outcome["error_kind"] or "work_mode_verification_failed"
+    reason_code = outcome.get("reason_code") or "file_not_mutated"
     conn.execute(
         """
         INSERT INTO executor_verification_state(
             provider_id,adapter_type,verification_hash,verified_at,
             config_version_at_verify,applied_version_at_verify,
-            upstream_model_id_at_verify,status,last_error,evidence_json,
+            upstream_model_id_at_verify,status,reason_code,last_error,evidence_json,
             created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(provider_id) DO UPDATE SET
             adapter_type=excluded.adapter_type,
             verification_hash=excluded.verification_hash,
@@ -533,7 +697,7 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
             config_version_at_verify=excluded.config_version_at_verify,
             applied_version_at_verify=excluded.applied_version_at_verify,
             upstream_model_id_at_verify=excluded.upstream_model_id_at_verify,
-            status='failed',last_error=excluded.last_error,
+            status='failed',reason_code=excluded.reason_code,last_error=excluded.last_error,
             evidence_json=excluded.evidence_json,updated_at=excluded.updated_at
         """,
         (
@@ -542,7 +706,7 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
             int(profile.get("config_version") or 0),
             int(profile.get("applied_version") or 0),
             str(profile.get("upstream_model_id") or ""),
-            VERIFICATION_STATUS_FAILED, error,
+            VERIFICATION_STATUS_FAILED, reason_code, error,
             json.dumps(outcome["evidence"], ensure_ascii=False, sort_keys=True),
             now, now,
         ),

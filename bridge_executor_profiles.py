@@ -365,6 +365,7 @@ def public_executor_profile(profile: dict | None, verification: dict | None = No
             "status": verification.get("status"),
             "verified_at": verification.get("verified_at"),
             "verification_hash": verification.get("verification_hash"),
+            "reason_code": verification.get("reason_code"),
             "last_error": verification.get("last_error"),
         }
     return item

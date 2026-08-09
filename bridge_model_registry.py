@@ -369,9 +369,10 @@ def list_model_registry(conn: sqlite3.Connection) -> dict:
         profile = executor_profiles.get(str(item.get("id") or ""))
         verification = None
         if profile and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='executor_verification_state'").fetchone():
-            verification = dict(conn.execute(
-                "SELECT status, verified_at, verification_hash, last_error FROM executor_verification_state WHERE provider_id=?",
-                (str(item.get("id") or ""),)).fetchone())
+            row = conn.execute(
+                "SELECT status, verified_at, verification_hash, reason_code, last_error FROM executor_verification_state WHERE provider_id=?",
+                (str(item.get("id") or ""),)).fetchone()
+            verification = dict(row) if row else None
         item["executor_profile"] = public_executor_profile(profile, verification=verification)
         if item.get("transport") == "codex_cli_custom_provider":
             item["executor_upstream"] = executor_upstream_summary(conn, profile)

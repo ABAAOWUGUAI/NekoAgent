@@ -196,10 +196,11 @@ class BusinessHealthService:
                    p.id AS provider_id,p.name AS provider_name,p.enabled AS provider_enabled,
                    p.last_test_status,p.transport,p.billing_scope,p.runtime_owner,
                    p.config_mode,p.trusted_for_executor,m.capabilities_json,
-                   m.supports_tools
+                   m.supports_tools,ev.status AS executor_verify_status
             FROM model_role_bindings b
             LEFT JOIN model_catalog m ON m.id=b.primary_model_id
             LEFT JOIN model_providers p ON p.id=m.provider_id
+            LEFT JOIN executor_verification_state ev ON ev.provider_id=p.id
             """,
         ).fetchall()
         roles = {str(row["role"]): dict(row) for row in rows}
@@ -207,6 +208,7 @@ class BusinessHealthService:
         missing = []
         incompatible = []
         untested = []
+        unverified_executor = []
         for role in (
             "interaction_classifier",
             "conversation_engagement",
@@ -233,16 +235,29 @@ class BusinessHealthService:
             if not tested:
                 untested.append(role)
                 role_states[role] = "unknown"
-            else:
-                role_states[role] = "healthy"
+                continue
+            # G3: a third-party work_executor route (Codex CLI custom provider)
+            # is only healthy when its isolated work-mode verification is
+            # current (verified).  A stale or failed verification must never be
+            # projected as a healthy work route.  First-party ChatGPT-login
+            # executors have no isolated verification row and are unaffected.
+            if (
+                role == "work_executor"
+                and item.get("transport") == "codex_cli_custom_provider"
+                and str(item.get("executor_verify_status") or "") != "verified"
+            ):
+                unverified_executor.append(role)
+                role_states[role] = "unknown"
+                continue
+            role_states[role] = "healthy"
         if missing or incompatible:
             status = "unavailable"
             summary = "存在未绑定、停用或不兼容的模型角色。"
             action = "检查模型连接、能力声明和角色路由。"
-        elif untested:
+        elif untested or unverified_executor:
             status = "unknown"
-            summary = "所有角色均已绑定，但部分连接缺少最近一次成功验证证据。"
-            action = "在验证台运行对应连接的能力测试。"
+            summary = "所有角色均已绑定，但部分连接缺少最近一次成功验证证据，或工作执行器验证未通过。"
+            action = "在验证台运行对应连接的能力测试，并完成工作执行器的隔离验证。"
         else:
             status = "healthy"
             summary = "五个模型角色均有可用且最近验证成功的路由。"
@@ -257,7 +272,7 @@ class BusinessHealthService:
                 next_action=action,
                 metrics={
                     "ready_roles": sum(1 for value in role_states.values() if value == "healthy"),
-                    "unknown_roles": len(untested),
+                    "unknown_roles": len(untested) + len(unverified_executor),
                     "unavailable_roles": len(missing) + len(incompatible),
                 },
             ),

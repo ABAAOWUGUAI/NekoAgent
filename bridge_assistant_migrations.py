@@ -116,7 +116,7 @@ from bridge_action_commitment_schema import (
     require_action_commitment_schema,
 )
 from bridge_knowledge_ingestion_schema import KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM, apply_knowledge_ingestion_v1, require_knowledge_ingestion_schema
-from bridge_executor_verification_schema import EXECUTOR_VERIFICATION_MIGRATION_CHECKSUM, apply_executor_verification_v1, require_executor_verification_schema
+from bridge_executor_verification_schema import EXECUTOR_VERIFICATION_MIGRATION_CHECKSUM, EXECUTOR_VERIFICATION_REASON_CODE_CHECKSUM, apply_executor_verification_reason_code_v2, apply_executor_verification_v1, require_executor_verification_schema
 from bridge_social_virtual_schema import SOCIAL_VIRTUAL_MIGRATION_CHECKSUM, apply_social_virtual_v1, require_social_virtual_schema
 from bridge_proactive_messaging_schema import (
     PROACTIVE_MESSAGING_MIGRATION_CHECKSUM,
@@ -370,6 +370,7 @@ ASSISTANT_CORE_MIGRATIONS = (
     Migration(version=37, name="interaction_action_commitment_v1", apply=apply_action_commitment_v1, checksum=ACTION_COMMITMENT_MIGRATION_CHECKSUM),
     Migration(version=38, name="knowledge_ingestion_v1", apply=apply_knowledge_ingestion_v1, checksum=KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM),
     Migration(version=39, name="executor_verification_state_v1", apply=apply_executor_verification_v1, checksum=EXECUTOR_VERIFICATION_MIGRATION_CHECKSUM),
+    Migration(version=40, name="executor_verification_reason_code_v2", apply=apply_executor_verification_reason_code_v2, checksum=EXECUTOR_VERIFICATION_REASON_CODE_CHECKSUM),
 )
 
 
