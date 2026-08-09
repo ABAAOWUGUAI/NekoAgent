@@ -427,3 +427,20 @@ def test_executor_configuration_action_opens_and_prefills_connection_editor() ->
     assert "modelExecutorUpstreamModel" in source
     assert "modelExecutorConfigureEntry').addEventListener('click', () => { setModelWorkspace('routing')" not in source
 
+
+def test_executor_v39_schema_can_be_validated_before_v40_column_exists() -> None:
+    """Migration preflight must validate the schema for the applied version."""
+    from bridge_executor_verification_schema import (
+        apply_executor_verification_reason_code_v2,
+        apply_executor_verification_v1,
+        require_executor_verification_schema,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE model_providers(id TEXT PRIMARY KEY)")
+    apply_executor_verification_v1(conn)
+    assert require_executor_verification_schema(conn, version=39)["version"] == 39
+    apply_executor_verification_reason_code_v2(conn)
+    assert require_executor_verification_schema(conn, version=40)["version"] == 40
+    conn.close()
+

@@ -98,17 +98,18 @@ def apply_executor_verification_reason_code_v2(conn: sqlite3.Connection) -> None
         )
 
 
-def require_executor_verification_schema(conn: sqlite3.Connection) -> dict:
+def require_executor_verification_schema(conn: sqlite3.Connection, *, version: int = 40) -> dict:
     table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='executor_verification_state'",
     ).fetchone()
     if not table:
         raise MigrationDriftError("executor_verification_schema_drift:table")
     columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(executor_verification_state)")}
-    missing = sorted(set(VERIFICATION_COLUMNS) - columns)
+    expected = VERIFICATION_COLUMNS if int(version) >= 40 else V39_VERIFICATION_COLUMNS
+    missing = sorted(set(expected) - columns)
     if missing:
         raise MigrationDriftError("executor_verification_schema_drift:" + ",".join(missing))
-    return {"ok": True, "columns": list(VERIFICATION_COLUMNS)}
+    return {"ok": True, "version": int(version), "columns": list(expected)}
 
 
 __all__ = [
