@@ -20,6 +20,7 @@ REGISTERED_SCHEMA_FIELDS = (
     "assistant_continuity_schema",
     "living_wiki_schema",
     "executor_profile_schema",
+    "executor_verification_schema",
     "conversation_participation_schema",
     "conversation_participation_routing_schema",
     "group_participation_schema",

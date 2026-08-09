@@ -76,7 +76,9 @@ def main() -> int:
             reliability_tests.test_serious_reply_meow_defaults_to_overuse()
             reliability_tests.test_meow_cadence_budget_blocks_over_35_percent()
             reliability_tests.test_retrieval_keyword_fallback_is_bounded_and_compound()
-            tests += 11
+            reliability_tests.test_executor_startup_log_is_never_a_final_body()
+            reliability_tests.test_executor_verification_hash_never_contains_secret()
+            tests += 13
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")

@@ -302,3 +302,37 @@ def test_retrieval_keyword_fallback_is_bounded_and_compound() -> None:
     assert empty_params == []
 
 
+def test_executor_startup_log_is_never_a_final_body() -> None:
+    """E3: a model that only prints startup/usage prose fails work-mode
+    verification; only a genuine final assistant body passes."""
+    from bridge_executor_verification import _looks_like_startup_log
+
+    assert _looks_like_startup_log("Welcome to Codex CLI\nInitializing…") is True
+    assert _looks_like_startup_log("Checking for updates\nReading config") is True
+    assert _looks_like_startup_log("我读取了 work-verify.txt 的内容摘要并完成了一次 ls 命令。") is False
+
+
+def test_executor_verification_hash_never_contains_secret() -> None:
+    """E3/E5: the verification hash covers identity/config/version facts but
+    never the secret value itself."""
+    import json
+    from bridge_executor_verification import verification_hash_inputs
+
+    inputs = {
+        "id": "proxy-exec",
+        "kind": "codex",
+        "transport": "codex_cli_custom_provider",
+        "secret_version": 2,
+        "secret_rotated_at": "2026-08-09T00:00:00+00:00",
+        "executor_config_version": 2,
+        "executor_applied_version": 2,
+        "sandbox_policy": "read-only",
+    }
+    payload = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+    assert "secret-key-not-real" not in payload
+    assert "api_key" not in payload
+    assert "DEEPSEEK_API_KEY" not in payload
+    # secret_version is a version, not the secret; it belongs in the hash so a
+    # rotation invalidates it even though the value never appears.
+    assert "secret_version" in payload
+

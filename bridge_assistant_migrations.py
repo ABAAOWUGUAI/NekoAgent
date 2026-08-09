@@ -116,11 +116,8 @@ from bridge_action_commitment_schema import (
     require_action_commitment_schema,
 )
 from bridge_knowledge_ingestion_schema import KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM, apply_knowledge_ingestion_v1, require_knowledge_ingestion_schema
-from bridge_social_virtual_schema import (
-    SOCIAL_VIRTUAL_MIGRATION_CHECKSUM,
-    apply_social_virtual_v1,
-    require_social_virtual_schema,
-)
+from bridge_executor_verification_schema import EXECUTOR_VERIFICATION_MIGRATION_CHECKSUM, apply_executor_verification_v1, require_executor_verification_schema
+from bridge_social_virtual_schema import SOCIAL_VIRTUAL_MIGRATION_CHECKSUM, apply_social_virtual_v1, require_social_virtual_schema
 from bridge_proactive_messaging_schema import (
     PROACTIVE_MESSAGING_MIGRATION_CHECKSUM,
     apply_proactive_messaging_policy_v1,
@@ -207,14 +204,8 @@ LEGACY_CONTRACT_CHECKSUM = hashlib.sha256(_contract_payload().encode("utf-8")).h
 def inspect_legacy_schema(conn: sqlite3.Connection) -> dict:
     """Return a data-free audit of the legacy assistant schema."""
 
-    tables = {
-        str(row[0])
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    }
-    indexes = {
-        str(row[0])
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
-    }
+    tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    indexes = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
     missing_tables: list[str] = []
     missing_columns: dict[str, list[str]] = {}
     for table, required in LEGACY_REQUIRED_COLUMNS.items():
@@ -288,12 +279,7 @@ def _require_provider_secret_schema(conn: sqlite3.Connection) -> dict | None:
 
 
 ASSISTANT_CORE_MIGRATIONS = (
-    Migration(
-        version=1,
-        name="legacy_schema_baseline",
-        apply=_baseline_legacy_schema,
-        checksum=LEGACY_CONTRACT_CHECKSUM,
-    ),
+    Migration(version=1, name="legacy_schema_baseline", apply=_baseline_legacy_schema, checksum=LEGACY_CONTRACT_CHECKSUM),
     Migration(
         version=2,
         name="security_audit_events",
@@ -314,18 +300,8 @@ ASSISTANT_CORE_MIGRATIONS = (
             "CREATE INDEX idx_security_audit_event ON security_audit_events(event_type, outcome, created_at DESC)",
         ),
     ),
-    Migration(
-        version=3,
-        name="assistant_identity_resource_ownership",
-        apply=apply_assistant_identity_v2,
-        checksum=IDENTITY_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=4,
-        name="conversation_memory_scope",
-        apply=apply_conversation_memory_scope_v2,
-        checksum=SCOPE_MIGRATION_CHECKSUM,
-    ),
+    Migration(version=3, name="assistant_identity_resource_ownership", apply=apply_assistant_identity_v2, checksum=IDENTITY_MIGRATION_CHECKSUM),
+    Migration(version=4, name="conversation_memory_scope", apply=apply_conversation_memory_scope_v2, checksum=SCOPE_MIGRATION_CHECKSUM),
     Migration(
         version=5,
         name="daily_assistant_home_projection",
@@ -336,12 +312,7 @@ ASSISTANT_CORE_MIGRATIONS = (
             """,
         ),
     ),
-    Migration(
-        version=6,
-        name="multi_intent_interaction_plan",
-        apply=apply_interaction_plan_v2,
-        checksum=INTERACTION_PLAN_MIGRATION_CHECKSUM,
-    ),
+    Migration(version=6, name="multi_intent_interaction_plan", apply=apply_interaction_plan_v2, checksum=INTERACTION_PLAN_MIGRATION_CHECKSUM),
     Migration(
         version=7,
         name="formal_approval_cutover_flag",
@@ -362,84 +333,19 @@ ASSISTANT_CORE_MIGRATIONS = (
             """,
         ),
     ),
-    Migration(
-        version=9,
-        name="relationship_proactive_management",
-        apply=apply_relationship_proactive_v2,
-        checksum=RELATIONSHIP_PROACTIVE_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=10,
-        name="qq_identity_role_access_control",
-        apply=apply_qq_access_control_v2,
-        checksum=QQ_ACCESS_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=11,
-        name="qq_object_authorization",
-        apply=apply_qq_object_authorization_v2,
-        checksum=QQ_OBJECT_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=12,
-        name="task_message_reliability",
-        apply=apply_task_message_reliability_v2,
-        checksum=RELIABILITY_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=13,
-        name="qq_channel_runtime_configuration",
-        apply=apply_qq_channel_runtime_v2,
-        checksum=QQ_RUNTIME_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=14,
-        name="provider_secret_file_references",
-        apply=_apply_provider_secret_references,
-        checksum="70b2b5bf778b908786a7c440ef5d2460c410586c8f61f06d8b4aabbd4c4c9620",
-    ),
-    Migration(
-        version=15,
-        name="project_lifecycle",
-        apply=apply_project_lifecycle_v2,
-        checksum=PROJECT_LIFECYCLE_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=16,
-        name="curated_shared_knowledge",
-        apply=apply_assistant_knowledge_v1,
-        checksum=KNOWLEDGE_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=17,
-        name="assistant_continuity_memory_intelligence",
-        apply=apply_assistant_continuity_v1,
-        checksum=CONTINUITY_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=18,
-        name="living_wiki_auditable_lifecycle",
-        apply=apply_living_wiki_v2,
-        checksum=LIVING_WIKI_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=19,
-        name="provider_owned_executor_profiles",
-        apply=apply_executor_profiles_v1,
-        checksum=EXECUTOR_PROFILE_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=20,
-        name="conversation_participation_shadow",
-        apply=apply_conversation_participation_v1,
-        checksum=PARTICIPATION_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=21,
-        name="deterministic_participation_routing",
-        apply=apply_conversation_participation_routing_v1,
-        checksum=PARTICIPATION_ROUTING_MIGRATION_CHECKSUM,
-    ),
+    Migration(version=9, name="relationship_proactive_management", apply=apply_relationship_proactive_v2, checksum=RELATIONSHIP_PROACTIVE_MIGRATION_CHECKSUM),
+    Migration(version=10, name="qq_identity_role_access_control", apply=apply_qq_access_control_v2, checksum=QQ_ACCESS_MIGRATION_CHECKSUM),
+    Migration(version=11, name="qq_object_authorization", apply=apply_qq_object_authorization_v2, checksum=QQ_OBJECT_MIGRATION_CHECKSUM),
+    Migration(version=12, name="task_message_reliability", apply=apply_task_message_reliability_v2, checksum=RELIABILITY_MIGRATION_CHECKSUM),
+    Migration(version=13, name="qq_channel_runtime_configuration", apply=apply_qq_channel_runtime_v2, checksum=QQ_RUNTIME_MIGRATION_CHECKSUM),
+    Migration(version=14, name="provider_secret_file_references", apply=_apply_provider_secret_references, checksum="70b2b5bf778b908786a7c440ef5d2460c410586c8f61f06d8b4aabbd4c4c9620"),
+    Migration(version=15, name="project_lifecycle", apply=apply_project_lifecycle_v2, checksum=PROJECT_LIFECYCLE_MIGRATION_CHECKSUM),
+    Migration(version=16, name="curated_shared_knowledge", apply=apply_assistant_knowledge_v1, checksum=KNOWLEDGE_MIGRATION_CHECKSUM),
+    Migration(version=17, name="assistant_continuity_memory_intelligence", apply=apply_assistant_continuity_v1, checksum=CONTINUITY_MIGRATION_CHECKSUM),
+    Migration(version=18, name="living_wiki_auditable_lifecycle", apply=apply_living_wiki_v2, checksum=LIVING_WIKI_MIGRATION_CHECKSUM),
+    Migration(version=19, name="provider_owned_executor_profiles", apply=apply_executor_profiles_v1, checksum=EXECUTOR_PROFILE_MIGRATION_CHECKSUM),
+    Migration(version=20, name="conversation_participation_shadow", apply=apply_conversation_participation_v1, checksum=PARTICIPATION_MIGRATION_CHECKSUM),
+    Migration(version=21, name="deterministic_participation_routing", apply=apply_conversation_participation_routing_v1, checksum=PARTICIPATION_ROUTING_MIGRATION_CHECKSUM),
     Migration(
         version=22,
         name="unified_delivery_cutover_flag",
@@ -450,74 +356,20 @@ ASSISTANT_CORE_MIGRATIONS = (
             """,
         ),
     ),
-    Migration(
-        version=23,
-        name="natural_group_participation_guardrails",
-        apply=apply_group_participation_v1,
-        checksum=GROUP_PARTICIPATION_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=24,
-        name="social_opportunity_virtual_life_v1",
-        apply=apply_social_virtual_v1,
-        checksum=SOCIAL_VIRTUAL_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=25,
-        name="configurable_proactive_messaging_policy_v1",
-        apply=apply_proactive_messaging_policy_v1,
-        checksum=PROACTIVE_MESSAGING_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=26,
-        name="unified_learning_continuity_v1",
-        apply=apply_learning_continuity_v1,
-        checksum=LEARNING_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=27,
-        name="assistant_network_policy_v1",
-        apply=apply_network_policy_v1,
-        checksum=NETWORK_POLICY_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=28,
-        name="assistant_continuity_kernel_v1",
-        apply=apply_continuity_kernel_v1,
-        checksum=CONTINUITY_KERNEL_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=29,
-        name="learning_admission_policy_v2",
-        apply=apply_learning_policy_v2,
-        checksum=LEARNING_POLICY_V2_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=30,
-        name="automation_conversation_contract_v1",
-        apply=apply_automation_conversation_v1,
-        checksum=AUTOMATION_CONVERSATION_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=31,
-        name="qq_voice_transport_probe_v1",
-        apply=apply_voice_transport_probe_v1,
-        checksum=VOICE_TRANSPORT_PROBE_MIGRATION_CHECKSUM,
-    ),
+    Migration(version=23, name="natural_group_participation_guardrails", apply=apply_group_participation_v1, checksum=GROUP_PARTICIPATION_MIGRATION_CHECKSUM),
+    Migration(version=24, name="social_opportunity_virtual_life_v1", apply=apply_social_virtual_v1, checksum=SOCIAL_VIRTUAL_MIGRATION_CHECKSUM),
+    Migration(version=25, name="configurable_proactive_messaging_policy_v1", apply=apply_proactive_messaging_policy_v1, checksum=PROACTIVE_MESSAGING_MIGRATION_CHECKSUM),
+    Migration(version=26, name="unified_learning_continuity_v1", apply=apply_learning_continuity_v1, checksum=LEARNING_MIGRATION_CHECKSUM),
+    Migration(version=27, name="assistant_network_policy_v1", apply=apply_network_policy_v1, checksum=NETWORK_POLICY_MIGRATION_CHECKSUM),
+    Migration(version=28, name="assistant_continuity_kernel_v1", apply=apply_continuity_kernel_v1, checksum=CONTINUITY_KERNEL_MIGRATION_CHECKSUM),
+    Migration(version=29, name="learning_admission_policy_v2", apply=apply_learning_policy_v2, checksum=LEARNING_POLICY_V2_MIGRATION_CHECKSUM),
+    Migration(version=30, name="automation_conversation_contract_v1", apply=apply_automation_conversation_v1, checksum=AUTOMATION_CONVERSATION_MIGRATION_CHECKSUM),
+    Migration(version=31, name="qq_voice_transport_probe_v1", apply=apply_voice_transport_probe_v1, checksum=VOICE_TRANSPORT_PROBE_MIGRATION_CHECKSUM),
     *VOICE_MIGRATIONS,
-    Migration(
-        version=36,
-        name="group_topic_window_candidate_v1",
-        apply=apply_group_topic_window_v1,
-        checksum=GROUP_TOPIC_WINDOW_MIGRATION_CHECKSUM,
-    ),
-    Migration(
-        version=37,
-        name="interaction_action_commitment_v1",
-        apply=apply_action_commitment_v1,
-        checksum=ACTION_COMMITMENT_MIGRATION_CHECKSUM,
-    ),
+    Migration(version=36, name="group_topic_window_candidate_v1", apply=apply_group_topic_window_v1, checksum=GROUP_TOPIC_WINDOW_MIGRATION_CHECKSUM),
+    Migration(version=37, name="interaction_action_commitment_v1", apply=apply_action_commitment_v1, checksum=ACTION_COMMITMENT_MIGRATION_CHECKSUM),
     Migration(version=38, name="knowledge_ingestion_v1", apply=apply_knowledge_ingestion_v1, checksum=KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM),
+    Migration(version=39, name="executor_verification_state_v1", apply=apply_executor_verification_v1, checksum=EXECUTOR_VERIFICATION_MIGRATION_CHECKSUM),
 )
 
 
@@ -526,9 +378,7 @@ def _validate_migration_history(conn: sqlite3.Connection) -> list[dict]:
     definitions = {item.version: item for item in ASSISTANT_CORE_MIGRATIONS}
     unknown = sorted({int(item["version"]) for item in applied} - set(definitions))
     if unknown:
-        raise MigrationDriftError(
-            "database_has_unknown_migrations:" + ",".join(str(value) for value in unknown),
-        )
+        raise MigrationDriftError("database_has_unknown_migrations:" + ",".join(str(value) for value in unknown))
     for row in applied:
         expected = definitions[int(row["version"])]
         if row["name"] != expected.name or row["checksum"] != expected.resolved_checksum():
@@ -570,6 +420,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     group_topic_window_schema = None
     action_commitment_schema = None
     knowledge_ingestion_schema = None
+    executor_verification_schema = None
     social_virtual_schema = None
     proactive_messaging_schema = None
     learning_schema = None
@@ -624,6 +475,8 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         action_commitment_schema = require_action_commitment_schema(conn)
     if 38 in versions:
         knowledge_ingestion_schema = require_knowledge_ingestion_schema(conn)
+    if 39 in versions:
+        executor_verification_schema = require_executor_verification_schema(conn)
     if 24 in versions:
         social_virtual_schema = require_social_virtual_schema(conn)
     if 25 in versions:
@@ -686,6 +539,7 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         "voice_output_schema": voice_output_schema,
         "voice_response_policy_schema": voice_response_policy_schema,
         "knowledge_ingestion_schema": knowledge_ingestion_schema,
+        "executor_verification_schema": executor_verification_schema,
         "applied": applied,
         "pending": pending,
         "would_apply": [item["version"] for item in pending],
@@ -763,6 +617,7 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
         require_action_commitment_schema(conn) if 37 in versions else None
     )
     knowledge_ingestion_schema = require_knowledge_ingestion_schema(conn) if 38 in versions else None
+    executor_verification_schema = require_executor_verification_schema(conn) if 39 in versions else None
     social_virtual_schema = (
         require_social_virtual_schema(conn) if 24 in versions else None
     )

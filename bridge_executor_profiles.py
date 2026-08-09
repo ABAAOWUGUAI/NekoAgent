@@ -346,7 +346,7 @@ def executor_runtime_status(profile: dict | None) -> dict:
     }
 
 
-def public_executor_profile(profile: dict | None) -> dict | None:
+def public_executor_profile(profile: dict | None, verification: dict | None = None) -> dict | None:
     if not profile:
         return None
     item = {
@@ -360,4 +360,11 @@ def public_executor_profile(profile: dict | None) -> dict | None:
     }
     item["credential_source"] = "受保护的代理凭证"
     item["runtime"] = executor_runtime_status(profile)
+    if verification:
+        item["verification"] = {
+            "status": verification.get("status"),
+            "verified_at": verification.get("verified_at"),
+            "verification_hash": verification.get("verification_hash"),
+            "last_error": verification.get("last_error"),
+        }
     return item

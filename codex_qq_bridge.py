@@ -403,6 +403,7 @@ from bridge_executor_profiles import (
     profile_sha256,
     read_executor_credential,
 )
+from bridge_executor_verification import verify_executor_work_mode
 from bridge_codex_operations import codex_operations_status
 from bridge_proxy_status import proxy_status, proxy_full_probe, proxy_executor_test
 import bridge_assistant_migrations as am
@@ -493,10 +494,10 @@ TASK_DB_PATH = Path(
 ASSISTANT_DB_PATH = Path(
     os.environ.get("ASSISTANT_DB_PATH", "/opt/agent-stack/codex-qq-bridge/assistant.sqlite3"),
 )
-SAMPLE_BACKGROUND_ASSET_PATH = Path(
+TAFFY_BACKGROUND_ASSET_PATH = Path(
     os.environ.get(
-        "SAMPLE_BACKGROUND_ASSET_PATH",
-        "/opt/agent-stack/codex-qq-bridge/assets/sample-background.jpg",
+        "TAFFY_BACKGROUND_ASSET_PATH",
+        "/opt/agent-stack/codex-qq-bridge/assets/taffy-background.jpg",
     ),
 )
 TRENDING_CACHE_PATH = Path(
@@ -676,10 +677,10 @@ ASSISTANT_PUBLIC_SETTING_KEYS = {
 } | AGENT_POLICY_SETTING_KEYS
 ASSISTANT_SECRET_SETTING_KEYS = {"chat_api_key"}
 CHAT_PROVIDERS = {"codex", "openai-compatible"}
-DEFAULT_SAMPLE_BACKGROUND_URL = "/admin/assets/sample-background.jpg"
+DEFAULT_TAFFY_BACKGROUND_URL = "/admin/assets/taffy-background.jpg"
 DEFAULT_ADMIN_APPEARANCE_SETTINGS = {
     "admin_background_enabled": "1",
-    "admin_background_url": DEFAULT_SAMPLE_BACKGROUND_URL,
+    "admin_background_url": DEFAULT_TAFFY_BACKGROUND_URL,
     "admin_background_dim": "0.12",
     "admin_panel_opacity": "0.88",
 }
@@ -1971,7 +1972,7 @@ def _normalize_background_url(value: object) -> str:
         return ""
     if len(url) > 1200:
         raise ValueError("background_url_too_long")
-    if url == DEFAULT_SAMPLE_BACKGROUND_URL:
+    if url == DEFAULT_TAFFY_BACKGROUND_URL:
         return url
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -2009,7 +2010,7 @@ def _admin_appearance() -> dict:
         0.72,
         1.0,
     )
-    settings["sample_background_url"] = DEFAULT_SAMPLE_BACKGROUND_URL
+    settings["taffy_background_url"] = DEFAULT_TAFFY_BACKGROUND_URL
     return settings
 
 
@@ -2807,7 +2808,7 @@ def _run_codex_assistant_chat(
         transport = str(settings.get("model_transport") or "")
         profile = dict(settings.get("executor_profile") or {})
         args = [
-            "codex",
+            "/usr/local/bin/codex",
             "exec",
             "--skip-git-repo-check",
         ]
@@ -6528,7 +6529,7 @@ def _qq_refresh_qrcode(wait_seconds: int = 25) -> dict:
 
 
 def _bridge_reachable_from_astrbot() -> dict:
-    bridge_url = (_container_env_value(ASTRBOT_CONTAINER, "ASSISTANT_PLATFORM_BRIDGE_URL") or "").rstrip("/")
+    bridge_url = (_container_env_value(ASTRBOT_CONTAINER, "CODEX_QQ_BRIDGE_URL") or "http://172.20.0.1:18777").rstrip("/")
     return probe_bridge(
         bridge_url=bridge_url,
         required=OPS_BROKER_REQUIRED,
@@ -6684,11 +6685,8 @@ def _format_github_trending(
     topic: str = "",
 ) -> dict:
     label = {"daily": "今日", "weekly": "本周", "monthly": "本月"}[since]
-    source_label = {
-        "official": "GitHub Trending 官方页面",
-        "fallback": "GitHub Search API 近似结果",
-        "cache": "本地缓存",
-    }.get(source_quality, "未知来源")
+    source_label = {"official": "GitHub Trending 官方页面", "fallback": "GitHub Search API 近似结果",
+                    "cache": "本地缓存"}.get(source_quality, "未知来源")
     if cached:
         source_quality = "cache"
         source_label = "本地缓存"
@@ -6704,22 +6702,11 @@ def _format_github_trending(
     lines.append("")
     for idx, item in enumerate(repos, start=1):
         language = item["language"] or "未标注"
-        if item["stars_today"]:
-            heat = f"今日新增 {item['stars_today']} stars"
-        elif item["stars"]:
-            heat = f"总计 {item['stars']} stars"
-        else:
-            heat = "热度未返回"
+        heat = f"今日新增 {item['stars_today']} stars" if item["stars_today"] else (
+            f"总计 {item['stars']} stars" if item["stars"] else "热度未返回")
         description = item["description"] or "仓库未提供简介。"
-        lines.extend(
-            [
-                f"{idx}. {item['repo']}",
-                f"   技术栈：{language}",
-                f"   热度：{heat}",
-                f"   用途：{description}",
-                f"   链接：{item['url']}",
-            ],
-        )
+        lines.extend([f"{idx}. {item['repo']}", f"   技术栈：{language}", f"   热度：{heat}",
+                      f"   用途：{description}", f"   链接：{item['url']}"])
     lines.append("")
     lines.append(f"原始来源：{url}")
     return {
@@ -6763,19 +6750,14 @@ def _github_search_fallback(
     days = {"daily": 1, "weekly": 7, "monthly": 30}[since]
     created_after = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
     topic_query = "AI agent in:name,description,topics " if topic == "ai-agent" else (
-        "AI in:name,description,topics " if topic == "ai" else ""
-    )
+        "AI in:name,description,topics " if topic == "ai" else "")
     query = f"{topic_query}created:>{created_after} fork:false"
     excluded = {str(value).strip().lower() for value in (exclude_repos or set()) if str(value).strip()}
     per_page = min(max((limit + len(excluded)) * 3, 30), 100)
-    url = (
-        "https://api.github.com/search/repositories"
-        f"?q={quote(query, safe=':')}&sort=stars&order=desc&per_page={per_page}"
-    )
+    url = "https://api.github.com/search/repositories" + f"?q={quote(query, safe=':')}&sort=stars&order=desc&per_page={per_page}"
     gh_token = os.environ.get("GITHUB_TOKEN") or ""  # authenticated Search quota
-    curl_args = ["curl", "-fsSL", "--http1.1", "--connect-timeout", "8",
-                 "--max-time", "20", "-A", "Mozilla/5.0",
-                 "-H", "Accept: application/vnd.github+json"]
+    curl_args = ["curl", "-fsSL", "--http1.1", "--connect-timeout", "8", "--max-time", "20",
+                 "-A", "Mozilla/5.0", "-H", "Accept: application/vnd.github+json"]
     if gh_token.strip():
         curl_args += ["-H", "Authorization: Bearer " + gh_token.strip()]
     curl_args.append(url)
@@ -6799,16 +6781,14 @@ def _github_search_fallback(
         if not _is_reasonable_repo_candidate(repo, description):
             continue
         stars = item.get("stargazers_count")
-        repos.append(
-            {
-                "repo": repo,
-                "url": item.get("html_url") or f"https://github.com/{repo}",
-                "description": description,
-                "language": str(item.get("language") or "").strip(),
-                "stars_today": "",
-                "stars": f"{stars:,}" if isinstance(stars, int) else "",
-            },
-        )
+        repos.append({
+            "repo": repo,
+            "url": item.get("html_url") or f"https://github.com/{repo}",
+            "description": description,
+            "language": str(item.get("language") or "").strip(),
+            "stars_today": "",
+            "stars": f"{stars:,}" if isinstance(stars, int) else "",
+        })
         if len(repos) >= limit:
             break
 
@@ -6828,28 +6808,14 @@ def _github_trending(
     since = since if since in {"daily", "weekly", "monthly"} else "daily"
     topic = topic if topic in {"ai", "ai-agent"} else ""
     if topic:
-        search, search_error = _github_search_fallback(
-            since,
-            limit,
-            topic=topic,
-            exclude_repos=exclude_repos,
-        )
+        search, search_error = _github_search_fallback(since, limit, topic=topic, exclude_repos=exclude_repos)
         if search:
-            return _format_github_trending(
-                since,
-                search["repos"],
-                search["url"],
-                started,
-                note="按任务主题使用 GitHub 官方 Search API，并排除该任务历史已推送仓库。",
-                source_quality="fallback",
-                topic=topic,
-            )
-        return {
-            "ok": False,
-            "duration": round(time.monotonic() - started, 2),
-            "error": search_error or "GitHub topic search failed",
-            "output": "GitHub AI / AI Agent 热门项目实时获取失败。",
-        }
+            return _format_github_trending(since, search["repos"], search["url"], started,
+                                           note="按任务主题使用 GitHub 官方 Search API，并排除该任务历史已推送仓库。",
+                                           source_quality="fallback", topic=topic)
+        return {"ok": False, "duration": round(time.monotonic() - started, 2),
+                "error": search_error or "GitHub topic search failed",
+                "output": "GitHub AI / AI Agent 热门项目实时获取失败。"}
     url = f"https://github.com/trending?since={since}"
     ok, body = _short_command(
         ["curl", "-fsSL", "--compressed", "--http1.1", "--retry", "2",
@@ -6861,40 +6827,21 @@ def _github_trending(
         fallback, fallback_error = _github_search_fallback(since, limit)
         if fallback:
             _write_trending_cache(since, fallback["url"], fallback["repos"])
-            return _format_github_trending(
-                since,
-                fallback["repos"],
-                fallback["url"],
-                started,
-                note="GitHub Trending 官方页面暂时访问失败，已改用近似搜索结果。",
-                source_quality="fallback",
-            )
-
+            return _format_github_trending(since, fallback["repos"], fallback["url"], started,
+                                           note="GitHub Trending 官方页面暂时访问失败，已改用近似搜索结果。",
+                                           source_quality="fallback")
         cached = _read_trending_cache(since)
         if cached:
-            return _format_github_trending(
-                since,
-                cached["repos"][:limit],
-                cached.get("url") or url,
-                started,
-                cached=True,
-                cached_at=cached.get("cached_at"),
-                note=f"实时获取失败，已使用缓存。{fallback_error or body}",
-                source_quality="cache",
-            )
-        return {
-            "ok": False,
-            "duration": round(time.monotonic() - started, 2),
-            "error": body or "failed to fetch GitHub Trending",
-            "output": "GitHub 热榜实时获取失败，且没有可用缓存。\n"
-            + (fallback_error or body or "failed to fetch GitHub Trending"),
-        }
+            return _format_github_trending(since, cached["repos"][:limit], cached.get("url") or url, started,
+                                           cached=True, cached_at=cached.get("cached_at"),
+                                           note=f"实时获取失败，已使用缓存。{fallback_error or body}",
+                                           source_quality="cache")
+        return {"ok": False, "duration": round(time.monotonic() - started, 2),
+                "error": body or "failed to fetch GitHub Trending",
+                "output": "GitHub 热榜实时获取失败，且没有可用缓存。\n"
+                + (fallback_error or body or "failed to fetch GitHub Trending")}
 
-    articles = re.findall(
-        r'<article class="Box-row".*?</article>',
-        body,
-        flags=re.S,
-    )
+    articles = re.findall(r'<article class="Box-row".*?</article>', body, flags=re.S)
     repos = []
     for article in articles[:limit]:
         href_match = re.search(r'href="/([^"/\s]+/[^"/\s]+)"', article)
@@ -6905,48 +6852,30 @@ def _github_trending(
         lang_match = re.search(r'itemprop="programmingLanguage"[^>]*>(.*?)</span>', article, flags=re.S)
         today_match = re.search(r'([\d,]+)\s+stars?\s+today', article, flags=re.I)
         stars_match = re.search(r'<a[^>]+href="/' + re.escape(repo) + r'/stargazers"[^>]*>(.*?)</a>', article, flags=re.S)
-        repos.append(
-            {
-                "repo": repo,
-                "url": f"https://github.com/{repo}",
-                "description": _clean_html_text(desc_match.group(1)) if desc_match else "",
-                "language": _clean_html_text(lang_match.group(1)) if lang_match else "",
-                "stars_today": _clean_html_text(today_match.group(1)) if today_match else "",
-                "stars": _clean_html_text(stars_match.group(1)) if stars_match else "",
-            },
-        )
+        repos.append({
+            "repo": repo,
+            "url": f"https://github.com/{repo}",
+            "description": _clean_html_text(desc_match.group(1)) if desc_match else "",
+            "language": _clean_html_text(lang_match.group(1)) if lang_match else "",
+            "stars_today": _clean_html_text(today_match.group(1)) if today_match else "",
+            "stars": _clean_html_text(stars_match.group(1)) if stars_match else "",
+        })
 
     if not repos:
         fallback, fallback_error = _github_search_fallback(since, limit)
         if fallback:
             _write_trending_cache(since, fallback["url"], fallback["repos"])
-            return _format_github_trending(
-                since,
-                fallback["repos"],
-                fallback["url"],
-                started,
-                note="GitHub Trending 页面解析不到仓库，已改用近似搜索结果。",
-                source_quality="fallback",
-            )
-
+            return _format_github_trending(since, fallback["repos"], fallback["url"], started,
+                                           note="GitHub Trending 页面解析不到仓库，已改用近似搜索结果。",
+                                           source_quality="fallback")
         cached = _read_trending_cache(since)
         if cached:
-            return _format_github_trending(
-                since,
-                cached["repos"][:limit],
-                cached.get("url") or url,
-                started,
-                cached=True,
-                cached_at=cached.get("cached_at"),
-                note="实时页面解析不到仓库，已使用缓存。",
-                source_quality="cache",
-            )
-        return {
-            "ok": False,
-            "duration": round(time.monotonic() - started, 2),
-            "error": "failed to parse GitHub Trending",
-            "output": f"GitHub 热榜解析失败。\n{fallback_error}",
-        }
+            return _format_github_trending(since, cached["repos"][:limit], cached.get("url") or url, started,
+                                           cached=True, cached_at=cached.get("cached_at"),
+                                           note="实时页面解析不到仓库，已使用缓存。", source_quality="cache")
+        return {"ok": False, "duration": round(time.monotonic() - started, 2),
+                "error": "failed to parse GitHub Trending",
+                "output": f"GitHub 热榜解析失败。\n{fallback_error}"}
 
     _write_trending_cache(since, url, repos)
     return _format_github_trending(since, repos, url, started)
@@ -7100,7 +7029,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                 200,
                 payload,
                 content_type,
-                cache_control="public, max-age=0, immutable",
+                cache_control="public, max-age=31536000, immutable",
                 etag=etag,
             )
             return
@@ -7113,7 +7042,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
         if path == "/admin/bootstrap":
             authenticated = _has_admin_session(self)
             appearance = _admin_appearance() if authenticated else dict(DEFAULT_ADMIN_APPEARANCE_SETTINGS)
-            appearance["sample_background_url"] = DEFAULT_SAMPLE_BACKGROUND_URL
+            appearance["taffy_background_url"] = DEFAULT_TAFFY_BACKGROUND_URL
             payload = {"ok": True, "authenticated": authenticated, "appearance": appearance}
             _json_response(self, 200, payload)
             return
@@ -7122,12 +7051,12 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                 appearance = _admin_appearance()
             else:
                 appearance = dict(DEFAULT_ADMIN_APPEARANCE_SETTINGS)
-                appearance["sample_background_url"] = DEFAULT_SAMPLE_BACKGROUND_URL
+                appearance["taffy_background_url"] = DEFAULT_TAFFY_BACKGROUND_URL
             _json_response(self, 200, {"ok": True, "appearance": appearance})
             return
-        if path == DEFAULT_SAMPLE_BACKGROUND_URL:
+        if path == DEFAULT_TAFFY_BACKGROUND_URL:
             try:
-                payload = SAMPLE_BACKGROUND_ASSET_PATH.read_bytes()
+                payload = TAFFY_BACKGROUND_ASSET_PATH.read_bytes()
             except OSError:
                 _json_response(self, 404, {"ok": False, "error": "background_asset_not_found"})
                 return
@@ -7701,7 +7630,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                     "ok": True,
                     "authenticated": True,
                     "expires_in": ADMIN_SESSION_TTL,
-                    "appearance": dict(_admin_appearance(), sample_background_url=DEFAULT_SAMPLE_BACKGROUND_URL),
+                    "appearance": dict(_admin_appearance(), taffy_background_url=DEFAULT_TAFFY_BACKGROUND_URL),
                 },
                 cookie,
             )
@@ -8059,6 +7988,18 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                 _json_response(self, 400, {"ok": False, "error": str(exc)})
                 return
             _json_response(self, 200, {"ok": True, "binding": binding, **registry})
+            return
+
+        if path == "/assistant/models/executor/verify":
+            try:
+                with _assistant_db_connect() as conn:
+                    pv = str(payload.get("provider_id") or "").strip()
+                    result = verify_executor_work_mode(conn, pv, timeout=max(20, min(int(payload.get("timeout") or 120), 300)))
+                    registry = list_model_registry(conn)
+            except Exception as exc:
+                _json_response(self, 400, {"ok": False, "error": str(exc)})
+                return
+            _json_response(self, 200, {"ok": True, "verification": result, **registry})
             return
 
         if path == "/assistant/models/test":
@@ -8548,7 +8489,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
             codegraph = {"before": _ensure_codegraph(cwd, phase="before")}
             result = _run_command(
                 [
-                    "codex",
+                    "/usr/local/bin/codex",
                     "exec",
                     "--skip-git-repo-check",
                     *codex_model_args(_settings_for_model_role("work_executor")),
