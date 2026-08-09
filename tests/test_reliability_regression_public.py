@@ -428,6 +428,18 @@ def test_executor_configuration_action_opens_and_prefills_connection_editor() ->
     assert "modelExecutorConfigureEntry').addEventListener('click', () => { setModelWorkspace('routing')" not in source
 
 
+def test_executor_display_label_tracks_the_configured_upstream_model() -> None:
+    """A proxy catalog row must not keep saying Pro after it is configured to
+    run Flash."""
+    from bridge_executor_profiles import executor_model_display_label
+
+    label = executor_model_display_label(
+        {"id": "sample-proxy", "label": "Old Pro label", "model": "old-pro"},
+        {"model_label": "deepseek-v4-flash", "model": "deepseek-v4-flash"},
+    )
+    assert label == "deepseek-v4-flash（工作执行适配器）"
+
+
 def test_executor_v39_schema_can_be_validated_before_v40_column_exists() -> None:
     """Migration preflight must validate the schema for the applied version."""
     from bridge_executor_verification_schema import (
@@ -443,4 +455,3 @@ def test_executor_v39_schema_can_be_validated_before_v40_column_exists() -> None
     apply_executor_verification_reason_code_v2(conn)
     assert require_executor_verification_schema(conn, version=40)["version"] == 40
     conn.close()
-
