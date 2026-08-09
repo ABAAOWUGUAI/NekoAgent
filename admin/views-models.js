@@ -1,9 +1,12 @@
     // Model control plane is kept separate from the capability catalog.
 
-    function modelOptions(selectedId, predicate = () => true, emptyLabel = '不设置') {
-      const options = state.modelCatalog.filter(predicate).map((item) => (
-        `<option value="${escapeHtml(item.id)}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(item.label || item.model || item.id)} · ${escapeHtml(item.provider_name || '')}</option>`
-      ));
+    function modelOptions(selectedId, predicate = () => true, emptyLabel = '不设置', { executor = false } = {}) {
+      const options = state.modelCatalog.filter(predicate).map((item) => {
+        const elig = executor ? (item.executor_eligibility || {}) : null;
+        const suffix = elig ? (elig.can_bind ? '（已验证）' : `（${elig.reason_zh || '不可选'}）`) : '';
+        const attr = elig && !elig.can_bind ? ' disabled' : '';
+        return `<option value="${escapeHtml(item.id)}" ${item.id === selectedId ? 'selected' : ''}${attr}>${escapeHtml(item.label || item.model || item.id)} · ${escapeHtml(item.provider_name || '')}${escapeHtml(suffix)}</option>`;
+      });
       return `<option value="">${escapeHtml(emptyLabel)}</option>` + options.join('');
     }
 
@@ -22,10 +25,17 @@
         ['Profile', runtime.profile_available ? '已安装' : '缺失', runtime.profile_available],
         ['沙箱', runtime.sandbox_available ? '可用' : '缺少 bubblewrap', runtime.sandbox_available],
         ['工作目录', runtime.workspace_available ? '可用' : '缺失', runtime.workspace_available],
-      ] : [
-        ['配置', '待保存', false], ['Profile', '待检测', false], ['沙箱', '待检测', false], ['工作目录', '待检测', false],
-      ];
+      ] : [['配置', '待保存', false], ['Profile', '待检测', false], ['沙箱', '待检测', false], ['工作目录', '待检测', false]];
       target.innerHTML = facts.map(([label, value, ok]) => `<div><dt>${escapeHtml(label)}</dt><dd class="${ok ? 'ready' : ''}">${escapeHtml(value)}</dd></div>`).join('');
+    }
+    async function verifyExecutorWorkMode() {
+      const status = $('modelExecutorVerificationStatus'), button = $('verifyExecutorWorkModeBtn');
+      if (!status || !button) return;
+      button.disabled = true;
+      try {
+        const r = await bridge('/assistant/models/executor/verify', { provider_id: $('modelProviderId').value.trim(), timeout: 120 });
+        status.textContent = r.ok ? '隔离工作模式验证已通过（文件/命令/哈希/最终正文均完成）。' : `验证失败：${r.error || 'executor_verify_failed'}`;
+      } finally { button.disabled = false; }
     }
 
     function syncExecutorUpstreamModels(preferredModelId = '') {
@@ -147,7 +157,7 @@
       }).join('') : '<div class="empty-state"><strong>此连接还没有模型</strong><span>添加服务端实际可调用的模型名，再分配给使用场景。</span></div>';
       $('modelRoleRows').innerHTML = state.modelRoles.length ? state.modelRoles.map((item) => {
         const executor = item.role === 'work_executor';
-        const predicate = (model) => Number(model.enabled) && Number(model.provider_enabled) && (!executor || (model.can_bind_work_executor));
+        const predicate = (model) => Number(model.enabled) && Number(model.provider_enabled);
         const primary = state.modelCatalog.find((model) => model.id === item.primary_model_id);
         return `<article class="route-card">
           <div class="route-marker" aria-hidden="true"></div>
@@ -155,7 +165,7 @@
           <p>${escapeHtml(item.description || '')}</p>
           ${item.role === 'vision_caption' ? '<p class="route-capability-note">独立识图路由：必须绑定同时声明 text + vision 的模型；不会替换对话回复。</p>' : ''}
           <div class="route-selects">
-            <label>主模型<select data-role-primary="${escapeHtml(item.role)}">${modelOptions(item.primary_model_id, predicate, '选择主模型')}</select></label>
+            <label>主模型<select data-role-primary="${escapeHtml(item.role)}">${modelOptions(item.primary_model_id, predicate, '选择主模型', { executor })}</select></label>
             ${executor ? '' : `<label>备用模型<select data-role-fallback="${escapeHtml(item.role)}">${modelOptions(item.fallback_model_id, predicate)}</select></label>`}
           </div>
           <div class="route-footer"><span>${executor ? '仅受信任执行器 · 无自动切换' : '文本或对话模型'}</span><button class="primary" type="button" data-role-save="${escapeHtml(item.role)}">保存路由</button></div>
@@ -463,28 +473,14 @@
       button.textContent = '实时验证中…';
       setModelDiscoveryStatus(`正在对 ${model} 发起实时、隔离验证请求…`);
       try {
-        const result = await bridge('/assistant/models/discover', { method: 'POST', body: JSON.stringify({
-          action: 'validate', provider_id: providerId, model, user_prompt: '请只回复 OK', max_tokens: 256,
-        }) });
-        const record = {
-          ok: Boolean(result.ok),
-          validatedAt: result.validated_at || new Date().toISOString(),
-          message: result.ok ? '' : window.modelValidationFailureMessage(result),
-        };
+        const result = await bridge('/assistant/models/discover', { method: 'POST', body: JSON.stringify({ action: 'validate', provider_id: providerId, model, user_prompt: '请只回复 OK', max_tokens: 256 }) });
+        const record = { ok: Boolean(result.ok), validatedAt: result.validated_at || new Date().toISOString(), message: result.ok ? '' : window.modelValidationFailureMessage(result) };
         window.modelDiscoveryValidationState.record(model, record);
         renderDiscoveredProviderModels({ preserveSelection: true });
-        if (!record.ok) {
-          setModelDiscoveryStatus(`验证失败：${window.modelValidationFailureMessage(result)}`, 'error');
-          return;
-        }
+        if (!record.ok) { setModelDiscoveryStatus(`验证失败：${window.modelValidationFailureMessage(result)}`, 'error'); return; }
         setModelDiscoveryStatus(`实时验证通过：${model}（服务器时间 ${window.modelDiscoveryValidationState.formatTime(record.validatedAt)}）。现在可以填入表单并保存；路由仍需单独确认。`, 'ok');
       } catch (_error) {
-        // 网络级失败没有可信的 Provider 结果，仍须把候选项保留为未通过，不能开放填入。
-        window.modelDiscoveryValidationState.record(model, {
-          ok: false,
-          validatedAt: new Date().toISOString(),
-          message: '验证请求未完成，请检查连接后重试。',
-        });
+        window.modelDiscoveryValidationState.record(model, { ok: false, validatedAt: new Date().toISOString(), message: '验证请求未完成，请检查连接后重试。' });
         renderDiscoveredProviderModels({ preserveSelection: true });
         setModelDiscoveryStatus('验证请求未完成，请检查连接后重试。', 'error');
       } finally {
@@ -792,6 +788,7 @@
       });
       $('modelProviderTransport').addEventListener('change', () => syncExecutorProfileFields());
       $('modelExecutorUpstreamProvider').addEventListener('change', () => syncExecutorUpstreamModels());
+      $('verifyExecutorWorkModeBtn').addEventListener('click', () => verifyExecutorWorkMode().catch((error) => setConnection(error.message || String(error), 'error')));
       $('modelProviderId').addEventListener('input', () => {
         if (isCustomCodexTransport() && !$('modelExecutorProfileName').value.trim()) {
           $('modelExecutorProfileName').value = $('modelProviderId').value.trim();

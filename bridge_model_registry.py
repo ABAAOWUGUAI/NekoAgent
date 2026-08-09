@@ -37,6 +37,7 @@ from bridge_executor_profiles import (
     public_executor_profile,
     upsert_executor_profile,
 )
+from bridge_executor_verification import executor_eligibility_state, work_executor_bind_guard
 
 
 MODEL_ROLES = {
@@ -55,14 +56,10 @@ MODEL_ROLES = {
         "description": "负责私聊与群聊中的自然回复和情绪表达。",
     },
     "vision_caption": {"label": "识图理解", "description": "只负责把图片转换为受控的视觉描述，不替代对话回复模型。"},
-    "work_planner": {
-        "label": "工作规划",
-        "description": "负责工作请求的澄清、方案和即时分析，不直接执行服务器工具。",
-    },
-    "work_executor": {
-        "label": "工作执行",
-        "description": "负责代码、终端和文件操作。支持原生 Codex 和 DeepSeek 代理两种执行器。",
-    },
+    "work_planner": {"label": "工作规划",
+                     "description": "负责工作请求的澄清、方案和即时分析，不直接执行服务器工具。"},
+    "work_executor": {"label": "工作执行",
+                      "description": "负责代码、终端和文件操作。支持原生 Codex 和 DeepSeek 代理两种执行器。"},
 }
 PROVIDER_KINDS = {
     "codex",
@@ -352,10 +349,8 @@ def list_model_registry(conn: sqlite3.Connection) -> dict:
         })
 
     # Compute compatibility from explicit transport and capability contracts.
-    executor_profiles = {
-        str(row["provider_id"]): dict(row)
-        for row in conn.execute("SELECT * FROM model_executor_profiles").fetchall()
-    }
+    executor_profiles = {str(row["provider_id"]): dict(row)
+                         for row in conn.execute("SELECT * FROM model_executor_profiles").fetchall()}
     for m in models:
         compatible, _ = role_model_compatible("work_executor", m)
         if m.get("transport") == "codex_cli_custom_provider":
@@ -364,12 +359,20 @@ def list_model_registry(conn: sqlite3.Connection) -> dict:
         m["can_bind_work_executor"] = bool(
             int(m.get("enabled") or 0) and int(m.get("provider_enabled") or 0) and compatible
         )
+        # E1: full server-computed eligibility per model (Chinese reason +
+        # configuration entry) so disabled models are shown, not hidden.
+        m["executor_eligibility"] = executor_eligibility_state(conn, str(m.get("id") or ""))
 
     providers = []
     for row in provider_rows:
         item = provider_secret_public(conn, row, _mask_secret)
         profile = executor_profiles.get(str(item.get("id") or ""))
-        item["executor_profile"] = public_executor_profile(profile)
+        verification = None
+        if profile and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='executor_verification_state'").fetchone():
+            verification = dict(conn.execute(
+                "SELECT status, verified_at, verification_hash, last_error FROM executor_verification_state WHERE provider_id=?",
+                (str(item.get("id") or ""),)).fetchone())
+        item["executor_profile"] = public_executor_profile(profile, verification=verification)
         if item.get("transport") == "codex_cli_custom_provider":
             item["executor_upstream"] = executor_upstream_summary(conn, profile)
             item["executor_runtime"] = executor_runtime_status(profile)
@@ -403,14 +406,11 @@ def upsert_provider(conn: sqlite3.Connection, payload: dict) -> dict:
     if contract["transport"] == "codex_cli_chatgpt":
         duplicate = conn.execute(
             "SELECT id FROM model_providers WHERE transport = ? AND id <> ? LIMIT 1",
-            ("codex_cli_chatgpt", provider_id),
-        ).fetchone()
+            ("codex_cli_chatgpt", provider_id)).fetchone()
         if duplicate:
             raise ValueError("codex_login_instance_already_exists")
     now = utc_now()
-    secret_ref, secret_version, rotated_at, new_ref = prepare_provider_secret_update(
-        conn, provider_id, api_key, clear_api_key, now,
-    )
+    secret_ref, secret_version, rotated_at, new_ref = prepare_provider_secret_update(conn, provider_id, api_key, clear_api_key, now)
     try:
         conn.execute(
         """
@@ -516,24 +516,11 @@ def upsert_model(conn: sqlite3.Connection, payload: dict) -> dict:
             capabilities_json = excluded.capabilities_json,
             updated_at = excluded.updated_at
         """,
-        (
-            model_id,
-            provider_id,
-            label,
-            model_name,
-            1 if truthy(payload.get("enabled", "1")) else 0,
-            context_window,
-            max_output,
-            1 if supports_tools else 0,
-            _clip(payload.get("notes"), 500),
-            input_price,
-            output_price,
-            (_clip(payload.get("price_currency") or "USD", 12) or "USD").upper(),
-            _clip(payload.get("price_source"), 500),
-            now,
-            now,
-            capabilities_json,
-        ),
+        (model_id, provider_id, label, model_name,
+         1 if truthy(payload.get("enabled", "1")) else 0, context_window, max_output,
+         1 if supports_tools else 0, _clip(payload.get("notes"), 500), input_price, output_price,
+         (_clip(payload.get("price_currency") or "USD", 12) or "USD").upper(),
+         _clip(payload.get("price_source"), 500), now, now, capabilities_json),
     )
     return dict(conn.execute("SELECT * FROM model_catalog WHERE id = ?", (model_id,)).fetchone())
 
@@ -563,24 +550,28 @@ def bind_model_role(conn: sqlite3.Connection, payload: dict) -> dict:
             reason = "work_executor_requires_tool_support"
         raise ValueError(reason)
 
+    # E5: a work_executor bind re-validates the full server-side eligibility
+    # contract (model/provider enabled, trusted transport, tool capability,
+    # profile applied, runtime ready, verification passed and hash current).
+    if role == "work_executor":
+        allowed, bind_reason = work_executor_bind_guard(conn, primary_id)
+        if not allowed:
+            raise ValueError(bind_reason)
+
     if role == "work_executor":
         if fallback_id:
             raise ValueError("work_executor_fallback_not_supported")
-    else:
-        if fallback_id:
-            fallback = conn.execute(
-                """SELECT m.*, p.transport, p.billing_scope, p.runtime_owner,
-                          p.config_mode, p.trusted_for_executor
-                   FROM model_catalog m
-                   JOIN model_providers p ON p.id = m.provider_id
-                   WHERE m.id = ? AND m.enabled = 1 AND p.enabled = 1""",
-                (fallback_id,),
-            ).fetchone()
-            if not fallback:
-                raise ValueError("fallback_model_unavailable")
-            fallback_compatible, _ = role_model_compatible(role, fallback)
-            if not fallback_compatible:
-                raise ValueError("fallback_model_capability_mismatch")
+    elif fallback_id:
+        fallback = conn.execute(
+            "SELECT m.*, p.transport, p.billing_scope, p.runtime_owner, p.config_mode, p.trusted_for_executor"
+            " FROM model_catalog m JOIN model_providers p ON p.id = m.provider_id"
+            " WHERE m.id = ? AND m.enabled = 1 AND p.enabled = 1",
+            (fallback_id,)).fetchone()
+        if not fallback:
+            raise ValueError("fallback_model_unavailable")
+        fallback_compatible, _ = role_model_compatible(role, fallback)
+        if not fallback_compatible:
+            raise ValueError("fallback_model_capability_mismatch")
 
     # 读取旧绑定
     old = conn.execute(
