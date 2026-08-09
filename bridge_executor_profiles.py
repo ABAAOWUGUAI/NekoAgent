@@ -346,6 +346,14 @@ def executor_runtime_status(profile: dict | None) -> dict:
     }
 
 
+def executor_model_display_label(model: dict, upstream: dict | None) -> str:
+    """Show the configured upstream instead of a stale proxy catalog label."""
+    current = str(model.get("label") or model.get("model") or model.get("id") or "").strip()
+    upstream = upstream or {}
+    upstream_label = str(upstream.get("model_label") or upstream.get("model") or "").strip()
+    return f"{upstream_label}（工作执行适配器）" if upstream_label else current
+
+
 def public_executor_profile(profile: dict | None, verification: dict | None = None) -> dict | None:
     if not profile:
         return None

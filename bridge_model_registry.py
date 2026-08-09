@@ -31,6 +31,7 @@ from bridge_model_control import (
 from bridge_provider_secrets import ProviderSecretStore, ensure_provider_secret_columns, prepare_provider_secret_update, provider_secret_public, resolve_provider_secret
 from bridge_executor_profiles import (
     ensure_executor_profile_schema,
+    executor_model_display_label,
     executor_runtime_status,
     executor_upstream_summary,
     get_executor_profile,
@@ -356,6 +357,10 @@ def list_model_registry(conn: sqlite3.Connection) -> dict:
         if m.get("transport") == "codex_cli_custom_provider":
             profile = executor_profiles.get(str(m.get("provider_id") or ""))
             compatible = compatible and bool(profile and int(profile.get("enabled") or 0))
+            upstream = executor_upstream_summary(conn, profile)
+            m["configured_label"] = m.get("label") or ""
+            m["executor_upstream"] = upstream
+            m["label"] = executor_model_display_label(m, upstream)
         m["can_bind_work_executor"] = bool(
             int(m.get("enabled") or 0) and int(m.get("provider_enabled") or 0) and compatible
         )
