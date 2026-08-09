@@ -556,10 +556,25 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
 
 def _executor_verify_settings(conn: sqlite3.Connection, provider_id: str, profile: dict) -> dict:
     """Build settings_override for the verification codex run: the executor
-    profile + upstream model, without touching the chat settings path."""
+    profile + upstream model, without touching the chat settings path.
+
+    ``codex_model`` must be the upstream's real model name (e.g.
+    ``deepseek-v4-flash``), not the internal catalog id — the Codex CLI Proxy
+    whitelists concrete model names, so an internal id is rejected with
+    ``model_not_allowed``.
+    """
+    model_name = ""
+    upstream_model_id = str(profile.get("upstream_model_id") or "")
+    if upstream_model_id:
+        row = conn.execute(
+            "SELECT model FROM model_catalog WHERE id=?",
+            (upstream_model_id,),
+        ).fetchone()
+        if row:
+            model_name = str(row[0] or "")
     return {
         "model_transport": "codex_cli_custom_provider",
-        "codex_model": str(profile.get("upstream_model_id") or ""),
+        "codex_model": model_name or upstream_model_id,
         "executor_profile": {
             "profile_name": str(profile.get("profile_name") or ""),
             "credential_source": str(profile.get("credential_source") or "proxy_access_key"),
