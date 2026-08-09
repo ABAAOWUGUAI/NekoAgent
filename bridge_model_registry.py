@@ -533,6 +533,21 @@ def bind_model_role(conn: sqlite3.Connection, payload: dict) -> dict:
     primary_id = _clip(payload.get("primary_model_id") or payload.get("model_id"), 64)
     fallback_id = _clip(payload.get("fallback_model_id"), 64)
 
+    # An unchanged save is an idempotent readback, not a new authorization
+    # decision.  This keeps a grandfathered binding operable while its failed
+    # or stale verification is surfaced to the owner; only a changed binding
+    # must pass the current fail-closed eligibility gate.
+    old = conn.execute(
+        "SELECT * FROM model_role_bindings WHERE role = ?",
+        (role,),
+    ).fetchone()
+    old_primary = old["primary_model_id"] if old else ""
+    old_fallback = old["fallback_model_id"] if old else ""
+    if old and old_primary == primary_id and old_fallback == fallback_id:
+        result = dict(old)
+        result.update({"role": role, "no_op": True})
+        return result
+
     primary = conn.execute(
         """
         SELECT m.*, p.id AS provider_id, p.kind AS provider_kind, p.transport,
@@ -573,19 +588,6 @@ def bind_model_role(conn: sqlite3.Connection, payload: dict) -> dict:
         fallback_compatible, _ = role_model_compatible(role, fallback)
         if not fallback_compatible:
             raise ValueError("fallback_model_capability_mismatch")
-
-    # 读取旧绑定
-    old = conn.execute(
-        "SELECT primary_model_id, fallback_model_id FROM model_role_bindings WHERE role = ?",
-        (role,),
-    ).fetchone()
-    old_primary = old["primary_model_id"] if old else ""
-    old_fallback = old["fallback_model_id"] if old else ""
-
-    # 未变化则跳过
-    if old_primary == primary_id and old_fallback == fallback_id:
-        return dict(conn.execute(
-            "SELECT * FROM model_role_bindings WHERE role = ?", (role,)).fetchone())
 
     now = utc_now()
     conn.execute("BEGIN IMMEDIATE")

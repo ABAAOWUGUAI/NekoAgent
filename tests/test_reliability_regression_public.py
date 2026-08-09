@@ -336,3 +336,94 @@ def test_executor_verification_hash_never_contains_secret() -> None:
     # rotation invalidates it even though the value never appears.
     assert "secret_version" in payload
 
+
+def test_executor_verify_cli_explicitly_disables_all_network_paths() -> None:
+    """The verification profile cannot re-enable egress or web search."""
+    from bridge_executor_verification import _codex_work_verify_args
+
+    args = _codex_work_verify_args(
+        profile_name="sample-executor",
+        model_name="sample-model",
+        network_mode="none",
+    )
+    overrides = [
+        args[index + 1]
+        for index, value in enumerate(args[:-1])
+        if value in {"-c", "--config"}
+    ]
+    assert "sandbox_workspace_write.network_access=false" in overrides
+    assert 'web_search="disabled"' in overrides
+    assert "sandbox_workspace_write.writable_roots=[]" in overrides
+    assert "sandbox_workspace_write.exclude_slash_tmp=true" in overrides
+    assert "sandbox_workspace_write.exclude_tmpdir_env_var=true" in overrides
+
+
+def test_existing_failed_executor_binding_resave_is_an_explicit_no_op() -> None:
+    """A no-change save must bypass the new-bind verification gate."""
+    import bridge_model_registry as registry
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE model_providers (
+            id TEXT PRIMARY KEY, kind TEXT, transport TEXT, billing_scope TEXT,
+            runtime_owner TEXT, config_mode TEXT, trusted_for_executor INTEGER,
+            enabled INTEGER
+        );
+        CREATE TABLE model_catalog (
+            id TEXT PRIMARY KEY, provider_id TEXT, enabled INTEGER,
+            supports_tools INTEGER, capabilities_json TEXT
+        );
+        CREATE TABLE model_role_bindings (
+            role TEXT PRIMARY KEY, primary_model_id TEXT,
+            fallback_model_id TEXT, updated_at TEXT
+        );
+        INSERT INTO model_providers VALUES (
+            'proxy-exec','codex','codex_cli_custom_provider','local_proxy',
+            'platform','managed',1,1
+        );
+        INSERT INTO model_catalog VALUES (
+            'proxy-model','proxy-exec',1,1,'["text","tools"]'
+        );
+        INSERT INTO model_role_bindings VALUES (
+            'work_executor','proxy-model','','2026-08-09T00:00:00Z'
+        );
+        """
+    )
+    original_guard = registry.work_executor_bind_guard
+    registry.work_executor_bind_guard = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("verification gate must not run for an unchanged binding")
+    )
+    try:
+        result = registry.bind_model_role(
+            conn,
+            {"role": "work_executor", "primary_model_id": "proxy-model"},
+        )
+    finally:
+        registry.work_executor_bind_guard = original_guard
+        conn.close()
+    assert result["primary_model_id"] == "proxy-model"
+    assert result["no_op"] is True
+    assert result["updated_at"] == "2026-08-09T00:00:00Z"
+
+
+def test_executor_verify_route_and_truthful_status_are_publicly_pinned() -> None:
+    """The public gate protects route reachability and failed-result truth."""
+    from bridge_http_routes import BRIDGE_POST_ROUTES
+
+    assert "/assistant/models/executor/verify" in BRIDGE_POST_ROUTES
+    source = (ROOT / "codex_qq_bridge.py").read_text(encoding="utf-8")
+    assert '"ok": result.get("status") == "verified"' in source
+
+
+def test_executor_configuration_action_opens_and_prefills_connection_editor() -> None:
+    """can_configure must lead to an adapter editor, not back to routing."""
+    source = (ROOT / "admin" / "views-models.js").read_text(encoding="utf-8")
+    assert "openExecutorAdapterConfiguration" in source
+    assert "data-configure-executor-model" in source
+    assert "editModelProvider" in source
+    assert "modelExecutorUpstreamProvider" in source
+    assert "modelExecutorUpstreamModel" in source
+    assert "modelExecutorConfigureEntry').addEventListener('click', () => { setModelWorkspace('routing')" not in source
+

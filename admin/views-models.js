@@ -71,13 +71,13 @@
       syncExecutorUpstreamModels(profile?.upstream_model_id || $('modelExecutorUpstreamModel').value);
     }
 
-    function syncExecutorConfigureEntry() {
-      const entry = $('modelExecutorConfigureEntry');
-      if (!entry) return;
-      const model = state.modelCatalog.find((item) => item.id === $('modelExecutorUpstreamModel').value);
-      entry.classList.toggle('hidden', !(model && model.executor_eligibility && model.executor_eligibility.can_configure));
+    function openExecutorAdapterConfiguration(modelId) {
+      const model = state.modelCatalog.find((item) => item.id === modelId); if (!model) return;
+      const existing = state.modelProviders.find((item) => item.transport === 'codex_cli_custom_provider' && item.executor_profile?.upstream_model_id === modelId);
+      setModelWorkspace('connections', { load: false });
+      if (existing) { state.selectedModelProvider = existing.id; renderModelRegistry(); editModelProvider(existing.id); return; }
+      editModelProvider(); $('modelProviderKind').value = 'codex'; $('modelProviderTransport').value = 'codex_cli_custom_provider'; $('modelProviderBilling').value = 'local_proxy'; $('modelProviderTrusted').checked = true; $('modelProviderName').value = `${model.label || model.model || '第三方模型'}执行适配器`; syncExecutorProfileFields(); $('modelExecutorUpstreamProvider').value = model.provider_id; syncExecutorUpstreamModels(model.id); $('modelExecutorUpstreamModel').value = model.id;
     }
-
     function syncExecutorProfileFields(profile = null) {
       const visible = isCustomCodexTransport();
       $('modelExecutorFields').classList.toggle('hidden', !visible);
@@ -87,7 +87,6 @@
       }
       if (visible) syncExecutorUpstreamOptions(profile);
       renderExecutorRuntimeSummary(profile);
-      syncExecutorConfigureEntry();
     }
 
     function renderModelRegistry() {
@@ -179,6 +178,7 @@
         const elig = executor && primary ? (primary.executor_eligibility || {}) : null;
         const needsConfig = !!(elig && elig.can_configure);
         const bindWarning = executor && primary && elig && !elig.can_bind ? `<p class="route-capability-note">${escapeHtml(elig.reason_zh || '不可绑定')}。${needsConfig ? '请先在“编辑连接”中配置执行器后重新验证。' : '历史绑定仍运行，但工作验证未通过/待重验。'}</p>` : '';
+        const configureActions = executor ? state.modelCatalog.filter((model) => Number(model.enabled) && Number(model.provider_enabled) && model.executor_eligibility?.can_configure).map((model) => `<button class="link" type="button" data-configure-executor-model="${escapeHtml(model.id)}">为 ${escapeHtml(model.label || model.model || model.id)} 配置执行适配器</button>`).join('') : '';
         return `<article class="route-card">
           <div class="route-marker" aria-hidden="true"></div>
           <header><div><span class="entity-type mono">${escapeHtml(item.role)}</span><h3>${escapeHtml(item.label)}</h3></div><span class="status-chip ${primary ? 'green' : 'amber'}">${primary ? '已路由' : '待配置'}</span></header>
@@ -189,7 +189,7 @@
             <label>主模型<select data-role-primary="${escapeHtml(item.role)}">${modelOptions(item.primary_model_id, predicate, '选择主模型', { executor })}</select></label>
             ${executor ? '' : `<label>备用模型<select data-role-fallback="${escapeHtml(item.role)}">${modelOptions(item.fallback_model_id, predicate)}</select></label>`}
           </div>
-          <div class="route-footer"><span>${executor ? '仅受信任执行器 · 无自动切换' : '文本或对话模型'}</span><button class="primary" type="button" data-role-save="${escapeHtml(item.role)}">保存路由</button></div>
+          <div class="route-footer"><span>${executor ? '仅受信任执行器 · 无自动切换' : '文本或对话模型'}</span>${configureActions}<button class="primary" type="button" data-role-save="${escapeHtml(item.role)}">保存路由</button></div>
         </article>`;
       }).join('') : '<div class="empty-state">暂无角色绑定。</div>';
       $('modelRuntimeRows').innerHTML = state.modelRuntimeInventories.length ? state.modelRuntimeInventories.map((item) => {
@@ -731,7 +731,8 @@
       $('modelUsageDays').addEventListener('change', () => loadModelUsage().catch((error) => setConnection(error.message || String(error), 'error')));
       $('reloadCodexOperationsBtn').addEventListener('click', () => loadCodexOperations().catch((error) => setConnection(error.message || String(error), 'error')));
       $('modelRoleRows').addEventListener('click', (event) => {
-        const button = event.target.closest('[data-role-save]');
+        const button = event.target.closest('[data-role-save]'), configure = event.target.closest('[data-configure-executor-model]');
+        if (configure) openExecutorAdapterConfiguration(configure.dataset.configureExecutorModel);
         if (button) bindRuntimeRole(button.dataset.roleSave).catch((error) => setConnection(error.message || String(error), 'error'));
       });
       $('modelProviderRows').addEventListener('click', (event) => {
@@ -791,7 +792,6 @@
       $('modelProviderTransport').addEventListener('change', () => syncExecutorProfileFields());
       $('modelExecutorUpstreamProvider').addEventListener('change', () => syncExecutorUpstreamModels());
       $('verifyExecutorWorkModeBtn').addEventListener('click', () => verifyExecutorWorkMode().catch((error) => setConnection(error.message || String(error), 'error')));
-      $('modelExecutorConfigureEntry').addEventListener('click', () => { setModelWorkspace('routing'); });
       $('modelProviderId').addEventListener('input', () => {
         if (isCustomCodexTransport() && !$('modelExecutorProfileName').value.trim()) {
           $('modelExecutorProfileName').value = $('modelProviderId').value.trim();
