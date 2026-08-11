@@ -73,13 +73,15 @@ async function main() {
     // C: a real-ish legacy manager refresh must not be mistaken for navigation.
     await page.locator('.v4-artifact-manage').click();
     await page.waitForFunction(() => document.body.hasAttribute('data-v4-artifact-legacy-mode'));
+    await page.waitForFunction(() => document.activeElement?.id === 'viewTitle');
     await page.evaluate(() => document.querySelector('#view-artifacts').classList.toggle('legacy-background-refresh'));
     await page.waitForTimeout(60);
     const afterLegacyMutation = await daily();
     assert(
       afterLegacyMutation.hidden
         && afterLegacyMutation.inert
-        && afterLegacyMutation.legacyMode,
+        && afterLegacyMutation.legacyMode
+        && afterLegacyMutation.focused === 'viewTitle',
       `legacy manager mutation incorrectly reactivated daily: ${JSON.stringify(afterLegacyMutation)}`,
     );
 

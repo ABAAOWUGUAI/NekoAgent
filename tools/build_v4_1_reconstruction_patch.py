@@ -12,20 +12,28 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_PREFIX = "NekoAgent-V4.1-Foundation-Slices-2026-08-11-r2"
 FOUNDATION_FILES = (
     "admin/index.html",
     "admin_console.py",
+    "admin/core.js",
     "admin/admin-v4-shell.css",
     "admin/v4-shell.js",
     "admin/admin-v4-artifact-surface.css",
     "admin/v4-artifact-surface.js",
     "admin/admin-v4-ai-chat-surface.css",
     "admin/v4-ai-chat-surface.js",
+    "admin/views-workbench.js",
+    "bridge_inbound_idempotency.py",
+    "codex_qq_bridge.py",
+    "tests/test_reliability_regression_public.py",
     "tests/test_v4_shell_phase1.py",
     "tests/test_v4_ai_chat_slice.py",
     "tests/test_v4_foundation_hardening.py",
+    "tools/run_public_tests.py",
     "tools/run_v4_artifact_browser_rehearsal.cjs",
     "tools/run_v4_ai_chat_browser_rehearsal.cjs",
+    "tools/run_v4_workbench_dispatch_browser_rehearsal.cjs",
     "docs/V4_1_RECONSTRUCTION_IMPLEMENTATION_2026-08-11.md",
     "docs/V4_1_AI_CHAT_FIRST_SLICE_CONTRACT_2026-08-11.md",
     "docs/V4_1_AI_CHAT_FIRST_SLICE_REVIEW_2026-08-11.md",
@@ -39,23 +47,31 @@ def sha256(path: Path) -> str:
 
 
 def source_provenance() -> dict[str, object]:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-        encoding="utf-8",
-    )
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-        encoding="utf-8",
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+            encoding="utf-8",
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+            encoding="utf-8",
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {
+            "git_checkout_available": False,
+            "git_base_revision": None,
+            "working_tree_clean": None,
+        }
     return {
+        "git_checkout_available": True,
         "git_base_revision": result.stdout.strip(),
         "working_tree_clean": not bool(status.stdout.strip()),
     }
@@ -71,13 +87,12 @@ def build(output: Path) -> dict[str, object]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite existing archive: {output}")
     records: list[dict[str, str]] = []
-    prefix = "NekoAgent-V4.1-Foundation-Slices-2026-08-11-r1"
     with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
         for relative in FOUNDATION_FILES:
             source = ROOT / relative
             if not source.is_file():
                 raise FileNotFoundError(f"required patch file missing: {relative}")
-            archive_name = f"{prefix}/{relative.replace(chr(92), '/') }"
+            archive_name = f"{PACKAGE_PREFIX}/{relative.replace(chr(92), '/') }"
             if "\\" in archive_name:
                 raise ValueError(f"non-portable ZIP entry: {archive_name}")
             archive.writestr(archive_name, source.read_bytes())
@@ -91,7 +106,7 @@ def build(output: Path) -> dict[str, object]:
             "entries_use_forward_slashes": True,
             "files": records,
         }
-        archive.writestr(f"{prefix}/PATCH_MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
+        archive.writestr(f"{PACKAGE_PREFIX}/PATCH_MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()
         if any("\\" in name for name in names):
@@ -109,7 +124,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT.parents[1] / "release-artifacts" / "NekoAgent-V4.1-Foundation-Slices-2026-08-11-r1.zip",
+        default=ROOT.parents[1] / "release-artifacts" / "NekoAgent-V4.1-Foundation-Slices-2026-08-11-r2.zip",
     )
     args = parser.parse_args()
     print(json.dumps(build(args.output), ensure_ascii=False))

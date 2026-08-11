@@ -53,6 +53,10 @@
     active = false;
     requestVersion += 1;
     document.getElementById('view-artifacts')?.scrollIntoView({ block: 'start' });
+    window.requestAnimationFrame(() => {
+      const heading = document.getElementById('viewTitle');
+      if (heading && heading.getClientRects().length) heading.focus({ preventScroll: true });
+    });
   }
 
   function render(items, { loading = false, failed = false } = {}) {

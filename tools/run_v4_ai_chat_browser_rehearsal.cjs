@@ -22,7 +22,7 @@ const fixture = `<!doctype html><html lang="zh-CN"><head><link rel="stylesheet" 
 window.__calls=[]; window.__requests=[]; window.__taskIds=[]; window.__mode='chat'; window.__retryCount=0; window.__resolve=null;
 window.switchView=(view, options)=>{window.__calls.push({view, options});document.querySelectorAll('.view').forEach((node)=>node.classList.toggle('hidden',node.id!==('view-'+view)));if(options?.focusHeading)requestAnimationFrame(()=>document.getElementById('viewTitle').focus());};
 window.loadTask=async(id)=>{window.__taskIds.push(id);window.switchView('tasks',{focusHeading:true});};
-window.bridge=(route, options)=>{window.__requests.push({route,options});if(window.__mode==='retry'&&window.__retryCount++===0)return Promise.reject(new Error('simulated_network_gap'));if(window.__mode==='permission'){const error=new Error('qq_project_required');error.status=409;error.payload={ok:false,error:'qq_project_required'};return Promise.reject(error);}if(window.__mode==='conflict'){const error=new Error('web_dispatch_request_id_payload_conflict');error.status=409;error.payload={ok:false,error:'web_dispatch_request_id_payload_conflict'};return Promise.reject(error);}if(window.__mode==='auth'){const error=new Error('session_expired');error.status=403;error.payload={ok:false,error:'forbidden'};return Promise.reject(error);}if(window.__mode==='task')return Promise.resolve({ok:true,dispatch:'task',reply:'已创建工作。',task:{id:'task-42'}});if(window.__mode==='delayed')return new Promise((resolve)=>{window.__resolve=resolve;});return Promise.resolve({ok:true,dispatch:'chat',reply:window.__mode==='retry'?'重试结果已确认。':'即时回答已确认。'});};
+window.bridge=(route, options)=>{window.__requests.push({route,options});if(window.__mode==='retry'&&window.__retryCount++===0)return Promise.reject(new Error('simulated_network_gap'));if(window.__mode==='permission'){const error=new Error('qq_project_required');error.status=409;error.payload={ok:false,error:'qq_project_required'};return Promise.reject(error);}if(window.__mode==='conflict'){const error=new Error('web_dispatch_request_id_payload_conflict');error.status=409;error.payload={ok:false,error:'web_dispatch_request_id_payload_conflict'};return Promise.reject(error);}if(window.__mode==='processing'){const error=new Error('web_dispatch_processing');error.status=409;error.payload={ok:false,error:'web_dispatch_processing'};return Promise.reject(error);}if(window.__mode==='unknown'){const error=new Error('web_dispatch_outcome_unknown');error.status=409;error.payload={ok:false,error:'web_dispatch_outcome_unknown'};return Promise.reject(error);}if(window.__mode==='auth'){const error=new Error('session_expired');error.status=403;error.payload={ok:false,error:'forbidden'};return Promise.reject(error);}if(window.__mode==='task')return Promise.resolve({ok:true,dispatch:'task',reply:'已创建工作。',task:{id:'task-42'}});if(window.__mode==='delayed')return new Promise((resolve)=>{window.__resolve=resolve;});return Promise.resolve({ok:true,dispatch:'chat',reply:window.__mode==='retry'?'重试结果已确认。':'即时回答已确认。'});};
 </script><script defer src="/v4-shell.js"></script><script defer src="/v4-ai-chat-surface.js"></script></body></html>`;
 
 function assert(condition, message) {
@@ -120,7 +120,44 @@ async function main() {
     await page.locator('#v4AiChatComposer button[type="submit"]').click();
     await page.waitForFunction(() => document.querySelector('[data-v4-chat-recovery="login"]'));
 
-    // F: task result opens the existing Work owner through its actual task function.
+    // F: processing and outcome-unknown retain the old request identity until an
+    // explicit, warned decision starts a genuinely new request.
+    await page.evaluate(() => { window.__mode = 'processing'; });
+    await inputAndSend('正在处理的请求不能静默改 ID');
+    await page.waitForFunction(() => document.querySelector('#v4AiChatFailure[data-kind="processing"]'));
+    const processingBefore = await page.evaluate(() => ({
+      id: window.__requests.at(-1).options.headers['X-QQ-Message-ID'],
+      disabled: document.querySelector('#v4AiChatPrompt').disabled,
+      requestCount: window.__requests.length,
+    }));
+    await page.locator('[data-v4-chat-recovery="probe"]').click();
+    await page.waitForFunction((count) => window.__requests.length === count + 1, processingBefore.requestCount);
+    const processingAfter = await page.evaluate(() => ({
+      id: window.__requests.at(-1).options.headers['X-QQ-Message-ID'],
+      disabled: document.querySelector('#v4AiChatPrompt').disabled,
+    }));
+    assert(processingBefore.disabled && processingAfter.disabled && processingBefore.id === processingAfter.id, 'processing state allowed a silent new request identity');
+    await page.locator('[data-v4-chat-new-request="true"]').click();
+    await page.evaluate(() => { window.__mode = 'unknown'; });
+    await inputAndSend('结果未知的请求不能静默改 ID');
+    await page.waitForFunction(() => document.querySelector('#v4AiChatFailure[data-kind="unknown"]'));
+    const unknownBefore = await page.evaluate(() => ({
+      id: window.__requests.at(-1).options.headers['X-QQ-Message-ID'],
+      disabled: document.querySelector('#v4AiChatPrompt').disabled,
+      requestCount: window.__requests.length,
+      warning: document.querySelector('.v4-ai-chat-recovery-warning')?.textContent || '',
+    }));
+    await page.locator('#v4AiChatComposer').evaluate((form) => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await page.waitForTimeout(40);
+    assert(await page.evaluate((count) => window.__requests.length === count, unknownBefore.requestCount), 'outcome-unknown permitted a normal silent resend');
+    await page.locator('[data-v4-chat-new-request="true"]').click();
+    await page.evaluate(() => { window.__mode = 'chat'; });
+    await page.locator('#v4AiChatComposer button[type="submit"]').click();
+    await page.waitForFunction((count) => window.__requests.length === count + 1, unknownBefore.requestCount);
+    const explicitNew = await page.evaluate(() => ({ id: window.__requests.at(-1).options.headers['X-QQ-Message-ID'], warning: document.querySelector('.v4-ai-chat-recovery-warning') }));
+    assert(unknownBefore.disabled && unknownBefore.warning.includes('可能产生重复工作') && explicitNew.id !== unknownBefore.id && !explicitNew.warning, 'outcome-unknown did not require an explicit warned new request');
+
+    // G: task result opens the existing Work owner through its actual task function.
     await sidebar('chat');
     await page.evaluate(() => { window.__mode = 'task'; });
     await inputAndSend('整理并完成这个工作');
@@ -129,7 +166,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[data-v4-route][aria-current="page"]')?.dataset.v4Route === 'work');
     assert(await page.evaluate(() => window.__taskIds.join(',')) === 'task-42', 'task handoff bypassed the existing task opener');
 
-    // G: stale results cannot become visible after leaving the Owner Surface.
+    // H: stale results cannot become visible after leaving the Owner Surface.
     await sidebar('chat');
     await page.evaluate(() => { window.__mode = 'delayed'; });
     await inputAndSend('这个响应不应在离开后显示');
@@ -144,20 +181,20 @@ async function main() {
     }));
     assert(afterLeave.hidden && afterLeave.inert && !afterLeave.staleVisible, `stale response leaked after owner exit: ${JSON.stringify(afterLeave)}`);
 
-    // H: repeated lifecycle transitions retain exactly one surface and one handler path.
+    // I: repeated lifecycle transitions retain exactly one surface and one handler path.
     await page.locator('#v4ShellToggle').click();
     await page.locator('#v4ShellToggle').click();
     await sidebar('chat');
     assert(await page.locator('#v4AiChatSurface').count() === 1, 'lifecycle transitions duplicated the Chat root');
 
-    // I: Return Legacy restores focus to a visible legacy heading.
+    // J: Return Legacy restores focus to a visible legacy heading.
     await sidebar('chat');
     await page.locator('#v4ReturnLegacyBtn').click();
     await page.waitForFunction(() => document.activeElement?.id === 'viewTitle');
     const legacyReturn = await page.evaluate(() => ({ hidden: document.querySelector('#v4AiChatSurface').hidden, inert: document.querySelector('#v4AiChatSurface').inert, overview: getComputedStyle(document.querySelector('#view-overview')).display }));
     assert(legacyReturn.hidden && legacyReturn.inert && legacyReturn.overview !== 'none', `legacy return did not retain a visible fallback: ${JSON.stringify(legacyReturn)}`);
 
-    // J: the narrow surface retains its labelled compositor without page overflow.
+    // K: the narrow surface retains its labelled compositor without page overflow.
     await page.locator('#v4ShellToggle').click();
     await sidebar('chat');
     await page.setViewportSize({ width: 390, height: 844 });
@@ -170,7 +207,7 @@ async function main() {
     assert(!narrow.documentOverflow && !narrow.surfaceOverflow && narrow.label && narrow.submitName, `narrow accessibility/responsiveness regression: ${JSON.stringify(narrow)}`);
 
     process.stdout.write(JSON.stringify({
-      scenarios: ['A:frontstage-not-overview', 'B:hidden-overview-refresh-no-remount', 'C:auto-dispatch-contract', 'D:uncertain-same-id-query', 'E:error-classification', 'F:task-handoff', 'G:stale-response-cancelled', 'H:repeated-lifecycle', 'I:return-legacy-focus', 'J:narrow-labelled-composer'],
+      scenarios: ['A:frontstage-not-overview', 'B:hidden-overview-refresh-no-remount', 'C:auto-dispatch-contract', 'D:uncertain-same-id-query', 'E:error-classification', 'F:processing-and-unknown-explicit-new-request', 'G:task-handoff', 'H:stale-response-cancelled', 'I:repeated-lifecycle', 'J:return-legacy-focus', 'K:narrow-labelled-composer'],
       requestCount: await page.evaluate(() => window.__requests.length),
       chromePath,
     }));

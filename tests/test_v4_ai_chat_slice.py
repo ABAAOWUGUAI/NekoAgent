@@ -46,7 +46,7 @@ def test_v4_ai_chat_preserves_lifecycle_and_duplicate_dispatch_controls() -> Non
     assert "root.inert = false" in source
     assert "requestVersion += 1" in source
     assert "submitting" in source
-    assert "retryableRequest" in source
+    assert "unresolvedRequest" in source
     assert "nekoagent:v4-experience-disable" in source
     assert "nekoagent:v4-route-change" in source
     assert 'body[data-v4-experience="active"][data-v4-active-view="chat"]' in css
@@ -55,6 +55,9 @@ def test_v4_ai_chat_preserves_lifecycle_and_duplicate_dispatch_controls() -> Non
     assert "function dispatchFailure(error)" in source
     assert "if (active && !root.hidden && !wasLegacyMode) return;" in source
     assert "重新查询本次请求" in source
+    assert "再次确认状态" in source
+    assert "作为新请求继续" in source
+    assert "v4ChatNewRequest" in source
     assert "textarea:focus-visible" in _source("admin/admin-v4-shell.css")
 
 

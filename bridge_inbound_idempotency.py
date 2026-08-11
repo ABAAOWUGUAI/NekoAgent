@@ -16,6 +16,10 @@ from bridge_reliability_service import reliability_enabled
 MESSAGE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,180}$")
 
 
+class InboundRequestValidationError(ValueError):
+    """Known client receipt/input validation failure safe to return as HTTP 400."""
+
+
 class InboundConflictError(ValueError):
     pass
 
@@ -49,13 +53,13 @@ def web_dispatch_receipt_context(
     """
     request_id = str(client_request_id or "").strip()
     if not request_id:
-        raise ValueError("web_dispatch_request_id_required")
+        raise InboundRequestValidationError("web_dispatch_request_id_required")
     if not MESSAGE_ID_RE.fullmatch(request_id):
-        raise ValueError("web_dispatch_request_id_invalid")
+        raise InboundRequestValidationError("web_dispatch_request_id_invalid")
     actor = str(actor_identity or "").strip()
     session = str(session_identity or "").strip()
     if not actor or not session:
-        raise ValueError("web_dispatch_identity_unavailable")
+        raise InboundRequestValidationError("web_dispatch_identity_unavailable")
     scope_hash = hashlib.sha256(f"{actor}\0{session}".encode("utf-8")).hexdigest()
     receipt_hash = hashlib.sha256(f"{scope_hash}\0{request_id}".encode("utf-8")).hexdigest()
     return {
@@ -72,10 +76,12 @@ def begin_receipt(
     message_id = str(platform_message_id or "").strip()
     if not message_id:
         if require_receipt:
-            raise ValueError("web_dispatch_request_id_required")
+            raise InboundRequestValidationError("web_dispatch_request_id_required")
         return None
     if not MESSAGE_ID_RE.fullmatch(message_id):
-        raise ValueError("web_dispatch_request_id_invalid" if require_receipt else "qq_message_id_invalid")
+        raise InboundRequestValidationError(
+            "web_dispatch_request_id_invalid" if require_receipt else "qq_message_id_invalid",
+        )
     stable_payload = {key: value for key, value in payload.items() if key != "trace_id"}
     digest = hashlib.sha256(
         json.dumps(stable_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
@@ -91,7 +97,7 @@ def begin_receipt(
                 require_reliability_schema(conn)
             except Exception as exc:
                 raise InboundIdempotencyUnavailableError("web_dispatch_idempotency_unavailable") from exc
-        if not conn.in_transaction:
+        if require_receipt and not conn.in_transaction:
             # Select + insert/update must be one SQLite writer acquisition.  This
             # keeps two concurrent same-ID Web retries from both becoming owners.
             conn.execute("BEGIN IMMEDIATE")
@@ -189,7 +195,7 @@ def execute_once(
 
 
 __all__ = [
-    "InboundConflictError", "InboundProcessingError", "begin_receipt", "complete_receipt",
+    "InboundConflictError", "InboundProcessingError", "InboundRequestValidationError", "begin_receipt", "complete_receipt",
     "InboundOutcomeUnknownError", "InboundIdempotencyUnavailableError", "execute_once", "fail_receipt",
     "web_dispatch_receipt_context",
 ]

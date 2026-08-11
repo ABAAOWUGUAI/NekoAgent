@@ -333,7 +333,8 @@ evaluate_automation_business_verdict = _automation_business_verdict
 from bridge_automation_worker import run_automation_worker
 from bridge_inbound_idempotency import (
     InboundConflictError, InboundIdempotencyUnavailableError, InboundOutcomeUnknownError,
-    InboundProcessingError, execute_once as execute_inbound_once, web_dispatch_receipt_context,
+    InboundProcessingError, InboundRequestValidationError, execute_once as execute_inbound_once,
+    web_dispatch_receipt_context,
 )
 from bridge_reliability_http import ReliabilityHttpApi
 from bridge_task_followup import consume_running_supplements
@@ -843,11 +844,13 @@ def _web_dispatch_receipt_context(handler: http.server.BaseHTTPRequestHandler, p
     if principal is PrincipalKind.ADMIN_SESSION:
         session_identity = _read_cookie(handler, ADMIN_SESSION_COOKIE)
     elif principal is PrincipalKind.ADMIN_TOKEN:
-        # This principal is already authenticated by a server-held token.  The
-        # literal scope avoids copying that token into receipt storage.
+        # Admin Token is one server-side control-plane principal.  Keeping its
+        # receipt namespace stable across rotation prevents a client retry from
+        # becoming a new business execution merely because a secret changed.
+        # Neither the raw token nor its hash is persisted.
         session_identity = "admin-token"
     else:
-        raise ValueError("web_dispatch_admin_required")
+        raise InboundRequestValidationError("web_dispatch_admin_required")
     return web_dispatch_receipt_context(
         principal.value,
         session_identity,
@@ -8361,10 +8364,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
             trace_id = str(payload.get("trace_id") or "").strip()
             force = str(payload.get("force") or "auto").strip()
             principal = self._principal()
-            is_web_console_dispatch = str(payload.get("source") or "").strip() == "web-console"
-            if is_web_console_dispatch and principal not in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN}:
-                _json_response(self, 403, {"ok": False, "error": "web_dispatch_admin_required"})
-                return
+            is_admin_web_dispatch = principal in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN}
             if principal is PrincipalKind.QQ_CHANNEL:
                 access_error = qq_private_access_http_error(
                     _assistant_db_connect, user_id,
@@ -8385,7 +8385,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                 )
                 receipt_context = (
                     _web_dispatch_receipt_context(self, principal)
-                    if is_web_console_dispatch else {
+                    if is_admin_web_dispatch else {
                         "platform_message_id": self.headers.get("X-QQ-Message-ID", ""),
                         "actor_id": self.headers.get("X-QQ-Actor-ID", ""),
                         "conversation_ref": user_id,
@@ -8399,7 +8399,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                         lambda: _assistant_dispatch(
                             user_id=user_id, message=message, timeout=timeout, trace_id=trace_id,
                             force=force,
-                            source="admin" if str(payload.get("source") or "").strip() == "web-console" else QQ_TASK_SOURCE,
+                            source="admin" if is_admin_web_dispatch else QQ_TASK_SOURCE,
                             cwd=Path(str(payload["_qq_cwd"])) if payload.get("_qq_cwd") else None,
                             require_project=bool(payload.get("_qq_project_guard")),
                             delivery_recipient_id=user_id,
@@ -8409,7 +8409,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
                         dispatch_payload,
                         scope="private",
                     ),
-                    require_receipt=is_web_console_dispatch,
+                    require_receipt=is_admin_web_dispatch,
                 )
                 observation = observe_private_participation(
                     _assistant_db_connect, dispatch_payload, result,
@@ -8428,7 +8428,7 @@ class BridgeHandler(AssistantIdentityPatchMixin, http.server.BaseHTTPRequestHand
             except InboundIdempotencyUnavailableError as exc:
                 _json_response(self, 503, {"ok": False, "error": str(exc)})
                 return
-            except ValueError as exc:
+            except InboundRequestValidationError as exc:
                 _json_response(self, 400, {"ok": False, "error": str(exc)})
                 return
             except Exception as exc:

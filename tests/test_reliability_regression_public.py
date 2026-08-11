@@ -500,3 +500,18 @@ def test_web_dispatch_receipt_scope_is_server_identity_bound_and_payload_safe() 
         raise AssertionError("same Web request ID with a different payload must conflict")
     assert calls == ["once"]
     conn.close()
+
+
+def test_admin_web_dispatch_contract_cannot_be_disabled_by_payload_source() -> None:
+    """Public source keeps the Web receipt boundary server-principal based."""
+    bridge = (ROOT / "codex_qq_bridge.py").read_text(encoding="utf-8")
+    workbench = (ROOT / "admin" / "views-workbench.js").read_text(encoding="utf-8")
+    inbound = (ROOT / "bridge_inbound_idempotency.py").read_text(encoding="utf-8")
+
+    assert "is_admin_web_dispatch = principal in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN}" in bridge
+    assert "if str(payload.get(\"source\") or \"\").strip() == \"web-console\"" not in bridge
+    assert "require_receipt=is_admin_web_dispatch" in bridge
+    assert "source=\"admin\" if is_admin_web_dispatch else QQ_TASK_SOURCE" in bridge
+    assert "web-workbench-" in workbench
+    assert "'X-QQ-Message-ID': request.id" in workbench
+    assert "if require_receipt and not conn.in_transaction:" in inbound

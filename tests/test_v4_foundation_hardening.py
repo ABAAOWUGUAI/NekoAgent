@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import json
 import sqlite3
+import subprocess
 import zipfile
 import sys
 import tempfile
@@ -141,6 +142,77 @@ class WebDispatchReceiptTests(unittest.TestCase):
         self.assertFalse(owner.is_alive())
         self.assertEqual(["owner"], calls)
 
+    def test_qq_optional_receipt_keeps_existing_deferred_transaction_and_replay_contract(self) -> None:
+        from bridge_inbound_idempotency import (
+            InboundConflictError,
+            InboundProcessingError,
+            begin_receipt,
+            execute_once,
+        )
+        from bridge_reliability_schema import RELIABILITY_FEATURE_FLAG
+
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE assistant_feature_flags SET enabled=?,updated_at=? WHERE name=?",
+                (1, "2026-08-11T00:00:00+00:00", RELIABILITY_FEATURE_FLAG),
+            )
+        statements: list[str] = []
+        opened_connections: list[sqlite3.Connection] = []
+
+        def traced_connect():
+            conn = self.connect()
+            conn.set_trace_callback(statements.append)
+            opened_connections.append(conn)
+            return conn
+
+        payload = {"source": "qq", "user_id": "qq-user", "message": "保持 QQ 语义", "force": "auto"}
+        calls: list[str] = []
+        try:
+            first = execute_once(
+                traced_connect, "qq-regression-1", "qq-user", "qq:private:qq-user", payload,
+                lambda: calls.append("owner") or {"ok": True, "dispatch": "chat"}, require_receipt=False,
+            )
+            replay = execute_once(
+                traced_connect, "qq-regression-1", "qq-user", "qq:private:qq-user", payload,
+                lambda: calls.append("duplicate") or {"ok": True}, require_receipt=False,
+            )
+            with self.assertRaisesRegex(InboundConflictError, "qq_message_id_payload_conflict"):
+                execute_once(
+                    traced_connect, "qq-regression-1", "qq-user", "qq:private:qq-user",
+                    {**payload, "message": "不同内容"}, lambda: self.fail("QQ conflict must not execute"),
+                    require_receipt=False,
+                )
+            begin_receipt(
+                traced_connect, "qq-regression-processing", "qq-user", "qq:private:qq-user", payload,
+                require_receipt=False,
+            )
+            with self.assertRaisesRegex(InboundProcessingError, "qq_message_processing"):
+                execute_once(
+                    traced_connect, "qq-regression-processing", "qq-user", "qq:private:qq-user", payload,
+                    lambda: self.fail("QQ processing receipt must not execute"), require_receipt=False,
+                )
+        finally:
+            for conn in opened_connections:
+                conn.close()
+        self.assertEqual(["owner"], calls)
+        self.assertEqual(first, replay)
+        self.assertFalse(any("BEGIN IMMEDIATE" in statement.upper() for statement in statements))
+
+    def test_qq_reliability_disabled_keeps_existing_optional_no_receipt_behavior(self) -> None:
+        from bridge_inbound_idempotency import execute_once
+
+        calls: list[str] = []
+        payload = {"source": "qq", "user_id": "qq-user", "message": "flag off", "force": "auto"}
+        execute_once(
+            self.connect, "qq-flag-off", "qq-user", "qq:private:qq-user", payload,
+            lambda: calls.append("first") or {"ok": True}, require_receipt=False,
+        )
+        execute_once(
+            self.connect, "qq-flag-off", "qq-user", "qq:private:qq-user", payload,
+            lambda: calls.append("second") or {"ok": True}, require_receipt=False,
+        )
+        self.assertEqual(["first", "second"], calls)
+
 
 class WebDispatchHttpIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -203,20 +275,30 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
             setattr(self.bridge, name, value)
         self.directory.cleanup()
 
-    def _post(self, request_id: str, message: str, actor_header: str = "client-controlled-value-must-not-scope-web-receipt") -> tuple[int, dict]:
+    def _post(
+        self,
+        request_id: str,
+        message: str,
+        actor_header: str = "client-controlled-value-must-not-scope-web-receipt",
+        *,
+        source: str = "web-console",
+        include_request_id: bool = True,
+    ) -> tuple[int, dict]:
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=3)
         body = json.dumps({
-            "user_id": "web-console", "source": "web-console", "message": message,
+            "user_id": "web-console", "source": source, "message": message,
             "trace_id": request_id, "force": "auto", "timeout": 30,
         }).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "X-QQ-Actor-ID": actor_header,
+            "Cookie": f"{self.bridge.ADMIN_SESSION_COOKIE}={self.session_id}",
+        }
+        if include_request_id:
+            headers["X-QQ-Message-ID"] = request_id
         connection.request(
             "POST", "/assistant/dispatch", body=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-QQ-Message-ID": request_id,
-                "X-QQ-Actor-ID": actor_header,
-                "Cookie": f"{self.bridge.ADMIN_SESSION_COOKIE}={self.session_id}",
-            },
+            headers=headers,
         )
         response = connection.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
@@ -237,6 +319,42 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
         with self.task_connect() as conn:
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0])
 
+    def test_legacy_workbench_submit_has_its_own_request_id_and_dispatches(self) -> None:
+        workbench = (ROOT / "admin" / "views-workbench.js").read_text(encoding="utf-8")
+        self.assertIn("web-workbench-", workbench)
+        self.assertIn("let homeDispatchPending = false", workbench)
+        self.assertIn("'X-QQ-Message-ID': request.id", workbench)
+        status, result = self._post("web-workbench-regression-1", "Legacy workbench submit")
+        self.assertEqual(202, status)
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, self.dispatch_calls)
+
+    def test_admin_principal_cannot_opt_out_of_receipt_by_changing_payload_source(self) -> None:
+        first_status, first = self._post(
+            "admin-spoof-1", "source spoof must remain protected", source="anything-else",
+        )
+        replay_status, replay = self._post(
+            "admin-spoof-1", "source spoof must remain protected", source="anything-else",
+        )
+        missing_status, missing = self._post(
+            "", "missing IDs must not execute", source="anything-else", include_request_id=False,
+        )
+        self.assertEqual(202, first_status)
+        self.assertEqual(202, replay_status)
+        self.assertEqual(first["task"]["id"], replay["task"]["id"])
+        self.assertEqual(400, missing_status)
+        self.assertEqual("web_dispatch_request_id_required", missing["error"])
+        self.assertEqual(1, self.dispatch_calls)
+
+    def test_internal_value_error_is_sanitized_not_reclassified_as_client_input(self) -> None:
+        self.bridge._assistant_dispatch = lambda **_kwargs: (_ for _ in ()).throw(
+            ValueError("internal-sensitive-detail-marker")
+        )
+        status, result = self._post("internal-value-error-1", "inject internal failure")
+        self.assertEqual(500, status)
+        self.assertEqual("assistant_dispatch_failed", result["error"])
+        self.assertNotIn("internal-sensitive-detail-marker", json.dumps(result, ensure_ascii=False))
+
 
 class V4PackageProvenanceTests(unittest.TestCase):
     def test_current_builder_records_git_and_content_provenance_separately(self) -> None:
@@ -254,12 +372,36 @@ class V4PackageProvenanceTests(unittest.TestCase):
             self.assertTrue(result["content_manifest_sha256"])
             with zipfile.ZipFile(output) as archive:
                 manifest = json.loads(archive.read(
-                    "NekoAgent-V4.1-Foundation-Slices-2026-08-11-r1/PATCH_MANIFEST.json"
+                    f"{builder.PACKAGE_PREFIX}/PATCH_MANIFEST.json"
                 ))
+        self.assertTrue(result["content_manifest_sha256"])
+        self.assertEqual(result["content_manifest_sha256"], manifest["content_manifest_sha256"])
+        if not result["git_checkout_available"]:
+            self.skipTest("Git provenance is verified only inside a Git checkout; archive content remains verifiable.")
         self.assertEqual(result["git_base_revision"], manifest["git_base_revision"])
         self.assertEqual(result["working_tree_clean"], manifest["working_tree_clean"])
-        self.assertEqual(result["content_manifest_sha256"], manifest["content_manifest_sha256"])
         self.assertNotIn("base_revision", manifest)
+
+    def test_builder_remains_reviewable_without_git_metadata(self) -> None:
+        import importlib.util
+
+        builder_path = ROOT / "tools" / "build_v4_1_reconstruction_patch.py"
+        spec = importlib.util.spec_from_file_location("v4_foundation_builder_archive", builder_path)
+        assert spec and spec.loader
+        builder = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(builder)
+        original_run = builder.subprocess.run
+
+        def unavailable_git(*_args, **_kwargs):
+            raise subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD"])
+
+        builder.subprocess.run = unavailable_git
+        try:
+            provenance = builder.source_provenance()
+        finally:
+            builder.subprocess.run = original_run
+        self.assertFalse(provenance["git_checkout_available"])
+        self.assertIsNone(provenance["git_base_revision"])
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 Date: 2026-08-11
 
-Status: local hardening candidate; **not deployed, not default-on, and no legacy path retired**.
+Status: PR #36 correction candidate; **not deployed, not default-on, and no legacy path retired**.
 
 ## Scope and baseline
 
@@ -21,24 +21,37 @@ migration.
 2. **Idempotent surface lifecycle.** Artifact and AI Chat treat an active,
    visible, same-mode activation as a no-op. Owner change, V4 disable and
    explicit Legacy management remain explicit state transitions.
-3. **Web dispatch receipt.** `source=web-console` requires the existing durable
-   inbound receipt schema even when QQ `task_message_reliability_v2` is off.
+3. **Web dispatch receipt.** Every server-authenticated Admin Session or Admin
+   Token dispatch requires the durable inbound receipt schema, regardless of a
+   client payload `source`, even when QQ `task_message_reliability_v2` is off.
    Its receipt key is derived from the server-authenticated principal/session
-   scope and client request ID; no raw token or session is stored.
+   scope and client request ID; no raw token or session is stored. Legacy
+   Workbench creates one request ID per deliberate submit and sends it in the
+   existing `X-QQ-Message-ID` header.
 4. **Failure semantics.** Same key plus another canonical payload is a 409
    conflict. A live receipt is a processing 409. An expired/failed Web receipt
    becomes terminal `web_dispatch_outcome_unknown`, never a new execution.
    Missing receipt schema returns a fail-closed 503 before the operation runs.
 5. **UI truth.** The Chat UI offers same-ID result query only for an uncertain
-   transport outcome. Conflict, processing, deterministic validation, unknown
-   server outcome and authentication each receive a distinct recovery action.
+   transport outcome. Processing has an explicit same-ID state confirmation;
+   processing and unknown outcomes retain the unresolved request identity and
+   disable ordinary submit. Starting a new request is a separately labelled,
+   warned action. Conflict, deterministic validation and authentication each
+   receive distinct recovery actions.
+6. **Narrow error boundary.** Only explicit receipt/input validation errors
+   become HTTP 400. Domain `ValueError` and other internal failures remain on
+   the sanitized internal-error path and never echo their message to the client.
 
 ## Compatibility and rollback
 
-- QQ paths continue to call `execute_once(..., require_receipt=False)` and
-  retain their existing feature-flag semantics.
+- QQ paths continue to call `execute_once(..., require_receipt=False)`, retain
+  their existing feature-flag semantics, and do not acquire the Web-only
+  `BEGIN IMMEDIATE` lock.
 - Existing admin session and admin-token authentication are reused. A client
   `X-QQ-Actor-ID` is ignored for Web receipt scoping.
+- Admin Token represents the server-side control-plane principal. Its durable
+  scope is intentionally stable across token rotation so a legitimate same-ID
+  retry cannot become a second execution merely because the credential changed.
 - The receipt schema is pre-existing assistant-core migration 12; this change
   adds no schema migration. A missing/drifted schema blocks Web dispatch safely.
 - Rollback is source-level: revert the explicit shell wrapper, Web-only
@@ -48,22 +61,31 @@ migration.
 ## Required verification
 
 - `tests/test_v4_foundation_hardening.py` starts a local Bridge HTTP server,
-  invokes `/assistant/dispatch`, and proves same ID/same payload writes one
-  SQLite task, differing payload receives conflict, and processing/expired
-  receipts do not execute again.
+  invokes `/assistant/dispatch`, and proves Legacy Workbench compatibility,
+  principal-based receipt enforcement, same ID/same payload one-task replay,
+  differing-payload conflict, processing/expired no-reexecution, and sanitized
+  internal errors. It separately protects optional QQ receipt semantics.
 - `tools/run_v4_artifact_browser_rehearsal.cjs` mutates a real-ish legacy
-  Artifact subtree after opening full management and proves Daily remains inert.
+  Artifact subtree after opening full management and proves Daily remains inert
+  while focus moves from its hidden control to a visible Legacy heading.
 - `tools/run_v4_ai_chat_browser_rehearsal.cjs` mutates hidden Overview while
   focus, Chinese/ASCII draft and caret are in Chat; it proves no remount,
   exercises lifecycle, error classifications and visible focus.
+- `tools/run_v4_workbench_dispatch_browser_rehearsal.cjs` executes the actual
+  Legacy Workbench source in a local browser fixture and proves one rapid
+  double-submit sends one stable header ID, while a later deliberate submit
+  receives a different ID.
 - `tools/run_public_tests.py` remains dependency-free and runs the public-safe
   receipt scope regression.
 
 ## Package provenance
 
 `tools/build_v4_1_reconstruction_patch.py` now names and packages the current
-V4 Foundation shell, Artifact and AI Chat slices. Its manifest records the Git
-base revision, whether the working tree is clean, and a deterministic content
-manifest hash; an uncommitted package cannot impersonate a commit.
+V4 Foundation files, including the Web receipt and Legacy Workbench correction.
+Its manifest records Git provenance when the source is a Git checkout and
+always records a deterministic content manifest hash. A source ZIP without
+`.git` remains reviewable and its Git-only assertion is skipped rather than
+misreported as a functional failure; an uncommitted package cannot impersonate
+a commit.
 Historical Artifact and AI Chat records retain their original conclusions and
 now carry an explicit historical-status header.

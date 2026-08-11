@@ -19,7 +19,7 @@
   let active = false;
   let submitting = false;
   let requestVersion = 0;
-  let retryableRequest = null;
+  let unresolvedRequest = null;
   let failureState = null;
   let draft = '';
   let turns = [];
@@ -52,7 +52,7 @@
   }
 
   function currentRequest() {
-    if (retryableRequest) return retryableRequest;
+    if (unresolvedRequest) return unresolvedRequest;
     return { id: newRequestId(), message: draft.trim() };
   }
 
@@ -71,7 +71,7 @@
       return { kind: 'conflict', action: 'workbench', message: '这个请求标识已对应另一份内容。为避免错误复用，当前内容没有执行。' };
     }
     if (code === 'web_dispatch_processing' || code === 'qq_message_processing') {
-      return { kind: 'processing', action: 'workbench', message: '这项请求仍在处理。请稍后在现有工作台查看状态。' };
+      return { kind: 'processing', action: 'probe', message: '这项请求仍在处理。可使用原请求标识再次确认状态，或先在现有工作台查看。' };
     }
     if (code === 'web_dispatch_idempotency_unavailable') {
       return { kind: 'deterministic', action: 'edit', message: '请求保护暂不可用，当前没有执行。请稍后重新提交。' };
@@ -174,7 +174,7 @@
     }
     root.append(transcript);
 
-    if (retryableRequest && failureState?.kind === 'uncertain' && !submitting) {
+    if (unresolvedRequest && failureState?.kind === 'uncertain' && !submitting) {
       const retry = makeNode('section', 'v4-ai-chat-retry');
       retry.append(makeNode('p', '', failureState.message));
       const retryButton = makeNode('button', 'v4-ai-chat-retry-button', '重新查询本次请求');
@@ -189,13 +189,20 @@
       failure.id = 'v4AiChatFailure';
       failure.dataset.kind = failureState.kind;
       failure.append(makeNode('p', '', failureState.message));
-      const actionLabels = { workbench: '打开现有工作台', login: '重新登录', edit: '修改输入' };
+      const actionLabels = { workbench: '打开现有工作台', login: '重新登录', edit: '修改输入', probe: '再次确认状态' };
       const actionLabel = actionLabels[failureState.action];
       if (actionLabel) {
         const action = makeNode('button', 'v4-ai-chat-recovery-button', actionLabel);
         action.type = 'button';
         action.dataset.v4ChatRecovery = failureState.action;
         failure.append(action);
+      }
+      if (unresolvedRequest && (failureState.kind === 'processing' || failureState.kind === 'unknown')) {
+        failure.append(makeNode('p', 'v4-ai-chat-recovery-warning', '原请求结果尚未确认；作为新请求继续可能产生重复工作。'));
+        const newRequest = makeNode('button', 'v4-ai-chat-recovery-button', '作为新请求继续');
+        newRequest.type = 'button';
+        newRequest.dataset.v4ChatNewRequest = 'true';
+        failure.append(newRequest);
       }
       root.append(failure);
     }
@@ -211,23 +218,24 @@
     textarea.rows = 4;
     textarea.value = draft;
     textarea.placeholder = '问一个问题，或说明你希望完成什么。';
-    textarea.disabled = submitting || Boolean(retryableRequest);
+    textarea.disabled = submitting || Boolean(unresolvedRequest);
     const footer = makeNode('div', 'v4-ai-chat-composer-footer');
     footer.append(makeNode('p', '', '模型路由、确认和工作权限继续遵循现有受控路径。'));
     const submit = makeNode('button', 'v4-ai-chat-submit', submitting ? '处理中…' : '发送');
     submit.type = 'submit';
-    submit.disabled = submitting || Boolean(retryableRequest) || !draft.trim();
+    submit.disabled = submitting || Boolean(unresolvedRequest) || !draft.trim();
     footer.append(submit);
     form.append(label, textarea, footer);
     root.append(form);
   }
 
-  async function submitCurrentRequest() {
+  async function submitCurrentRequest({ confirmUnresolved = false } = {}) {
     const request = currentRequest();
     if (!active || submitting || !request.message) return;
+    if (unresolvedRequest && failureState?.kind !== 'uncertain' && !confirmUnresolved) return;
     const version = ++requestVersion;
     submitting = true;
-    retryableRequest = request;
+    unresolvedRequest = request;
     failureState = null;
     if (!hasVisibleRequest(request)) turns.push({ kind: 'user', requestId: request.id, text: request.message });
     render();
@@ -255,13 +263,13 @@
         throw resultError;
       }
       turns.push(assistantTurn(result));
-      retryableRequest = null;
+      unresolvedRequest = null;
       failureState = null;
       draft = '';
     } catch (error) {
       if (version !== requestVersion || !active) return;
       failureState = dispatchFailure(error);
-      if (failureState.kind !== 'uncertain') retryableRequest = null;
+      if (!['uncertain', 'processing', 'unknown'].includes(failureState.kind)) unresolvedRequest = null;
     } finally {
       if (version === requestVersion && active) {
         submitting = false;
@@ -287,7 +295,7 @@
     requestVersion += 1;
     active = false;
     submitting = false;
-    retryableRequest = null;
+    unresolvedRequest = null;
     failureState = null;
     draft = '';
     turns = [];
@@ -307,12 +315,12 @@
     root.addEventListener('input', (event) => {
       if (event.target?.id !== 'v4AiChatPrompt') return;
       draft = event.target.value;
-      if (failureState && !retryableRequest) {
+      if (failureState && !unresolvedRequest) {
         failureState = null;
         root.querySelector('#v4AiChatFailure')?.remove();
       }
       const button = root.querySelector('.v4-ai-chat-submit');
-      if (button) button.disabled = submitting || Boolean(retryableRequest) || !draft.trim();
+      if (button) button.disabled = submitting || Boolean(unresolvedRequest) || !draft.trim();
     });
     root.addEventListener('submit', (event) => {
       if (event.target?.id !== 'v4AiChatComposer') return;
@@ -325,6 +333,13 @@
       if (target.dataset.v4ChatTask) openTask(target.dataset.v4ChatTask);
       else if (target.dataset.v4ChatLegacy) showLegacyWorkbench();
       else if (target.dataset.v4ChatRetry) submitCurrentRequest();
+      else if (target.dataset.v4ChatNewRequest) {
+        unresolvedRequest = null;
+        failureState = null;
+        render();
+        root.querySelector('#v4AiChatPrompt')?.focus();
+      }
+      else if (target.dataset.v4ChatRecovery === 'probe') submitCurrentRequest({ confirmUnresolved: true });
       else if (target.dataset.v4ChatRecovery === 'workbench') showLegacyWorkbench();
       else if (target.dataset.v4ChatRecovery === 'login') document.getElementById('tokenInput')?.focus();
       else if (target.dataset.v4ChatRecovery === 'edit') root.querySelector('#v4AiChatPrompt')?.focus();
