@@ -62,6 +62,34 @@ class WebDispatchReceiptTests(unittest.TestCase):
         self.assertEqual(["task"], calls)
         self.assertEqual(first, replay)
 
+    def test_required_web_receipt_fails_closed_when_its_schema_is_unavailable(self) -> None:
+        from bridge_inbound_idempotency import InboundIdempotencyUnavailableError, execute_once
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "assistant.sqlite3"
+
+            def missing_schema_connect():
+                conn = sqlite3.connect(path)
+                conn.row_factory = sqlite3.Row
+                return conn
+
+            conn = missing_schema_connect()
+            try:
+                conn.execute(
+                    "CREATE TABLE assistant_feature_flags(name TEXT PRIMARY KEY, enabled INTEGER NOT NULL, updated_at TEXT NOT NULL)"
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            calls: list[str] = []
+            with self.assertRaisesRegex(InboundIdempotencyUnavailableError, "web_dispatch_idempotency_unavailable"):
+                execute_once(
+                    missing_schema_connect, "web:schema-missing", "web:session", "web-console",
+                    {"source": "web-console", "message": "schema must fail closed"},
+                    lambda: calls.append("must-not-run") or {"ok": True}, require_receipt=True,
+                )
+            self.assertEqual([], calls)
+
     def test_same_request_id_with_different_canonical_payload_conflicts(self) -> None:
         from bridge_inbound_idempotency import InboundConflictError, execute_once
 
@@ -354,6 +382,17 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
         self.assertEqual(500, status)
         self.assertEqual("assistant_dispatch_failed", result["error"])
         self.assertNotIn("internal-sensitive-detail-marker", json.dumps(result, ensure_ascii=False))
+
+    def test_admin_token_receipt_scope_is_stable_and_does_not_persist_secret_material(self) -> None:
+        from bridge_auth import PrincipalKind
+
+        class Handler:
+            headers = {"X-QQ-Message-ID": "admin-token-request-1"}
+
+        first = self.bridge._web_dispatch_receipt_context(Handler(), PrincipalKind.ADMIN_TOKEN)
+        second = self.bridge._web_dispatch_receipt_context(Handler(), PrincipalKind.ADMIN_TOKEN)
+        self.assertEqual(first, second)
+        self.assertNotIn("admin-token", first["platform_message_id"])
 
 
 class V4PackageProvenanceTests(unittest.TestCase):
