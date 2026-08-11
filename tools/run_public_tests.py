@@ -85,6 +85,13 @@ def main() -> int:
             reliability_tests.test_executor_display_label_tracks_the_configured_upstream_model()
             reliability_tests.test_executor_v39_schema_can_be_validated_before_v40_column_exists()
             tests += 19
+        ai_chat_test_path = ROOT / "tests" / "test_v4_ai_chat_slice.py"
+        if ai_chat_test_path.is_file():
+            ai_chat_tests = _load("public_v4_ai_chat_slice_tests", "tests/test_v4_ai_chat_slice.py")
+            ai_chat_tests.test_v4_ai_chat_assets_are_versioned_and_allowlisted()
+            ai_chat_tests.test_v4_ai_chat_uses_the_existing_dispatch_contract_without_model_controls()
+            ai_chat_tests.test_v4_ai_chat_preserves_lifecycle_and_duplicate_dispatch_controls()
+            tests += 3
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():
             export_tests = _load("public_export_tests", "tests/test_open_source_release_export.py")
