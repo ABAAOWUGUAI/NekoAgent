@@ -1,5 +1,12 @@
 # NekoAgent V4.1 AI Chat First Slice Contract
 
+> **HISTORICAL REVIEW RECORD**
+>
+> This contract records the pre-merge First Slice boundary. PR #35 was later
+> merged to `main` at `ca12f1be5e1f2a816a0e35218037cfbd79d06ce1`; this header
+> updates only present status, not the historical contract below. The current
+> state source is the workspace `CURRENT_STATE.md` plus the current `main`.
+
 Date: 2026-08-11
 Status: implementation contract; local opt-in slice only
 

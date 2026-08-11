@@ -749,7 +749,10 @@
           if (animatePet) window.setPetRequestActivity?.('failed');
           if (response.status === 403) {
             showAuthenticated(false);
-            throw new Error('未登录或会话已过期。');
+            const authError = new Error('未登录或会话已过期。');
+            authError.payload = payload;
+            authError.status = response.status;
+            throw authError;
           }
           const requestError = new Error(errorMessages[payload.error] || payload.error || `HTTP ${response.status}`);
           requestError.payload = payload;

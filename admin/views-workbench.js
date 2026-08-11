@@ -5,6 +5,13 @@
       chat: '即时回答保留网页工作会话，不创建后台工作任务。',
       task: '创建可追踪工作，并在当前工作区生成任务记录与 Evidence。',
     };
+    let homeDispatchPending = false;
+
+    function newHomeDispatchRequestId() {
+      const suffix = window.crypto?.randomUUID?.()
+        || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      return `web-workbench-${suffix}`;
+    }
 
     function renderHomeDispatchResult(result) {
       const container = $('homeDispatchResult');
@@ -32,7 +39,11 @@
     async function submitHomeDispatch(event) {
       event.preventDefault();
       const prompt = $('homeDispatchPrompt').value.trim();
-      if (!prompt) return;
+      if (!prompt || homeDispatchPending) return;
+      homeDispatchPending = true;
+      // This value is created once per deliberate form submission, never at
+      // render time.  The current Workbench has no automatic resend path.
+      const request = { id: newHomeDispatchRequestId(), message: prompt };
       const button = $('homeDispatchBtn');
       button.disabled = true;
       button.textContent = '助手正在判断…';
@@ -44,10 +55,14 @@
       try {
         const result = await bridge('/assistant/dispatch', {
           method: 'POST',
+          headers: {
+            'X-QQ-Message-ID': request.id,
+          },
           body: JSON.stringify({
             user_id: 'web-console',
             source: 'web-console',
-            message: prompt,
+            message: request.message,
+            trace_id: request.id,
             force: $('homeDispatchMode').value,
             timeout: 180,
           }),
@@ -61,6 +76,7 @@
         renderHomeDispatchResult({ ok: false, error: error.message || String(error) });
         setConnection(error.message || String(error), 'error');
       } finally {
+        homeDispatchPending = false;
         button.disabled = false;
         button.textContent = '开始';
       }

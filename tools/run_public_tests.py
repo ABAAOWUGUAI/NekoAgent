@@ -84,7 +84,9 @@ def main() -> int:
             reliability_tests.test_executor_configuration_action_opens_and_prefills_connection_editor()
             reliability_tests.test_executor_display_label_tracks_the_configured_upstream_model()
             reliability_tests.test_executor_v39_schema_can_be_validated_before_v40_column_exists()
-            tests += 19
+            reliability_tests.test_web_dispatch_receipt_scope_is_server_identity_bound_and_payload_safe()
+            reliability_tests.test_admin_web_dispatch_contract_cannot_be_disabled_by_payload_source()
+            tests += 21
         ai_chat_test_path = ROOT / "tests" / "test_v4_ai_chat_slice.py"
         if ai_chat_test_path.is_file():
             ai_chat_tests = _load("public_v4_ai_chat_slice_tests", "tests/test_v4_ai_chat_slice.py")

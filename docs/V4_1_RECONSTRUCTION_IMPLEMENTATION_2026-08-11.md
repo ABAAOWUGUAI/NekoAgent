@@ -1,5 +1,13 @@
 # NekoAgent V4.1 — Phase 1 correction and first Artifact slice
 
+> **HISTORICAL IMPLEMENTATION RECORD**
+>
+> This preserves the Artifact-slice implementation evidence created before
+> merge. PR #34 was later merged to `main` at
+> `59a83a95d95af421b433897fcf03fc73a511397f`; the historical conclusions below
+> are not rewritten. The current state source is the workspace `CURRENT_STATE.md`
+> plus the current `main`.
+
 Date: 2026-08-11
 Status: local implementation only; **not deployed**
 
