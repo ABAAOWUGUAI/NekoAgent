@@ -107,5 +107,8 @@ a commit. When the verified checkout is clean, each package entry is read with
 `git show <HEAD>:<path>` rather than from platform-normalized working-tree
 bytes. Therefore a Windows CRLF checkout and a `git archive` full-source ZIP
 carry identical tracked bytes and cannot be misreported as different source.
+The full-source command is `git -c core.autocrlf=false archive`; an unqualified
+`git archive` may apply the caller's working-tree EOL conversion and is not a
+canonical source-equality artifact.
 Historical Artifact and AI Chat records retain their original conclusions and
 now carry an explicit historical-status header.

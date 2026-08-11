@@ -485,20 +485,29 @@ class V4PackageProvenanceTests(unittest.TestCase):
             self.assertTrue(provenance["git_checkout_available"])
             self.assertTrue(provenance["working_tree_clean"])
             output = root / "foundation.zip"
+            full_source = root / "full-source.zip"
             builder.build(output)
+            subprocess.run(
+                ["git", "-c", "core.autocrlf=false", "archive", "--format=zip", f"--output={full_source}", "HEAD"],
+                cwd=source,
+                check=True,
+            )
             with zipfile.ZipFile(output) as archive:
-                for relative in builder.FOUNDATION_FILES:
-                    expected = subprocess.run(
-                        ["git", "show", f"HEAD:{relative}"],
-                        cwd=source,
-                        check=True,
-                        capture_output=True,
-                    ).stdout
-                    self.assertEqual(
-                        expected,
-                        archive.read(f"{builder.PACKAGE_PREFIX}/{relative}"),
-                        f"package entry diverged from tracked source: {relative}",
-                    )
+                with zipfile.ZipFile(full_source) as source_archive:
+                    for relative in builder.FOUNDATION_FILES:
+                        expected = subprocess.run(
+                            ["git", "show", f"HEAD:{relative}"],
+                            cwd=source,
+                            check=True,
+                            capture_output=True,
+                        ).stdout
+                        package_entry = archive.read(f"{builder.PACKAGE_PREFIX}/{relative}")
+                        self.assertEqual(expected, package_entry, f"package entry diverged from tracked source: {relative}")
+                        self.assertEqual(
+                            expected,
+                            source_archive.read(relative),
+                            f"full source archive diverged from tracked source: {relative}",
+                        )
 
     def test_current_builder_records_git_and_content_provenance_separately(self) -> None:
         import importlib.util
