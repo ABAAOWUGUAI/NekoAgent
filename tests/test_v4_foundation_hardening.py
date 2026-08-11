@@ -452,19 +452,18 @@ class V4PackageProvenanceTests(unittest.TestCase):
     def test_clean_checkout_package_uses_exact_tracked_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source_archive = root / "source.zip"
             source = root / "NekoAgent-source"
-            subprocess.run(
-                ["git", "archive", "--format=zip", f"--output={source_archive}", "HEAD"],
-                cwd=ROOT,
-                check=True,
-            )
-            with zipfile.ZipFile(source_archive) as archive:
-                archive.extractall(source)
-            shutil.copy2(
+            seed_spec = importlib.util.spec_from_file_location(
+                "v4_foundation_builder_seed",
                 ROOT / "tools" / "build_v4_1_reconstruction_patch.py",
-                source / "tools" / "build_v4_1_reconstruction_patch.py",
             )
+            assert seed_spec and seed_spec.loader
+            seed_builder = importlib.util.module_from_spec(seed_spec)
+            seed_spec.loader.exec_module(seed_builder)
+            for relative in seed_builder.FOUNDATION_FILES:
+                target = source / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / relative, target)
             subprocess.run(["git", "init"], cwd=source, check=True, capture_output=True, text=True)
             subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
             subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
@@ -476,7 +475,12 @@ class V4PackageProvenanceTests(unittest.TestCase):
             spec = importlib.util.spec_from_file_location("v4_foundation_builder_tracked_bytes", builder_path)
             assert spec and spec.loader
             builder = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(builder)
+            previous_dont_write_bytecode = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                spec.loader.exec_module(builder)
+            finally:
+                sys.dont_write_bytecode = previous_dont_write_bytecode
             provenance = builder.source_provenance()
             self.assertTrue(provenance["git_checkout_available"])
             self.assertTrue(provenance["working_tree_clean"])
