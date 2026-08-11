@@ -53,6 +53,7 @@ _ADMIN_CSS_NAMES = (
     "admin-voice.css",
     "admin-v4-shell.css",
     "admin-v4-artifact-surface.css",
+    "admin-v4-ai-chat-surface.css",
 )
 _ADMIN_JS_NAMES = (
     "motion.js",
@@ -84,6 +85,7 @@ _ADMIN_JS_NAMES = (
     "runtime.js",
     "v4-shell.js",
     "v4-artifact-surface.js",
+    "v4-ai-chat-surface.js",
 )
 _ADMIN_VENDOR_ASSETS = ("anime.umd.min.js", "animejs.LICENSE.md")
 _ADMIN_EXTRA_ASSETS = (
