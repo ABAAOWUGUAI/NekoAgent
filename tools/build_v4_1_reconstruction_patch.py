@@ -96,10 +96,26 @@ def content_manifest_sha256(records: list[dict[str, str]]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def source_bytes(relative: str, provenance: dict[str, object]) -> bytes:
+    revision = provenance.get("git_base_revision")
+    if provenance.get("git_checkout_available") and provenance.get("working_tree_clean") and isinstance(revision, str):
+        try:
+            return subprocess.run(
+                ["git", "show", f"{revision}:{relative}"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+            ).stdout
+        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(f"tracked_source_read_failed:{relative}") from exc
+    return (ROOT / relative).read_bytes()
+
+
 def build(output: Path) -> dict[str, object]:
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         raise FileExistsError(f"refusing to overwrite existing archive: {output}")
+    provenance = source_provenance()
     records: list[dict[str, str]] = []
     with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
         for relative in FOUNDATION_FILES:
@@ -109,9 +125,12 @@ def build(output: Path) -> dict[str, object]:
             archive_name = f"{PACKAGE_PREFIX}/{relative.replace(chr(92), '/') }"
             if "\\" in archive_name:
                 raise ValueError(f"non-portable ZIP entry: {archive_name}")
-            archive.writestr(archive_name, source.read_bytes())
-            records.append({"path": relative.replace("\\", "/"), "sha256": sha256(source)})
-        provenance = source_provenance()
+            contents = source_bytes(relative, provenance)
+            archive.writestr(archive_name, contents)
+            records.append({
+                "path": relative.replace("\\", "/"),
+                "sha256": hashlib.sha256(contents).hexdigest(),
+            })
         manifest = {
             "schema_version": 1,
             "purpose": "current V4.1 Foundation shell, Artifact and AI Chat slices; not a deployment artifact",
@@ -128,7 +147,7 @@ def build(output: Path) -> dict[str, object]:
     return {
         "output": str(output),
         "entries": len(records) + 1,
-        **source_provenance(),
+        **provenance,
         "content_manifest_sha256": content_manifest_sha256(records),
     }
 

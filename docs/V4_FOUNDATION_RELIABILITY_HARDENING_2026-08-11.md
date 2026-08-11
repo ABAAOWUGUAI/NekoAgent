@@ -103,6 +103,9 @@ manifest hash. A source ZIP without `.git`, including one placed below an
 unrelated parent Git repository, remains reviewable and cannot inherit the
 parent commit as its provenance. Its Git-only assertion is skipped rather than
 misreported as a functional failure; an uncommitted package cannot impersonate
-a commit.
+a commit. When the verified checkout is clean, each package entry is read with
+`git show <HEAD>:<path>` rather than from platform-normalized working-tree
+bytes. Therefore a Windows CRLF checkout and a `git archive` full-source ZIP
+carry identical tracked bytes and cannot be misreported as different source.
 Historical Artifact and AI Chat records retain their original conclusions and
 now carry an explicit historical-status header.

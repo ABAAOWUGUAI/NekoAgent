@@ -449,6 +449,53 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
 
 
 class V4PackageProvenanceTests(unittest.TestCase):
+    def test_clean_checkout_package_uses_exact_tracked_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_archive = root / "source.zip"
+            source = root / "NekoAgent-source"
+            subprocess.run(
+                ["git", "archive", "--format=zip", f"--output={source_archive}", "HEAD"],
+                cwd=ROOT,
+                check=True,
+            )
+            with zipfile.ZipFile(source_archive) as archive:
+                archive.extractall(source)
+            shutil.copy2(
+                ROOT / "tools" / "build_v4_1_reconstruction_patch.py",
+                source / "tools" / "build_v4_1_reconstruction_patch.py",
+            )
+            subprocess.run(["git", "init"], cwd=source, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(["git", "commit", "-m", "source"], cwd=source, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=source, check=True)
+            subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=source, check=True, capture_output=True, text=True)
+            builder_path = source / "tools" / "build_v4_1_reconstruction_patch.py"
+            spec = importlib.util.spec_from_file_location("v4_foundation_builder_tracked_bytes", builder_path)
+            assert spec and spec.loader
+            builder = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(builder)
+            provenance = builder.source_provenance()
+            self.assertTrue(provenance["git_checkout_available"])
+            self.assertTrue(provenance["working_tree_clean"])
+            output = root / "foundation.zip"
+            builder.build(output)
+            with zipfile.ZipFile(output) as archive:
+                for relative in builder.FOUNDATION_FILES:
+                    expected = subprocess.run(
+                        ["git", "show", f"HEAD:{relative}"],
+                        cwd=source,
+                        check=True,
+                        capture_output=True,
+                    ).stdout
+                    self.assertEqual(
+                        expected,
+                        archive.read(f"{builder.PACKAGE_PREFIX}/{relative}"),
+                        f"package entry diverged from tracked source: {relative}",
+                    )
+
     def test_current_builder_records_git_and_content_provenance_separately(self) -> None:
         import importlib.util
 
