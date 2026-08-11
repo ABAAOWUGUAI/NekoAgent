@@ -126,6 +126,14 @@ unmerged Artifact branch. It must not be merged, deployed or made default-on
 under this instruction. After Artifact merges, the AI Chat PR base can be
 changed to `main` without changing the committed implementation.
 
+The repository's public-source workflow triggers pull requests whose base is
+`main` only. Consequently, the stacked AI Chat Draft has no separate GitHub
+run while its base is the Artifact branch; this is neither a pass nor a
+failure. Its local public test execution is recorded above, while the parent
+Artifact PR has its own passed main-targeted Gate. Before this slice can leave
+Draft after Artifact merges, its base must be changed to `main` and that
+main-targeted public-source Gate must pass.
+
 ## Controlled follow-ups, intentionally not started
 
 - Live opt-in authorization/error-state verification.
