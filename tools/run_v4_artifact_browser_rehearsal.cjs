@@ -49,12 +49,13 @@ async function main() {
       requests: window.__requests.length,
       mountedRoots: document.querySelectorAll('#v4ArtifactDaily').length,
       focused: document.activeElement?.id || '',
+      legacyMode: document.body.hasAttribute('data-v4-artifact-legacy-mode'),
     }));
 
     // A: lifecycle on disable, including CSS and inert safety boundaries.
     await sidebar('artifact');
     await page.waitForFunction(() => document.querySelector('#v4ArtifactDaily')?.textContent.includes('Artifact A'));
-    assert(await page.locator('#v4ArtifactDaily').textContent().then((text) => text.includes('已就绪') && text.includes('已关联来源任务')), 'daily item omitted the real status or source-work linkage');
+    assert(await page.locator('#v4ArtifactDaily').textContent().then((text) => text.includes('已就绪') && text.includes('已关联工作目标')), 'daily item omitted the real status or source-work linkage');
     await page.locator('#v4ReturnLegacyBtn').click();
     await page.waitForFunction(() => document.activeElement?.id === 'viewTitle');
     const afterDisable = await daily();
@@ -69,7 +70,20 @@ async function main() {
     await page.waitForFunction(() => window.__requests.length === 3);
     assert((await selected()) === 'artifact', 'artifact owner selection lost after Work round-trip');
 
-    // C: Command Palette creates one transition.
+    // C: a real-ish legacy manager refresh must not be mistaken for navigation.
+    await page.locator('.v4-artifact-manage').click();
+    await page.waitForFunction(() => document.body.hasAttribute('data-v4-artifact-legacy-mode'));
+    await page.evaluate(() => document.querySelector('#view-artifacts').classList.toggle('legacy-background-refresh'));
+    await page.waitForTimeout(60);
+    const afterLegacyMutation = await daily();
+    assert(
+      afterLegacyMutation.hidden
+        && afterLegacyMutation.inert
+        && afterLegacyMutation.legacyMode,
+      `legacy manager mutation incorrectly reactivated daily: ${JSON.stringify(afterLegacyMutation)}`,
+    );
+
+    // D: Command Palette creates one transition.
     const beforeCommand = await page.evaluate(() => window.__calls.length);
     await page.keyboard.press('Control+k');
     assert(await page.evaluate(() => document.activeElement?.id === 'v4CommandQuery'), 'command palette did not move keyboard focus to its query');
@@ -83,7 +97,7 @@ async function main() {
     const afterCommand = await page.evaluate(() => ({calls: window.__calls.slice(), open: document.querySelector('#v4CommandPalette').open, focused: document.activeElement?.id}));
     assert(afterCommand.calls.length === beforeCommand + 1 && afterCommand.calls.at(-1).view === 'artifacts' && !afterCommand.open && afterCommand.focused === 'viewTitle', `duplicate command transition or focus leak: ${JSON.stringify(afterCommand)}`);
 
-    // D/E: legacy paths retain their owner classification.
+    // E/F: legacy paths retain their owner classification.
     await page.evaluate(() => window.switchView('proxy'));
     await page.waitForTimeout(30);
     assert((await selected()) === 'console', 'proxy did not map to Console');
@@ -91,7 +105,8 @@ async function main() {
     await page.waitForTimeout(30);
     assert((await selected()) === 'work', 'projects did not map to Work');
 
-    // F/G: read failure and empty results remain truthful and keep management reachable.
+    // G/H: read failure and empty results remain truthful and keep management reachable.
+    await sidebar('work');
     await page.evaluate(() => { window.__artifactMode = 'error'; });
     await sidebar('artifact');
     await page.waitForFunction(() => document.querySelector('.v4-artifact-daily-status')?.textContent.includes('读取摘要失败'));
@@ -106,7 +121,7 @@ async function main() {
     assert(afterEmpty.includes('没有可展示'), `empty state is not truthful: ${afterEmpty}`);
 
     process.stdout.write(JSON.stringify({
-      scenarios: ['A:return-legacy-hidden-inert-visible-heading-focus', 'B:owner-round-trip', 'C:keyboard-command-and-focus', 'D:proxy-owner', 'E:projects-owner', 'F:error-fallback', 'G:empty'],
+      scenarios: ['A:return-legacy-hidden-inert-visible-heading-focus', 'B:owner-round-trip', 'C:legacy-background-mutation-stays-management', 'D:keyboard-command-and-focus', 'E:proxy-owner', 'F:projects-owner', 'G:error-fallback', 'H:empty'],
       requestCount: await page.evaluate(() => window.__requests.length),
       selected: await selected(),
       chromePath,

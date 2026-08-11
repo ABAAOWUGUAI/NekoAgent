@@ -1,5 +1,12 @@
 # NekoAgent V4.1 AI Chat First Slice — Review Record
 
+> **HISTORICAL REVIEW RECORD**
+>
+> This is the pre-merge review evidence. PR #35 was later merged to `main` at
+> `ca12f1be5e1f2a816a0e35218037cfbd79d06ce1`; the decision text below is kept
+> unchanged. The current state source is the workspace `CURRENT_STATE.md` plus
+> the current `main`.
+
 Date: 2026-08-11
 Baseline: Artifact Draft branch commit `12d113004e52d59bfd92b6dc1099ff46cc2b0ef0`
 Status: local opt-in implementation; **not deployed and not default-on**

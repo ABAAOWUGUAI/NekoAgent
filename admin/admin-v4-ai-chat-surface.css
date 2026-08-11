@@ -56,6 +56,11 @@ body[data-v4-experience="active"][data-v4-active-view="chat"][data-v4-chat-legac
 .v4-ai-chat-retry { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid rgba(154, 104, 22, .24); border-radius: 12px; background: rgba(255, 248, 230, .72); color: #70501c; }
 .v4-ai-chat-retry p { margin: 0; line-height: 1.5; }
 .v4-ai-chat-retry-button { flex: 0 0 auto; padding: 8px 10px; }
+.v4-ai-chat-recovery { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid rgba(112, 88, 163, .2); border-radius: 12px; background: rgba(248, 246, 255, .8); color: #51476d; }
+.v4-ai-chat-recovery[data-kind="unknown"] { border-color: rgba(154, 104, 22, .24); background: rgba(255, 248, 230, .72); color: #70501c; }
+.v4-ai-chat-recovery[data-kind="conflict"] { border-color: rgba(166, 59, 79, .28); background: rgba(255, 243, 245, .8); color: #7e2940; }
+.v4-ai-chat-recovery p { margin: 0; line-height: 1.5; }
+.v4-ai-chat-recovery-button { flex: 0 0 auto; padding: 8px 10px; }
 .v4-ai-chat-composer { display: grid; gap: 8px; padding: 14px; border: 1px solid rgba(113, 94, 180, .22); border-radius: 18px; background: rgba(255, 255, 255, .82); box-shadow: 0 12px 30px rgba(48, 39, 82, .06); }
 .v4-ai-chat-composer-label { color: #4c4560; font-size: .88rem; font-weight: 700; }
 .v4-ai-chat-composer textarea { width: 100%; min-height: 96px; resize: vertical; border: 0; outline: 0; color: #302a42; background: transparent; font: inherit; line-height: 1.65; box-sizing: border-box; }

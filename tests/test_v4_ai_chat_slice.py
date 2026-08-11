@@ -33,6 +33,8 @@ def test_v4_ai_chat_uses_the_existing_dispatch_contract_without_model_controls()
     assert "'X-QQ-Actor-ID': 'web-console'" in source
     assert "window.loadTask" in source
     assert "approval_required" in source
+    assert "web_dispatch_request_id_payload_conflict" in source
+    assert "web_dispatch_outcome_unknown" in source
     assert "model selector" not in source.lower()
     assert "attachment" not in source.lower()
 
@@ -50,6 +52,10 @@ def test_v4_ai_chat_preserves_lifecycle_and_duplicate_dispatch_controls() -> Non
     assert 'body[data-v4-experience="active"][data-v4-active-view="chat"]' in css
     assert ".v4-ai-chat-surface { display: none; }" in css
     assert "data-v4-chat-legacy-mode" in css
+    assert "function dispatchFailure(error)" in source
+    assert "if (active && !root.hidden && !wasLegacyMode) return;" in source
+    assert "重新查询本次请求" in source
+    assert "textarea:focus-visible" in _source("admin/admin-v4-shell.css")
 
 
 if __name__ == "__main__":

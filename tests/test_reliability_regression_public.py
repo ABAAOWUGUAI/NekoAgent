@@ -455,3 +455,48 @@ def test_executor_v39_schema_can_be_validated_before_v40_column_exists() -> None
     apply_executor_verification_reason_code_v2(conn)
     assert require_executor_verification_schema(conn, version=40)["version"] == 40
     conn.close()
+
+
+def test_web_dispatch_receipt_scope_is_server_identity_bound_and_payload_safe() -> None:
+    """V4 retry safety may not rely on a client-supplied QQ actor header."""
+    import sqlite3
+    from bridge_inbound_idempotency import (
+        InboundConflictError,
+        execute_once,
+        web_dispatch_receipt_context,
+    )
+    from bridge_reliability_schema import apply_task_message_reliability_v2
+
+    first_scope = web_dispatch_receipt_context("admin_session", "session-a", "web-v4-public-1")
+    same_scope = web_dispatch_receipt_context("admin_session", "session-a", "web-v4-public-1")
+    other_scope = web_dispatch_receipt_context("admin_session", "session-b", "web-v4-public-1")
+    assert first_scope == same_scope
+    assert first_scope["platform_message_id"] != other_scope["platform_message_id"]
+    assert "session-a" not in first_scope["platform_message_id"]
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE assistant_feature_flags(name TEXT PRIMARY KEY, enabled INTEGER, updated_at TEXT)")
+    apply_task_message_reliability_v2(conn)
+    conn.commit()
+
+    def connect():
+        return conn
+
+    payload = {"source": "web-console", "user_id": "web-console", "message": "same", "force": "auto"}
+    calls = []
+    execute_once(
+        connect, first_scope["platform_message_id"], first_scope["actor_id"], first_scope["conversation_ref"],
+        payload, lambda: calls.append("once") or {"ok": True}, require_receipt=True,
+    )
+    try:
+        execute_once(
+            connect, first_scope["platform_message_id"], first_scope["actor_id"], first_scope["conversation_ref"],
+            {**payload, "message": "different"}, lambda: calls.append("wrong"), require_receipt=True,
+        )
+    except InboundConflictError:
+        pass
+    else:
+        raise AssertionError("same Web request ID with a different payload must conflict")
+    assert calls == ["once"]
+    conn.close()

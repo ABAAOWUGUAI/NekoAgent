@@ -7,7 +7,7 @@ const V4_IMPLEMENTATION_STATES = Object.freeze({
 const V4_OWNER_SURFACES = Object.freeze([
   { id: 'overview', label: '概览', section: '小菲', legacyViews: ['overview'], implementationState: 'partial', implementationNote: '新版概览层；现有读模型保持原路径' },
   { id: 'qq', label: 'QQ', section: '对话', legacyViews: ['qq'], implementationState: 'legacy' },
-  { id: 'chat', label: 'AI Chat', section: '对话', legacyViews: [], fallbackLegacyView: 'overview', fallbackLabel: '日常空间', implementationState: 'legacy' },
+  { id: 'chat', label: 'AI Chat', section: '对话', legacyViews: [], fallbackLegacyView: 'overview', fallbackLabel: '日常空间', implementationState: 'partial', implementationNote: '新版对话前台；连续上下文与受保护操作仍复用既有路径' },
   { id: 'work', label: '工作', section: '工作', legacyViews: ['tasks', 'projects', 'automations'], implementationState: 'legacy' },
   { id: 'artifact', label: '成品', section: '工作', legacyViews: ['artifacts'], implementationState: 'partial', implementationNote: '新版日用层；完整成品库仍使用旧控制台' },
   { id: 'memory', label: '记忆', section: '小菲', legacyViews: ['brain'], implementationState: 'legacy' },
@@ -35,9 +35,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') (() => {
   const $ = (selector, root = document) => root.querySelector(selector);
   let mounted = false;
   let selectedRouteId = 'overview';
-  let lastObservedLegacyView = '';
-  let internalV4Transition = false;
-  let pendingExplicitRouteId = '';
+  let explicitTransitionRouteId = '';
   let commandNavigationInProgress = false;
 
   function readSessionFlag() { try { return window.sessionStorage.getItem(V4_SESSION_KEY) === V4_VALUE; } catch (_) { return false; } }
@@ -57,13 +55,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') (() => {
     showFallback.timer = window.setTimeout(() => { note.hidden = true; }, 4800);
   }
 
-  function renderSelection({ preserveExplicit = false } = {}) {
-    const activeLegacyView = currentLegacyView();
-    const preservePendingRoute = pendingExplicitRouteId === selectedRouteId;
+  function renderSelection({ explicitRouteId = '', legacyView = currentLegacyView() } = {}) {
+    const activeLegacyView = legacyView;
     const observedOwner = ownerForLegacyView(activeLegacyView);
-    if (!preserveExplicit && !preservePendingRoute && activeLegacyView !== lastObservedLegacyView) selectedRouteId = observedOwner?.id || '';
-    lastObservedLegacyView = activeLegacyView;
-    const route = routeById.get(selectedRouteId) || observedOwner;
+    const route = routeById.get(explicitRouteId) || observedOwner;
+    selectedRouteId = route?.id || '';
     const routeId = route?.id || 'legacy-unknown';
     document.body.dataset.v4ActiveView = routeId;
     document.querySelectorAll('[data-v4-route]').forEach((button) => {
@@ -78,17 +74,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') (() => {
 
   function switchTo(route, { announceFallback = true, onBeforeNavigate = null } = {}) {
     if (!route || typeof window.switchView !== 'function') return;
-    selectedRouteId = route.id;
-    pendingExplicitRouteId = route.id;
     const legacyView = legacyViewFor(route);
     onBeforeNavigate?.();
-    internalV4Transition = true;
+    explicitTransitionRouteId = route.id;
     try { window.switchView(legacyView, { focusHeading: true }); }
-    finally { internalV4Transition = false; }
-    window.requestAnimationFrame(() => {
-      renderSelection({ preserveExplicit: true });
-      pendingExplicitRouteId = '';
-    });
+    finally { explicitTransitionRouteId = ''; }
     if (route.implementationState === 'legacy' && announceFallback) showFallback(`${route.label} 当前通过既有“${route.fallbackLabel || route.label}”路径打开；旧页面仍保留全部操作。`);
   }
 
@@ -195,7 +185,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') (() => {
     window.requestAnimationFrame(() => $('#viewTitle')?.focus({ preventScroll: true }));
   }
   function disable({ restoreFocus = false } = {}) {
-    writeSessionFlag(false); updateUrl(false); pendingExplicitRouteId = '';
+    writeSessionFlag(false); updateUrl(false); explicitTransitionRouteId = '';
     delete document.body.dataset.v4Experience; delete document.body.dataset.v4ActiveView;
     document.dispatchEvent(new CustomEvent('nekoagent:v4-experience-disable'));
     const dialog = $('#v4CommandPalette'); if (dialog?.open) dialog.close();
@@ -207,13 +197,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') (() => {
     const existing = window.switchView;
     if (typeof existing !== 'function' || existing.__v4OwnerTracking) return;
     const tracked = function trackedSwitchView(view, options) {
-      // Capture transition ownership synchronously. The rAF callback runs after
-      // switchTo clears the flag; reading the mutable flag there would otherwise
-      // overwrite an explicit V4 route (notably the AI Chat compatibility lens).
-      const preserveExplicit = internalV4Transition;
-      if (!preserveExplicit) selectedRouteId = ownerForLegacyView(String(view))?.id || '';
+      // A view transition, not an arbitrary DOM mutation, is the only source
+      // of V4 navigation truth.  The explicit Owner survives a compatibility
+      // fallback such as AI Chat -> legacy Overview.
+      const explicitRouteId = explicitTransitionRouteId;
       const result = existing.call(this, view, options);
-      window.requestAnimationFrame(() => renderSelection({ preserveExplicit }));
+      renderSelection({ explicitRouteId, legacyView: currentLegacyView() });
       return result;
     };
     tracked.__v4OwnerTracking = true;
@@ -230,7 +219,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') (() => {
     fallback.id = 'v4FallbackNote'; fallback.className = 'v4-fallback-note'; fallback.setAttribute('role', 'status'); fallback.setAttribute('aria-live', 'polite'); fallback.hidden = true;
     document.body.append(fallback);
     addToolbarControls();
-    new MutationObserver(() => renderSelection()).observe($('#contentViewport'), { subtree: true, attributes: true, attributeFilter: ['class'] });
     document.addEventListener('keydown', (event) => {
       const dialog = $('#v4CommandPalette');
       if (event.key === 'Escape' && dialog?.open) { event.preventDefault(); dialog.close(); return; }

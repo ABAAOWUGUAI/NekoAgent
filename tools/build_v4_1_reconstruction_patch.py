@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a portable, reviewable archive for the V4.1 clean reconstruction patch."""
+"""Build a portable, reviewable archive for the current V4.1 Foundation slices."""
 
 from __future__ import annotations
 
@@ -12,16 +12,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCH_FILES = (
+FOUNDATION_FILES = (
     "admin/index.html",
     "admin_console.py",
     "admin/admin-v4-shell.css",
     "admin/v4-shell.js",
     "admin/admin-v4-artifact-surface.css",
     "admin/v4-artifact-surface.js",
+    "admin/admin-v4-ai-chat-surface.css",
+    "admin/v4-ai-chat-surface.js",
     "tests/test_v4_shell_phase1.py",
+    "tests/test_v4_ai_chat_slice.py",
+    "tests/test_v4_foundation_hardening.py",
     "tools/run_v4_artifact_browser_rehearsal.cjs",
+    "tools/run_v4_ai_chat_browser_rehearsal.cjs",
     "docs/V4_1_RECONSTRUCTION_IMPLEMENTATION_2026-08-11.md",
+    "docs/V4_1_AI_CHAT_FIRST_SLICE_CONTRACT_2026-08-11.md",
+    "docs/V4_1_AI_CHAT_FIRST_SLICE_REVIEW_2026-08-11.md",
+    "docs/V4_FOUNDATION_RELIABILITY_HARDENING_2026-08-11.md",
     "tools/build_v4_1_reconstruction_patch.py",
 )
 
@@ -30,7 +38,7 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def source_revision() -> str:
+def source_provenance() -> dict[str, object]:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
@@ -39,7 +47,23 @@ def source_revision() -> str:
         check=True,
         encoding="utf-8",
     )
-    return result.stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+    )
+    return {
+        "git_base_revision": result.stdout.strip(),
+        "working_tree_clean": not bool(status.stdout.strip()),
+    }
+
+
+def content_manifest_sha256(records: list[dict[str, str]]) -> str:
+    canonical = json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build(output: Path) -> dict[str, object]:
@@ -47,9 +71,9 @@ def build(output: Path) -> dict[str, object]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite existing archive: {output}")
     records: list[dict[str, str]] = []
-    prefix = "NekoAgent-V4.1-Reconstruction-Patch-2026-08-11-r5"
+    prefix = "NekoAgent-V4.1-Foundation-Slices-2026-08-11-r1"
     with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
-        for relative in PATCH_FILES:
+        for relative in FOUNDATION_FILES:
             source = ROOT / relative
             if not source.is_file():
                 raise FileNotFoundError(f"required patch file missing: {relative}")
@@ -58,10 +82,12 @@ def build(output: Path) -> dict[str, object]:
                 raise ValueError(f"non-portable ZIP entry: {archive_name}")
             archive.writestr(archive_name, source.read_bytes())
             records.append({"path": relative.replace("\\", "/"), "sha256": sha256(source)})
+        provenance = source_provenance()
         manifest = {
             "schema_version": 1,
-            "purpose": "clean local V4.1 Phase 1 correction and Phase 2 Artifact slice; not a deployment artifact",
-            "base_revision": source_revision(),
+            "purpose": "current V4.1 Foundation shell, Artifact and AI Chat slices; not a deployment artifact",
+            **provenance,
+            "content_manifest_sha256": content_manifest_sha256(records),
             "entries_use_forward_slashes": True,
             "files": records,
         }
@@ -70,7 +96,12 @@ def build(output: Path) -> dict[str, object]:
         names = archive.namelist()
         if any("\\" in name for name in names):
             raise AssertionError("archive contains Windows-only path separators")
-    return {"output": str(output), "entries": len(records) + 1, "base_revision": source_revision()}
+    return {
+        "output": str(output),
+        "entries": len(records) + 1,
+        **source_provenance(),
+        "content_manifest_sha256": content_manifest_sha256(records),
+    }
 
 
 def main() -> None:
@@ -78,7 +109,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT.parents[1] / "release-artifacts" / "NekoAgent-V4.1-Reconstruction-Patch-2026-08-11-r5.zip",
+        default=ROOT.parents[1] / "release-artifacts" / "NekoAgent-V4.1-Foundation-Slices-2026-08-11-r1.zip",
     )
     args = parser.parse_args()
     print(json.dumps(build(args.output), ensure_ascii=False))

@@ -83,7 +83,7 @@ body[data-v4-experience="active"][data-v4-active-view="overview"] .v4-overview-l
 .v4-command-list button:hover, .v4-command-list button:focus-visible { background: var(--v4-accent-soft); }
 .v4-command-list small { color: var(--v4-muted); font-size: 11px; }
 
-body[data-v4-experience="active"] button:focus-visible, body[data-v4-experience="active"] input:focus-visible, body[data-v4-experience="active"] [tabindex]:focus-visible { outline: 3px solid #5638c9; outline-offset: 2px; box-shadow: 0 0 0 2px #fff; }
+body[data-v4-experience="active"] button:focus-visible, body[data-v4-experience="active"] input:focus-visible, body[data-v4-experience="active"] textarea:focus-visible, body[data-v4-experience="active"] select:focus-visible, body[data-v4-experience="active"] [tabindex]:focus-visible { outline: 3px solid #5638c9; outline-offset: 2px; box-shadow: 0 0 0 2px #fff; }
 
 @media (max-width: 820px) {
   body[data-v4-experience="active"] .app-shell { grid-template-columns: minmax(0, 1fr); padding: 0; }
@@ -97,4 +97,4 @@ body[data-v4-experience="active"] button:focus-visible, body[data-v4-experience=
 }
 
 @media (prefers-reduced-motion: reduce) { .v4-nav-item, .v4-shell-toggle, .v4-command-trigger { transition: none; } .v4-nav-item:hover { transform: none; } }
-@media (forced-colors: active) { .v4-shell-sidebar, .v4-command-dialog, .v4-overview-lens, .v4-presence { border: 1px solid CanvasText; } .v4-nav-item[aria-current="page"] { outline: 2px solid Highlight; outline-offset: -2px; } .v4-presence-mark { background: Highlight; } }
+@media (forced-colors: active) { .v4-shell-sidebar, .v4-command-dialog, .v4-overview-lens, .v4-presence { border: 1px solid CanvasText; } .v4-nav-item[aria-current="page"] { outline: 2px solid Highlight; outline-offset: -2px; } .v4-presence-mark { background: Highlight; } body[data-v4-experience="active"] button:focus-visible, body[data-v4-experience="active"] input:focus-visible, body[data-v4-experience="active"] textarea:focus-visible, body[data-v4-experience="active"] select:focus-visible, body[data-v4-experience="active"] [tabindex]:focus-visible { outline-color: Highlight; box-shadow: none; } }

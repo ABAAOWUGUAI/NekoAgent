@@ -35,7 +35,7 @@
   }
 
   function sourceWorkLabel(item) {
-    return item?.source_goal_id ? '已关联来源任务' : '未关联来源任务';
+    return item?.source_goal_id ? '已关联工作目标' : '未关联工作目标';
   }
 
   function makeNode(tagName, className, text) {
@@ -127,7 +127,9 @@
 
   function activate() {
     if (!root) return;
-    const shouldLoad = !active || root.hidden || document.body.hasAttribute('data-v4-artifact-legacy-mode');
+    const wasLegacyMode = document.body.hasAttribute('data-v4-artifact-legacy-mode');
+    if (active && !root.hidden && !wasLegacyMode) return;
+    const shouldLoad = !active || root.hidden || wasLegacyMode;
     document.body.removeAttribute('data-v4-artifact-legacy-mode');
     root.hidden = false;
     root.inert = false;
@@ -137,6 +139,7 @@
 
   function deactivate() {
     if (!root) return;
+    if (!active && root.hidden && root.inert && !document.body.hasAttribute('data-v4-artifact-legacy-mode')) return;
     requestVersion += 1;
     active = false;
     root.hidden = true;
