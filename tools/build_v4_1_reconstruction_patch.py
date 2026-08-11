@@ -48,6 +48,20 @@ def sha256(path: Path) -> str:
 
 def source_provenance() -> dict[str, object]:
     try:
+        root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+            encoding="utf-8",
+        )
+        if Path(root.stdout.strip()).resolve() != ROOT.resolve():
+            return {
+                "git_checkout_available": False,
+                "git_base_revision": None,
+                "working_tree_clean": None,
+            }
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=ROOT,

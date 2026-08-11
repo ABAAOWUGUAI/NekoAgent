@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import http.client
+import importlib
+import importlib.util
 import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import zipfile
@@ -245,8 +249,18 @@ class WebDispatchReceiptTests(unittest.TestCase):
 class WebDispatchHttpIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
-        self.assistant_path = Path(self.directory.name) / "assistant.sqlite3"
-        self.task_path = Path(self.directory.name) / "tasks.sqlite3"
+        self.runtime_root = Path(self.directory.name) / "runtime"
+        self.runtime_root.mkdir()
+        self.workspace_root = self.runtime_root / "workspace"
+        self.workspace_root.mkdir()
+        self.secret_root = self.runtime_root / "secrets"
+        self.secret_root.mkdir()
+        self.token_path = self.secret_root / "admin-token"
+        self.channel_token_path = self.secret_root / "qq-channel-token"
+        self.token_path.write_text("test-admin-token\n", encoding="utf-8")
+        self.channel_token_path.write_text("test-channel-token\n", encoding="utf-8")
+        self.assistant_path = self.runtime_root / "assistant.sqlite3"
+        self.task_path = self.runtime_root / "tasks.sqlite3"
         self.assistant_connect = _connect(self.assistant_path)
         self.task_connect = _connect(self.task_path)
         from bridge_reliability_schema import apply_task_message_reliability_v2
@@ -259,9 +273,36 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
         with self.task_connect() as conn:
             conn.execute("CREATE TABLE tasks(id TEXT PRIMARY KEY, message TEXT NOT NULL)")
 
-        import codex_qq_bridge as bridge
-
-        self.bridge = bridge
+        self.original_environment = dict(os.environ)
+        os.environ.clear()
+        os.environ.update({
+            "PATH": self.original_environment.get("PATH", ""),
+            "SYSTEMROOT": self.original_environment.get("SYSTEMROOT", ""),
+            "WINDIR": self.original_environment.get("WINDIR", ""),
+            "HOME": str(self.runtime_root),
+            "TMPDIR": str(self.runtime_root),
+            "TEMP": str(self.runtime_root),
+            "TMP": str(self.runtime_root),
+            "LISTEN_HOST": "127.0.0.1",
+            "LISTEN_PORT": "0",
+            "TOKEN_PATH": str(self.token_path),
+            "CHANNEL_TOKEN_PATH": str(self.channel_token_path),
+            "WORKSPACE_BASE": str(self.workspace_root),
+            "DEFAULT_CWD": str(self.workspace_root),
+            "TASK_HISTORY_PATH": str(self.runtime_root / "tasks.jsonl"),
+            "TASK_DB_PATH": str(self.task_path),
+            "ASSISTANT_DB_PATH": str(self.assistant_path),
+            "TAFFY_BACKGROUND_ASSET_PATH": str(self.runtime_root / "taffy-background.jpg"),
+            "TRENDING_CACHE_PATH": str(self.runtime_root / "github-trending-cache.json"),
+            "AGENT_RUNTIME_HOME": str(self.runtime_root),
+            "CODEGRAPH_AUTO_ENABLED": "0",
+            "OPS_BROKER_REQUIRED": "0",
+            "OPS_BROKER_SHADOW": "0",
+            "ADMIN_COOKIE_SECURE": "0",
+        })
+        self.bridge = importlib.import_module("codex_qq_bridge")
+        self.bridge = importlib.reload(self.bridge)
+        bridge = self.bridge
         self.saved = {
             name: getattr(bridge, name)
             for name in (
@@ -301,6 +342,9 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
         self.bridge.ADMIN_SESSIONS.pop(self.session_id, None)
         for name, value in self.saved.items():
             setattr(self.bridge, name, value)
+        os.environ.clear()
+        os.environ.update(self.original_environment)
+        importlib.reload(self.bridge)
         self.directory.cleanup()
 
     def _post(
@@ -332,6 +376,15 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
         payload = json.loads(response.read().decode("utf-8"))
         connection.close()
         return response.status, payload
+
+    def test_http_fixture_imports_bridge_with_only_test_local_runtime_paths(self) -> None:
+        expected = self.runtime_root.resolve()
+        for attribute in ("ASSISTANT_DB_PATH", "TASK_DB_PATH", "WORKSPACE_BASE", "DEFAULT_CWD", "TOKEN_PATH"):
+            actual = Path(getattr(self.bridge, attribute)).resolve()
+            self.assertTrue(
+                actual.is_relative_to(expected),
+                f"{attribute} escaped the hermetic runtime fixture: {actual}",
+            )
 
     def test_http_dispatch_replays_one_task_and_rejects_payload_conflict(self) -> None:
         first_status, first = self._post("web-v4-http-1", "创建一项测试工作")
@@ -417,6 +470,14 @@ class V4PackageProvenanceTests(unittest.TestCase):
         if not result["git_checkout_available"]:
             self.skipTest("Git provenance is verified only inside a Git checkout; archive content remains verifiable.")
         self.assertTrue(result["git_base_revision"])
+        expected_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(expected_head, result["git_base_revision"])
         self.assertEqual(result["git_base_revision"], manifest["git_base_revision"])
         self.assertEqual(result["working_tree_clean"], manifest["working_tree_clean"])
         self.assertNotIn("base_revision", manifest)
@@ -441,6 +502,31 @@ class V4PackageProvenanceTests(unittest.TestCase):
             builder.subprocess.run = original_run
         self.assertFalse(provenance["git_checkout_available"])
         self.assertIsNone(provenance["git_base_revision"])
+
+    def test_builder_does_not_inherit_provenance_from_an_unrelated_git_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "unrelated-parent"
+            source = parent / "NekoAgent-source"
+            source_tools = source / "tools"
+            source_tools.mkdir(parents=True)
+            subprocess.run(["git", "init"], cwd=parent, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=parent, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=parent, check=True)
+            (parent / "parent-only.txt").write_text("parent\n", encoding="utf-8")
+            subprocess.run(["git", "add", "parent-only.txt"], cwd=parent, check=True)
+            subprocess.run(["git", "commit", "-m", "parent"], cwd=parent, check=True, capture_output=True, text=True)
+            shutil.copy2(ROOT / "tools" / "build_v4_1_reconstruction_patch.py", source_tools)
+            spec = importlib.util.spec_from_file_location(
+                "v4_foundation_builder_under_unrelated_parent",
+                source_tools / "build_v4_1_reconstruction_patch.py",
+            )
+            assert spec and spec.loader
+            builder = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(builder)
+            provenance = builder.source_provenance()
+        self.assertFalse(provenance["git_checkout_available"])
+        self.assertIsNone(provenance["git_base_revision"])
+        self.assertIsNone(provenance["working_tree_clean"])
 
 
 if __name__ == "__main__":

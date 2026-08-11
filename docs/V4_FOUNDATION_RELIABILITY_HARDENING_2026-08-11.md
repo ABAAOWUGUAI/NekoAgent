@@ -2,7 +2,7 @@
 
 Date: 2026-08-11
 
-Status: PR #36 correction candidate; **not deployed, not default-on, and no legacy path retired**.
+Status: PR #36 correction candidate with verification hardening; **not deployed, not default-on, and no legacy path retired**.
 
 ## Scope and baseline
 
@@ -78,13 +78,30 @@ migration.
 - `tools/run_public_tests.py` remains dependency-free and runs the public-safe
   receipt scope regression.
 
+## Verification isolation
+
+`WebDispatchHttpIntegrationTests` imports the real `BridgeHandler` only after
+replacing the process environment with an explicit test-local runtime. Its
+temporary directory owns the assistant DB, task DB, workspace, dummy
+admin/channel secret files, cache/history paths, session and an ephemeral
+localhost port. It does not inherit `/opt/agent-stack`, production secrets,
+runtime DB paths or environment configuration. The fixture stubs outbound
+effects at the dispatch boundary, but continues to exercise actual HTTP
+authentication, request parsing, principal selection and SQLite receipt code.
+
+The full-source verification must additionally run after extraction into a
+directory without Git metadata and without a production runtime path. Its
+receipt tests are functional checks, not skips for missing host infrastructure.
+
 ## Package provenance
 
 `tools/build_v4_1_reconstruction_patch.py` now names and packages the current
 V4 Foundation files, including the Web receipt and Legacy Workbench correction.
-Its manifest records Git provenance when the source is a Git checkout and
-always records a deterministic content manifest hash. A source ZIP without
-`.git` remains reviewable and its Git-only assertion is skipped rather than
+Its manifest records Git provenance only when `git rev-parse --show-toplevel`
+resolves to the package source root, and always records a deterministic content
+manifest hash. A source ZIP without `.git`, including one placed below an
+unrelated parent Git repository, remains reviewable and cannot inherit the
+parent commit as its provenance. Its Git-only assertion is skipped rather than
 misreported as a functional failure; an uncommitted package cannot impersonate
 a commit.
 Historical Artifact and AI Chat records retain their original conclusions and
