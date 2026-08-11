@@ -368,7 +368,6 @@ class V4PackageProvenanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "foundation.zip"
             result = builder.build(output)
-            self.assertTrue(result["git_base_revision"])
             self.assertTrue(result["content_manifest_sha256"])
             with zipfile.ZipFile(output) as archive:
                 manifest = json.loads(archive.read(
@@ -378,6 +377,7 @@ class V4PackageProvenanceTests(unittest.TestCase):
         self.assertEqual(result["content_manifest_sha256"], manifest["content_manifest_sha256"])
         if not result["git_checkout_available"]:
             self.skipTest("Git provenance is verified only inside a Git checkout; archive content remains verifiable.")
+        self.assertTrue(result["git_base_revision"])
         self.assertEqual(result["git_base_revision"], manifest["git_base_revision"])
         self.assertEqual(result["working_tree_clean"], manifest["working_tree_clean"])
         self.assertNotIn("base_revision", manifest)
