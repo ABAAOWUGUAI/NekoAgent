@@ -80,6 +80,7 @@ python tools/install_starter_pack.py --pack-dir starter-packs/xiaofei --base-url
 - [中文集成说明](docs/zh-CN/INTEGRATIONS.md)
 - [中文部署指南](docs/zh-CN/DEPLOYMENT.md)
 - [中文运行与恢复指南](docs/zh-CN/OPERATIONS.md)
+- [表情包保存、审核、选择与投递设计](docs/zh-CN/MEME_LIFECYCLE.md)
 - [中文仓库保护指南](docs/zh-CN/REPOSITORY_PROTECTION.md)
 - [Owner QQ 私聊语音消息输入](docs/zh-CN/VOICE_INPUT.md)
 - [Owner QQ 私聊语音消息输出](docs/zh-CN/VOICE_OUTPUT.md)
