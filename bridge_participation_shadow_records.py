@@ -61,7 +61,7 @@ def transition_group_participation(
 ) -> dict | None:
     """Keep deferred natural-group candidates in their original record."""
 
-    return transition_participation_decision(
+    result = transition_participation_decision(
         conn,
         decision_id=decision_id,
         stage=stage,
@@ -72,6 +72,22 @@ def transition_group_participation(
         confidence=confidence,
         superseded_by=superseded_by,
     )
+    # The selected ambient candidate has already completed its normal
+    # lifecycle update.  A default-off observer may then record only the
+    # narrow non-content handoff failure; it cannot retry, send, or rewrite
+    # the decision if its own schema is absent or disabled.
+    if result is not None and str(stage or "") == "delivery_failed":
+        try:
+            from bridge_behavior_observation import observe_ambient_contribution_failure
+
+            observe_ambient_contribution_failure(
+                conn,
+                decision_id=decision_id,
+                stage=stage,
+            )
+        except (sqlite3.Error, ValueError):
+            pass
+    return result
 
 
 __all__ = ["record_group_shadow_decision", "transition_group_participation"]

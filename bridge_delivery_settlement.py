@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 from bridge_automation import mark_proactive_delivery, settle_automation_dispatch
-from bridge_delivery_operations import delivery_task_id
+from bridge_delivery_operations import delivery_task_id, is_terminal_task_delivery
 from bridge_meme_social import mark_meme_delivery
 from bridge_qq_participation_shadow import confirm_group_delivery
+from bridge_qq_quality_receipt import finalize_quality_receipt_delivery
 from bridge_social_opportunity import record_delivery_feedback
 
 
@@ -27,14 +28,21 @@ def settle_ack(
     record_conversation,
 ) -> dict | None:
     delivery = outbox.ack(delivery_id, lease_token, platform_message_id=platform_message_id)
-    task_id = delivery_task_id(delivery)
-    if task_id:
-        set_task_delivery(task_id, "sent")
+    experience_assimilated = False
+    if is_terminal_task_delivery(delivery):
+        set_task_delivery(delivery_task_id(delivery), "sent")
     payload = _payload(delivery)
     if payload.get("kind") == "proactive_chat":
         with assistant_db_connect() as conn:
             event = mark_proactive_delivery(conn, delivery_id)
-        if event and event.get("message"):
+            is_group = bool(
+                str(payload.get("scope") or "") == "group"
+                or (event and str(event.get("policy_kind") or "") == "group_social")
+            )
+            if is_group:
+                projection = confirm_group_delivery(conn, delivery)
+                experience_assimilated = projection is not None
+        if event and event.get("message") and not is_group:
             record_conversation(
                 str(event.get("user_id") or "default"),
                 "assistant",
@@ -43,16 +51,70 @@ def settle_ack(
     elif payload.get("kind") == "automation_reminder":
         with assistant_db_connect() as conn:
             settle_automation_dispatch(conn, delivery_id=delivery_id, status="completed")
-    elif payload.get("kind") == "assistant_reply" and payload.get("group_id"):
+    elif payload.get("kind") in {"assistant_reply", "assistant_voice_reply"} and payload.get("group_id"):
         with assistant_db_connect() as conn:
-            confirm_group_delivery(conn, delivery)
+            projection = confirm_group_delivery(conn, delivery)
+            if projection is not None:
+                receipt_id = str(payload.get("quality_receipt_id") or "").strip()
+                if receipt_id:
+                    finalize_quality_receipt_delivery(conn, receipt_id=receipt_id, delivery=delivery)
+                record_delivery_feedback(conn, delivery, "replied")
+                experience_assimilated = True
     selection_id = str(payload.get("selection_id") or "").strip()
     if selection_id:
         with assistant_db_connect() as conn:
             mark_meme_delivery(conn, selection_id, status="sent")
     from bridge_continuity_kernel import settle_delivery_link
 
-    settle_delivery_link(assistant_db_connect, delivery_id, "confirmed")
+    settle_delivery_link(
+        assistant_db_connect,
+        delivery_id,
+        "confirmed",
+        experience_assimilated=experience_assimilated,
+    )
+    return delivery
+
+
+def reconcile_confirmed_group_delivery(
+    outbox,
+    delivery_id: str,
+    *,
+    assistant_db_connect,
+) -> dict | None:
+    """Resume only the assistant-DB projection of an already confirmed ACK.
+
+    This path never claims, ACKs, or sends a QQ delivery.  The Outbox fact is
+    checked before entering the same idempotent projection/receipt operations
+    used by normal ACK settlement.
+    """
+
+    delivery = outbox.get_delivery(delivery_id)
+    if not delivery or not str(delivery.get("acked_at") or "").strip():
+        return None
+    payload = _payload(delivery)
+    if payload.get("kind") not in {"assistant_reply", "assistant_voice_reply", "proactive_chat"}:
+        return None
+    if not str(payload.get("group_id") or "").strip():
+        return None
+    with assistant_db_connect() as conn:
+        if payload.get("kind") == "proactive_chat":
+            mark_proactive_delivery(conn, delivery_id)
+        projection = confirm_group_delivery(conn, delivery)
+        if projection is None:
+            return None
+        receipt_id = str(payload.get("quality_receipt_id") or "").strip()
+        if receipt_id and payload.get("kind") != "proactive_chat":
+            finalize_quality_receipt_delivery(conn, receipt_id=receipt_id, delivery=delivery)
+        if payload.get("kind") != "proactive_chat":
+            record_delivery_feedback(conn, delivery, "replied")
+    from bridge_continuity_kernel import settle_delivery_link
+
+    settle_delivery_link(
+        assistant_db_connect,
+        delivery_id,
+        "confirmed",
+        experience_assimilated=True,
+    )
     return delivery
 
 
@@ -75,9 +137,12 @@ def settle_retry(
         delay_seconds=delay_seconds,
         known_not_sent=known_not_sent,
     )
-    task_id = delivery_task_id(delivery)
-    if task_id:
-        set_task_delivery(task_id, "failed" if delivery and delivery.get("dead_letter") else pending_status, error)
+    if is_terminal_task_delivery(delivery):
+        set_task_delivery(
+            delivery_task_id(delivery),
+            "failed" if delivery and delivery.get("dead_letter") else pending_status,
+            error,
+        )
     payload = _payload(delivery)
     if payload.get("kind") == "proactive_chat" and delivery and delivery.get("dead_letter"):
         with assistant_db_connect() as conn:
@@ -90,7 +155,7 @@ def settle_retry(
                 status="failed",
                 error=error or "delivery_dead_letter",
             )
-    elif payload.get("kind") == "assistant_reply" and delivery and delivery.get("dead_letter"):
+    elif payload.get("kind") in {"assistant_reply", "assistant_voice_reply"} and delivery and delivery.get("dead_letter"):
         with assistant_db_connect() as conn:
             record_delivery_feedback(conn, delivery, "delivery_failed")
     if delivery and delivery.get("dead_letter"):

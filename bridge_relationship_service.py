@@ -26,6 +26,11 @@ from bridge_relationship_cutover import (
     relationship_proactive_cutover_plan,
     set_relationship_proactive_feature,
 )
+from bridge_proactive_messaging_policy import (
+    get_proactive_messaging_policy,
+    proactive_target_for_user,
+    update_proactive_messaging_policy,
+)
 
 
 RELATIONSHIP_SCOPE_TYPES = {
@@ -122,8 +127,8 @@ def _clock(value: object, default: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _active_assistant(conn: sqlite3.Connection) -> dict:
-    assistant = current_assistant(conn)
+def _active_assistant(conn: sqlite3.Connection, *, integrity_scope: str = "database") -> dict:
+    assistant = current_assistant(conn, integrity_scope=integrity_scope)
     if not assistant:
         raise ValueError("active_assistant_missing")
     return assistant
@@ -244,7 +249,9 @@ def get_relationship_state(
     scope_id: str = "",
 ) -> dict:
     require_relationship_proactive_schema(conn)
-    assistant = _active_assistant(conn)
+    # Read projection: validate identity ownership without rescanning chat history.
+    # Mutation callers retain the helper's full-database audit by default.
+    assistant = _active_assistant(conn, integrity_scope="identity")
     user = _clip(user_id, 80)
     scope = _clip(scope_type, 40)
     if not user:
@@ -602,6 +609,94 @@ def _social_public(row: sqlite3.Row | tuple | None, *, assistant_id: str, user_i
     return item
 
 
+def _social_messaging_idempotency_key(
+    *,
+    assistant_id: str,
+    user_id: str,
+    idempotency_key: str,
+) -> str:
+    seed = f"{assistant_id}:{user_id}:{idempotency_key}"
+    return "social_messaging_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def _private_social_messaging_policy(
+    conn: sqlite3.Connection,
+    *,
+    assistant: dict,
+    user_id: str,
+    social: dict,
+    idempotency_key: str = "",
+) -> dict:
+    """Read or atomically reconcile the exact messaging gate for this contact.
+
+    The social policy remains the scheduler/rhythm authority.  A private
+    contact's explicit enablement must also reach the existing message-policy
+    gate, otherwise the scheduler records a successful save and immediately
+    defers every candidate as ``policy_disabled``.  Owner retains its existing
+    owner-scoped policy; only an ordinary user scope is managed here.
+    """
+
+    target_type, target_id = proactive_target_for_user(conn, user_id)
+    # A social policy can target an ordinary contact or the stable Owner scope.
+    # Both scopes have a distinct, most-specific messaging gate.  Group social
+    # policies never enter this helper: their group gate is owned separately.
+    if target_type not in {"user", "owner"} or not idempotency_key:
+        return get_proactive_messaging_policy(
+            conn,
+            target_type=target_type,
+            target_id=target_id,
+            assistant=assistant,
+        )
+    direct = conn.execute(
+        """
+        SELECT version FROM proactive_messaging_policies
+        WHERE assistant_id=? AND target_type=? AND target_id=?
+        """,
+        (assistant["id"], target_type, target_id),
+    ).fetchone()
+    expected_version = int(direct["version"] or 0) if direct else 0
+    message_policy = update_proactive_messaging_policy(
+        conn,
+        {
+            "target_type": target_type,
+            "target_id": target_id,
+            "mode": "auto" if social.get("enabled") and social.get("authorized") else "off",
+            "allowed_intents": list(social.get("allowed_intents") or []),
+            "quiet_start": social.get("quiet_start"),
+            "quiet_end": social.get("quiet_end"),
+            "daily_limit": int(social.get("daily_limit") or 1),
+            "weekly_limit": int(social.get("weekly_limit") or 1),
+            # Private social starts retain the stricter one-unanswered invariant.
+            "unanswered_limit": 1,
+            "expected_version": expected_version,
+        },
+        idempotency_key=_social_messaging_idempotency_key(
+            assistant_id=assistant["id"],
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+        ),
+    )
+    return message_policy
+
+
+def _with_private_social_runtime_gate(social: dict, messaging_policy: dict) -> dict:
+    result = dict(social)
+    result["messaging_policy"] = messaging_policy
+    if not result.get("enabled") or not result.get("authorized"):
+        reason = "social_policy_disabled"
+    elif messaging_policy.get("mode") == "auto":
+        reason = "awaiting_shared_situation"
+    elif messaging_policy.get("mode") in {"draft", "confirm"}:
+        reason = "messaging_policy_requires_review"
+    else:
+        reason = "messaging_policy_disabled"
+    result["runtime_gate"] = {
+        "effective": reason == "awaiting_shared_situation",
+        "reason": reason,
+    }
+    return result
+
+
 def get_social_proactive_policy(
     conn: sqlite3.Connection,
     *,
@@ -616,7 +711,21 @@ def get_social_proactive_policy(
         "SELECT * FROM proactive_policies WHERE user_id=?",
         (user,),
     ).fetchone()
-    return _social_public(row, assistant_id=assistant["id"], user_id=user)
+    social = _social_public(row, assistant_id=assistant["id"], user_id=user)
+    # Group social is governed by its own group-scoped messaging policy and
+    # participation/session checks.  Do not project a private user scope onto
+    # it merely because the shared accessor is also used by outbound delivery.
+    if user.startswith("group:") or social.get("policy_kind") == "group_social":
+        return social
+    return _with_private_social_runtime_gate(
+        social,
+        _private_social_messaging_policy(
+            conn,
+            assistant=assistant,
+            user_id=user,
+            social=social,
+        ),
+    )
 
 
 def update_social_proactive_policy(
@@ -653,7 +762,31 @@ def update_social_proactive_policy(
             request_hash=request_hash,
         )
         if replay is not None:
-            return replay
+            if "messaging_policy" in replay:
+                return replay
+            existing = conn.execute(
+                "SELECT * FROM proactive_policies WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            if not existing:
+                return replay
+            social = _social_public(
+                existing,
+                assistant_id=assistant["id"],
+                user_id=user_id,
+            )
+            result = _with_private_social_runtime_gate(
+                social,
+                _private_social_messaging_policy(
+                    conn,
+                    assistant=assistant,
+                    user_id=user_id,
+                    social=social,
+                    idempotency_key=idempotency_key,
+                ),
+            )
+            result["idempotent_replay"] = True
+            return result
         existing = conn.execute(
             "SELECT * FROM proactive_policies WHERE user_id=?",
             (user_id,),
@@ -685,6 +818,16 @@ def update_social_proactive_policy(
             ).fetchone(),
             assistant_id=assistant["id"],
             user_id=user_id,
+        )
+        response = _with_private_social_runtime_gate(
+            response,
+            _private_social_messaging_policy(
+                conn,
+                assistant=assistant,
+                user_id=user_id,
+                social=response,
+                idempotency_key=idempotency_key,
+            ),
         )
         response["idempotent_replay"] = False
         _save_idempotency(

@@ -91,8 +91,15 @@ def main() -> int:
         if ai_chat_test_path.is_file():
             ai_chat_tests = _load("public_v4_ai_chat_slice_tests", "tests/test_v4_ai_chat_slice.py")
             ai_chat_tests.test_v4_ai_chat_assets_are_versioned_and_allowlisted()
-            ai_chat_tests.test_v4_ai_chat_uses_the_existing_dispatch_contract_without_model_controls()
-            ai_chat_tests.test_v4_ai_chat_preserves_lifecycle_and_duplicate_dispatch_controls()
+            ai_chat_tests.test_v4_ai_chat_uses_existing_receipt_and_build_contracts()
+            ai_chat_tests.test_v4_ai_chat_keeps_read_errors_and_stale_thread_results_separate()
+            tests += 3
+        backend_sync_test_path = ROOT / "tests" / "test_public_backend_sync.py"
+        if backend_sync_test_path.is_file():
+            backend_sync_tests = _load("public_backend_sync_tests", "tests/test_public_backend_sync.py")
+            backend_sync_tests.test_meme_offer_requires_visual_review_and_reply_anchor()
+            backend_sync_tests.test_unknown_role_preserves_available_group_barrier()
+            backend_sync_tests.test_group_policy_gate_uses_identity_scope_without_expanding_authority()
             tests += 3
         exporter_test_path = ROOT / "tests" / "test_open_source_release_export.py"
         if exporter_test_path.is_file():

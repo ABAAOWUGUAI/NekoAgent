@@ -149,6 +149,7 @@ def inbound_media_notice(
     vision_settings: dict | None = None,
     media_transport_connected: bool = False,
     suppress_repeated_notice: bool = False,
+    allow_text_fallback: bool = False,
 ) -> dict | None:
     if not isinstance(attachments, list):
         return None
@@ -172,6 +173,8 @@ def inbound_media_notice(
         if "ready" in states:
             return None
         if "deferred" in states:
+            if allow_text_fallback:
+                return None
             return {
                 "ok": True,
                 "dispatch": "silent",
@@ -252,6 +255,11 @@ def inbound_media_notice(
     else:
         reply = "这个附件我现在还读不了，先用文字说下重点吧。"
         reason = "channel_media_transport_not_connected"
+    if allow_text_fallback and visual_kinds:
+        # The turn has usable textual intent.  Let one conversation response
+        # acknowledge that text while its model context honestly says that the
+        # adjacent image had no usable visual evidence.
+        return None
     if suppress_repeated_notice:
         return {
             "ok": True,

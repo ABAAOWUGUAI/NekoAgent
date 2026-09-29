@@ -292,7 +292,6 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
             "TASK_HISTORY_PATH": str(self.runtime_root / "tasks.jsonl"),
             "TASK_DB_PATH": str(self.task_path),
             "ASSISTANT_DB_PATH": str(self.assistant_path),
-            "TAFFY_BACKGROUND_ASSET_PATH": str(self.runtime_root / "taffy-background.jpg"),
             "TRENDING_CACHE_PATH": str(self.runtime_root / "github-trending-cache.json"),
             "AGENT_RUNTIME_HOME": str(self.runtime_root),
             "CODEGRAPH_AUTO_ENABLED": "0",
@@ -364,6 +363,7 @@ class WebDispatchHttpIntegrationTests(unittest.TestCase):
         headers = {
             "Content-Type": "application/json",
             "X-QQ-Actor-ID": actor_header,
+            "X-Admin-Build": self.bridge.ADMIN_ASSET_VERSION,
             "Cookie": f"{self.bridge.ADMIN_SESSION_COOKIE}={self.session_id}",
         }
         if include_request_id:

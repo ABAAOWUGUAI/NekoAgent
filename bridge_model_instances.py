@@ -111,8 +111,21 @@ def connection_templates() -> list[dict]:
     return [dict(item) for item in CONNECTION_TEMPLATES]
 
 
+def _lock_delete_target(conn: sqlite3.Connection, table: str, record_id: str) -> None:
+    """Acquire the SQLite write lock before checking delete dependencies."""
+
+    if conn.in_transaction:
+        # A caller may already have a transaction open.  This no-op write
+        # upgrades it before the dependency reads, preventing a concurrent
+        # bind from racing the checks below.
+        conn.execute(f"UPDATE {table} SET id = id WHERE id = ?", (record_id,))
+        return
+    conn.execute("BEGIN IMMEDIATE")
+
+
 def delete_model(conn: sqlite3.Connection, model_id: str) -> dict:
     model_id = str(model_id or "").strip()
+    _lock_delete_target(conn, "model_catalog", model_id)
     row = conn.execute("SELECT id, provider_id, label FROM model_catalog WHERE id = ?", (model_id,)).fetchone()
     if row is None:
         raise ValueError("model_not_found")
@@ -131,9 +144,20 @@ def delete_model(conn: sqlite3.Connection, model_id: str) -> dict:
         "SELECT provider_id FROM model_executor_profiles WHERE upstream_model_id=?",
         (model_id,),
     ).fetchall()
-    if executor_rows:
+    verification_rows = []
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='executor_verification_state'",
+    ).fetchone():
+        verification_rows = conn.execute(
+            "SELECT provider_id FROM executor_verification_state WHERE upstream_model_id_at_verify=?",
+            (model_id,),
+        ).fetchall()
+    if executor_rows or verification_rows:
         error = ValueError("model_used_by_executor_profile")
-        error.dependencies = {"executor_profiles": [item["provider_id"] for item in executor_rows]}
+        error.dependencies = {
+            "executor_profiles": [item["provider_id"] for item in executor_rows],
+            "executor_verification": [item["provider_id"] for item in verification_rows],
+        }
         raise error
     conn.execute("DELETE FROM model_catalog WHERE id = ?", (model_id,))
     return {"deleted": model_id, "provider_id": row["provider_id"], "label": row["label"]}
@@ -141,6 +165,7 @@ def delete_model(conn: sqlite3.Connection, model_id: str) -> dict:
 
 def delete_provider(conn: sqlite3.Connection, provider_id: str) -> dict:
     provider_id = str(provider_id or "").strip()
+    _lock_delete_target(conn, "model_providers", provider_id)
     row = conn.execute(
         "SELECT id, name, runtime_owner, config_mode FROM model_providers WHERE id = ?",
         (provider_id,),
@@ -159,7 +184,29 @@ def delete_provider(conn: sqlite3.Connection, provider_id: str) -> dict:
         error = ValueError("provider_has_models")
         error.dependencies = {"models": [item["id"] for item in models]}
         raise error
-    conn.execute("DELETE FROM model_executor_profiles WHERE provider_id = ?", (provider_id,))
+    profiles = [
+        dict(item) for item in conn.execute(
+            "SELECT provider_id FROM model_executor_profiles WHERE provider_id = ?",
+            (provider_id,),
+        ).fetchall()
+    ]
+    verification_refs = []
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='executor_verification_state'",
+    ).fetchone():
+        verification_refs = [
+            dict(item) for item in conn.execute(
+                "SELECT provider_id FROM executor_verification_state WHERE provider_id = ?",
+                (provider_id,),
+            ).fetchall()
+        ]
+    if profiles or verification_refs:
+        error = ValueError("provider_used_by_executor_profile")
+        error.dependencies = {
+            "executor_profiles": [item["provider_id"] for item in profiles],
+            "executor_verification": [item["provider_id"] for item in verification_refs],
+        }
+        raise error
     conn.execute("DELETE FROM model_providers WHERE id = ?", (provider_id,))
     return {"deleted": provider_id, "name": row["name"]}
 

@@ -156,7 +156,7 @@ def _health_attention(health: dict) -> list[dict]:
     return items
 
 
-def build_attention_projection(
+def _historical_attention_projection(
     goals: Iterable[dict],
     runs: Iterable[dict],
     deliveries: Iterable[dict],
@@ -294,6 +294,58 @@ def build_attention_projection(
             "critical": counts.get("critical", 0),
             "high": counts.get("high", 0),
             "normal": counts.get("normal", 0),
+        },
+        "items": ordered[:safe_limit],
+    }
+
+
+def build_attention_projection(
+    goals: Iterable[dict],
+    runs: Iterable[dict],
+    deliveries: Iterable[dict],
+    health: dict,
+    *,
+    approvals: Iterable[dict] = (),
+    limit: int = 20,
+) -> dict:
+    """Project only real formal approvals into the legacy action inbox.
+
+    Historical Goal/Run/Delivery records are still available through their
+    respective object surfaces.  They cannot become an Owner action merely
+    because a stale state remains in storage.
+    """
+
+    del goals, runs, deliveries, health
+    records: list[dict] = []
+    for approval in approvals:
+        if str(approval.get("status") or "") != "pending":
+            continue
+        approval_id = str(approval.get("id") or "")
+        if not approval_id:
+            continue
+        records.append(_attention_item(
+            source_type="approval",
+            source_id=approval_id,
+            source_state="pending",
+            priority="high",
+            title=_clip(approval.get("action_summary")) or "有一项操作等待审核",
+            reason="该操作已暂停，等待你作出正式决定。",
+            risk="仅当前审核的操作摘要、参数版本和目标环境可被批准。",
+            updated_at=approval.get("updated_at") or approval.get("created_at"),
+        ))
+    unique = {item["dedupe_key"]: item for item in records}
+    ordered = sorted(
+        unique.values(),
+        key=lambda item: str(item.get("updated_at") or ""),
+        reverse=True,
+    )
+    safe_limit = max(1, min(int(limit or 20), 100))
+    return {
+        "total": len(ordered),
+        "counts": {
+            "critical": 0,
+            "high": len(ordered),
+            "normal": 0,
         },
         "items": ordered[:safe_limit],
     }

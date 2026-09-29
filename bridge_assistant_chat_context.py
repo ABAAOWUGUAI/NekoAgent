@@ -4,14 +4,21 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from typing import Callable
 
+from bridge_assistant_affect_runtime import (
+    apply_assistant_affect_to_expression_plan,
+    load_assistant_affect_influence,
+    resolve_private_affect_binding,
+)
 from bridge_knowledge_service import search_published
 from bridge_interaction_contract import persona_response_blocks
 from bridge_group_context_frame import group_expression_rhythm
 from bridge_group_expression import recent_reply_shapes
 from bridge_migrations import MigrationError
 from bridge_relationship_service import get_relationship_state
+from bridge_relationship_accumulation import preferred_address_correction
 from bridge_social_engine import build_voice_contract, normalize_social_cues, plan_expression
 from bridge_social_experience import hydrate_expression_context
 from bridge_qq_access_runtime import super_admin_ids
@@ -33,6 +40,7 @@ def merge_shared_knowledge(
                 conn,
                 message,
                 channel="group" if group else "private",
+                group_id=str((group or {}).get("group_id") or ""),
                 limit=5,
             )
     except (sqlite3.Error, ValueError):
@@ -53,6 +61,7 @@ def build_social_context(
     message: str,
     user_id: str,
     group: dict | None = None,
+    interaction_context: Mapping[str, object] | None = None,
 ) -> tuple[dict, dict]:
     """Build the voice contract, turn expression plan, and scoped learned habits."""
 
@@ -100,19 +109,97 @@ def build_social_context(
         # Relationship is optional context. Schema drift or a transient DB
         # failure must not turn a factual chat response into a 500.
         relationship["degraded"] = True
+    # An explicit private self-designation applies to the current reply before
+    # the authoritative Relationship writer commits it after the exchange.
+    # This is not an Affect field and never changes Persona identity.
+    if not group_info:
+        corrected_address = preferred_address_correction(message)
+        if corrected_address:
+            relationship.update({
+                "applied": bool(contract.get("optional_persona_applied", True)),
+                "preferred_address": corrected_address,
+            })
+    observed_user_expression = (
+        dict(group_info.get("observed_user_expression") or {})
+        if group_info
+        else {
+            "has_text": bool(str(message or "").strip()),
+            "has_attachment": bool(list((interaction_context or {}).get("attachments") or [])),
+            "psychology_inferred": False,
+        }
+    )
+    observed_user_expression["psychology_inferred"] = False
+    base_expression_plan = plan_expression(
+        message,
+        social_cues=cues,
+        mode_decision=mode_decision,
+        group_context=group,
+        topic_anchor=group_info.get("topic_anchor") if group_info else None,
+        voice_contract=contract,
+        recent_expression_shapes=group_info.get("recent_reply_shapes") if group_info else None,
+    )
+    assistant_affect = {
+        "style_only": True,
+        "active": False,
+        "allowed_influences": [],
+        "effective_intensity": 0.0,
+        "turns_elapsed": 0,
+    }
+    # Work/task truth remains untouched.  The cutover is deliberately limited
+    # to daily conversation expression plans.
+    if str(mode_decision.get("mode") or "daily") == "daily":
+        try:
+            with db_connect() as conn:
+                if group_info:
+                    assistant_id = str(group_info.get("assistant_id") or "").strip()
+                    if not assistant_id:
+                        row = conn.execute(
+                            "SELECT id FROM assistant_instances WHERE status='active' "
+                            "ORDER BY updated_at DESC,id LIMIT 1",
+                        ).fetchone()
+                        assistant_id = str(row[0] if row else "")
+                    topic_anchor = group_info.get("topic_anchor")
+                    topic_anchor_id = (
+                        topic_anchor.get("id")
+                        if isinstance(topic_anchor, Mapping)
+                        else 0
+                    )
+                    revision = int(
+                        group_info.get("topic_revision")
+                        or topic_anchor_id
+                        or 0
+                    )
+                    binding = {
+                        "assistant_id": assistant_id,
+                        "scope_type": "group",
+                        "scope_id": str(group_info.get("group_id") or ""),
+                        "target_id": str(group_info.get("sender_id") or ""),
+                        "turn_revision": revision,
+                    }
+                else:
+                    binding = resolve_private_affect_binding(
+                        conn,
+                        user_id=user_id,
+                        interaction_context=interaction_context,
+                    )
+                if binding:
+                    assistant_affect = load_assistant_affect_influence(conn, **binding)
+        except (sqlite3.Error, TypeError, ValueError):
+            assistant_affect = {
+                **assistant_affect,
+                "degraded": True,
+            }
+    expression_plan = apply_assistant_affect_to_expression_plan(
+        base_expression_plan,
+        assistant_affect,
+    )
     context = {
         "cues": cues,
         "group": group,
         "voice_contract": contract,
-        "expression_plan": plan_expression(
-            message,
-            social_cues=cues,
-            mode_decision=mode_decision,
-            group_context=group,
-            topic_anchor=group_info.get("topic_anchor") if group_info else None,
-            voice_contract=contract,
-            recent_expression_shapes=group_info.get("recent_reply_shapes") if group_info else None,
-        ),
+        "expression_plan": expression_plan,
+        "observed_user_expression": observed_user_expression,
+        "assistant_affect": assistant_affect,
         "relationship": relationship,
         "context_blocks": {
             "assistant_identity": {
@@ -129,6 +216,13 @@ def build_social_context(
                 "budget": 800,
                 "applied": bool(relationship.get("applied")),
                 "value": relationship,
+            },
+            "assistant_affect": {
+                "source_type": "assistant_affect_shadow",
+                "source_id": str(assistant_affect.get("state_id") or ""),
+                "version": "assistant-affect-expression-recovery-r1",
+                "budget": 240,
+                "applied": bool(assistant_affect.get("active")),
             },
         },
     }
@@ -179,6 +273,16 @@ def social_result(
         "persona_version": social_context.get("voice_contract", {}).get("persona_version") or "",
         "relationship_applied": bool(social_context.get("relationship", {}).get("applied")),
         "relationship_version": int(social_context.get("relationship", {}).get("version") or 0),
+        "assistant_affect": {
+            "active": bool(social_context.get("assistant_affect", {}).get("active")),
+            "primary_affect": str(
+                social_context.get("assistant_affect", {}).get("primary_affect") or ""
+            ),
+            "effective_intensity": float(
+                social_context.get("assistant_affect", {}).get("effective_intensity") or 0.0
+            ),
+            "recovered": bool(social_context.get("assistant_affect", {}).get("recovered")),
+        },
         "group": bool(group),
     }
 

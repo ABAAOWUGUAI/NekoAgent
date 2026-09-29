@@ -28,11 +28,12 @@ class V4ShellPhase1Tests(unittest.TestCase):
         )
         return json.loads(result.stdout)
 
-    def test_v4_assets_are_versioned_opt_in_resources(self):
-        self.assertIn('/admin/static/admin-v4-shell.css?v=', admin_console.ADMIN_HTML)
-        self.assertIn('/admin/static/v4-shell.js?v=', admin_console.ADMIN_HTML)
-        self.assertIsNotNone(admin_console.admin_asset('admin-v4-shell.css'))
-        self.assertIsNotNone(admin_console.admin_asset('v4-shell.js'))
+    def test_current_product_assets_are_versioned_and_legacy_shell_is_not_served(self):
+        self.assertIn('/admin/static/admin-v4-product.css?v=', admin_console.ADMIN_HTML)
+        self.assertIn('/admin/static/v4-product-app.js?v=', admin_console.ADMIN_HTML)
+        self.assertIsNotNone(admin_console.admin_asset('admin-v4-product.css'))
+        self.assertIsNotNone(admin_console.admin_asset('v4-product-app.js'))
+        self.assertIsNone(admin_console.admin_asset('v4-shell.js'))
 
     def test_all_legacy_views_have_one_primary_owner_surface(self):
         contract = self._routing_contract()
@@ -82,26 +83,22 @@ class V4ShellPhase1Tests(unittest.TestCase):
         self.assertNotIn('bridge(', source)
 
     def test_artifact_daily_slice_uses_existing_read_path_and_keeps_full_management(self):
-        source = (ROOT / 'admin' / 'v4-artifact-surface.js').read_text(encoding='utf-8')
-        css = (ROOT / 'admin' / 'admin-v4-artifact-surface.css').read_text(encoding='utf-8')
+        source = (ROOT / 'admin' / 'v4-product-app.js').read_text(encoding='utf-8')
+        adapters = (ROOT / 'admin' / 'v4-product-adapters.js').read_text(encoding='utf-8')
         index = (ROOT / 'admin' / 'index.html').read_text(encoding='utf-8')
-        self.assertIn('/assistant/artifacts?limit=6&offset=0', source)
-        self.assertIn('window.bridge', source)
-        self.assertIn('v4-artifact-legacy-mode', source)
-        self.assertIn('打开完整成品库', source)
-        self.assertIn('source_goal_id', source)
-        self.assertIn("available: '已就绪'", source)
-        self.assertIn('已关联工作目标', source)
-        self.assertNotIn("method: 'POST'", source)
-        self.assertIn('admin-v4-artifact-surface.css', index)
-        self.assertIn('v4-artifact-surface.js', index)
-        self.assertIn('body[data-v4-experience="active"][data-v4-active-view="artifact"]', css)
-        self.assertIn('.v4-artifact-daily { display: none; }', css)
-        self.assertIn('root.inert = true', source)
-        self.assertIn('requestVersion += 1', source)
-        self.assertIn("'nekoagent:v4-experience-disable'", source)
-        self.assertIsNotNone(admin_console.admin_asset('admin-v4-artifact-surface.css'))
-        self.assertIsNotNone(admin_console.admin_asset('v4-artifact-surface.js'))
+        self.assertIn('admin-v4-product.css', index)
+        self.assertIn('v4-product-app.js', index)
+        self.assertNotIn('v4-artifact-surface.js', index)
+        self.assertIn("artifacts: () => get('/assistant/artifacts?limit=100&offset=0')", adapters)
+        self.assertIn('artifactVersions: (id) => get(', adapters)
+        self.assertIn('reviseArtifact: (id, requestBody) => post(', adapters)
+        self.assertIn('async function renderArtifacts(root)', source)
+        self.assertIn("const artifacts = records(response, 'items', 'artifacts')", source)
+        self.assertIn('api.artifact(artifactId)', source)
+        self.assertIn('id="v4ArtifactDetail"', source)
+        self.assertIn('id="v4ArtifactRevise"', source)
+        self.assertIsNotNone(admin_console.admin_asset('admin-v4-product.css'))
+        self.assertIsNotNone(admin_console.admin_asset('v4-product-app.js'))
 
 
 if __name__ == '__main__':

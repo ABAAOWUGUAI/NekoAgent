@@ -81,16 +81,6 @@ def enqueue(
                 latest_sequence = int(latest[0] or 0)
                 if not response_sequence:
                     response_sequence = latest_sequence + 1
-                elif response_sequence < latest_sequence:
-                    newer = conn.execute(
-                        """
-                        SELECT id FROM delivery_outbox
-                        WHERE channel=? AND thread_ref=? AND response_sequence=?
-                          AND superseded_by='' ORDER BY created_at DESC LIMIT 1
-                        """,
-                        (channel, thread_ref, latest_sequence),
-                    ).fetchone()
-                    initial_superseded_by = str(newer[0]) if newer else f"revision:{latest_sequence}"
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO delivery_outbox(
@@ -128,7 +118,13 @@ def enqueue(
                     """,
                     (channel, thread_ref, response_sequence, _timestamp(now)),
                 )
-            if created and not initial_superseded_by and supersede_pending_social and thread_ref and delivery_class == "social":
+            if (
+                created
+                and not initial_superseded_by
+                and supersede_pending_social
+                and thread_ref
+                and delivery_class in {"social", "topic_social"}
+            ):
                 marker = f"revision:{response_sequence}"
                 conn.execute(
                     """

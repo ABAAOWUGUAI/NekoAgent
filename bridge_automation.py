@@ -231,10 +231,22 @@ def _job_payload(payload: dict, existing: dict | None = None) -> dict:
     }
 
 
-def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
+def upsert_automation_job(
+    conn: sqlite3.Connection, payload: dict, *, require_revision_on_existing: bool = False,
+) -> dict:
     ensure_automation_tables(conn)
     job_id = _clip(payload.get("id"), 80) or uuid.uuid4().hex
     existing = _row(conn.execute("SELECT * FROM automation_jobs WHERE id = ?", (job_id,)).fetchone())
+    if existing and existing["state"] == "archived":
+        raise ValueError("automation_archived")
+    expected_revision = None
+    if payload.get("expected_revision") is not None:
+        raw_revision = str(payload["expected_revision"]).strip()
+        if not raw_revision.isdecimal():
+            raise ValueError("automation_revision_invalid")
+        expected_revision = int(raw_revision)
+        if expected_revision != int((existing or {}).get("revision") or 0):
+            raise ValueError("automation_revision_conflict")
     values = _job_payload(payload, existing)
     execution_contract = json.loads(values["execution_contract_json"])
     if values["enabled"] and execution_contract.get("status") != "ready":
@@ -249,7 +261,7 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
     else:
         next_due = requested_due or parse_datetime((existing or {}).get("next_due_at"))
         state = "disabled"
-    conn.execute(
+    result = conn.execute(
         """
         INSERT INTO automation_jobs(
             id, user_id, title, action_type, instruction, parameters_json,
@@ -272,6 +284,7 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
             interval_minutes=excluded.interval_minutes, timezone=excluded.timezone,
             enabled=excluded.enabled, state=excluded.state,
             next_due_at=excluded.next_due_at, lease_until='', updated_at=excluded.updated_at
+        WHERE (? IS NULL AND ?=1) OR automation_jobs.revision=?
         """,
         (
             job_id, values["user_id"], values["title"], values["action_type"],
@@ -282,16 +295,61 @@ def upsert_automation_job(conn: sqlite3.Connection, payload: dict) -> dict:
             values["time_of_day"], values["weekdays"], values["interval_minutes"],
             values["timezone"], values["enabled"], state,
             timestamp(next_due) if next_due else "", timestamp(now), timestamp(now),
+            expected_revision, 0 if require_revision_on_existing else 1, expected_revision,
         ),
     )
+    if require_revision_on_existing and expected_revision is None and result.rowcount != 1:
+        raise ValueError("automation_revision_required")
+    if expected_revision is not None and result.rowcount != 1:
+        raise ValueError("automation_revision_conflict")
     return dict(conn.execute("SELECT * FROM automation_jobs WHERE id = ?", (job_id,)).fetchone())
+
+
+def transition_automation_job_archive(
+    conn: sqlite3.Connection, job_id: str, *, expected_revision: object, operation: str,
+) -> dict:
+    """Archive or restore a job without deleting runs or silently re-enabling it."""
+    ensure_automation_tables(conn)
+    if operation not in {"archive", "restore"}:
+        raise ValueError("automation_operation_invalid")
+    job_id = _clip(job_id, 80)
+    if not job_id:
+        raise ValueError("automation_job_id_required")
+    raw_revision = str(expected_revision or "").strip()
+    if not raw_revision.isdecimal() or int(raw_revision) < 1:
+        raise ValueError("automation_revision_invalid")
+    revision = int(raw_revision)
+    if operation == "archive":
+        permitted_state = "state NOT IN ('archived','running','dispatched')"
+        next_state = "archived"
+    else:
+        permitted_state = "state='archived'"
+        next_state = "disabled"
+    result = conn.execute(
+        f"""UPDATE automation_jobs
+               SET enabled=0, state=?, next_due_at='', lease_until='',
+                   revision=revision+1, updated_at=?
+             WHERE id=? AND revision=? AND {permitted_state}""",
+        (next_state, timestamp(), job_id, revision),
+    )
+    if result.rowcount != 1:
+        current = conn.execute(
+            "SELECT revision FROM automation_jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        if current is None:
+            raise ValueError("automation_job_not_found")
+        if int(current[0]) != revision:
+            raise ValueError("automation_revision_conflict")
+        raise ValueError("automation_archive_state_conflict")
+    return dict(conn.execute("SELECT * FROM automation_jobs WHERE id=?", (job_id,)).fetchone())
 
 
 def list_automation_jobs(conn: sqlite3.Connection, *, limit: int = 100) -> list[dict]:
     ensure_automation_tables(conn)
     rows = conn.execute(
         """SELECT * FROM automation_jobs
-           ORDER BY enabled DESC, CASE WHEN next_due_at='' THEN 1 ELSE 0 END,
+           ORDER BY CASE WHEN state='archived' THEN 1 ELSE 0 END,
+                    enabled DESC, CASE WHEN next_due_at='' THEN 1 ELSE 0 END,
                     next_due_at ASC, updated_at DESC LIMIT ?""",
         (max(1, min(int(limit or 100), 200)),),
     ).fetchall()
@@ -527,12 +585,223 @@ def _period_start(current: datetime, zone, *, week: bool) -> datetime:
     return datetime.combine(day, time.min, tzinfo=zone).astimezone(timezone.utc)
 
 
-def _defer_policy(conn: sqlite3.Connection, user_id: str, state: str, reason: str, next_check: datetime, now: datetime) -> None:
+def _proactive_generation_where(policy: dict, columns: set[str]) -> tuple[str, list[object]]:
+    clauses = ["user_id=?"]
+    params: list[object] = [_clip(policy.get("user_id"), 80)]
+    for column, value in (
+        ("assistant_id", _clip(policy.get("assistant_id"), 80)),
+        ("policy_kind", _clip(policy.get("policy_kind"), 40)),
+        ("policy_version", max(1, int(policy.get("policy_version") or 1))),
+    ):
+        if column in columns and value:
+            clauses.append(f"{column}=?")
+            params.append(value)
+    return " AND ".join(clauses), params
+
+
+def _defer_policy(
+    conn: sqlite3.Connection,
+    user_id: str,
+    state: str,
+    reason: str,
+    next_check: datetime,
+    now: datetime,
+    *,
+    expected_policy: dict | None = None,
+) -> None:
+    where, params = "user_id=?", [user_id]
+    if expected_policy:
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(proactive_policies)")
+        }
+        where, params = _proactive_generation_where(expected_policy, columns)
     conn.execute(
-        """UPDATE proactive_policies SET state=?, state_reason=?, next_check_at=?,
-                  lease_until='', last_evaluated_at=?, updated_at=? WHERE user_id=?""",
-        (state, reason, timestamp(next_check), timestamp(now), timestamp(now), user_id),
+        f"""UPDATE proactive_policies SET state=?, state_reason=?, next_check_at=?,
+                  lease_until='', last_evaluated_at=?, updated_at=? WHERE {where}""",
+        (state, reason, timestamp(next_check), timestamp(now), timestamp(now), *params),
     )
+
+
+def _proactive_claim_where(policy: dict, columns: set[str]) -> tuple[str, list[object]]:
+    """Return the exact compare-and-swap predicate for a model-generation claim."""
+
+    clauses = [
+        "user_id=?",
+        "enabled=1",
+        "authorized=1",
+        "state='evaluating'",
+        "lease_until=?",
+        "last_evaluated_at=?",
+        "last_user_at=?",
+        "next_check_at=?",
+    ]
+    params: list[object] = [
+        _clip(policy.get("user_id"), 80),
+        _clip(policy.get("lease_until"), 80),
+        _clip(policy.get("claim_token"), 80),
+        _clip(policy.get("last_user_at"), 80),
+        _clip(policy.get("next_check_at"), 80),
+    ]
+    for column, value in (
+        ("assistant_id", _clip(policy.get("assistant_id"), 80)),
+        ("policy_kind", _clip(policy.get("policy_kind") or "social", 40)),
+        ("policy_version", max(1, int(policy.get("policy_version") or 1))),
+    ):
+        if column in columns:
+            clauses.append(f"{column}=?")
+            params.append(value)
+    return " AND ".join(clauses), params
+
+
+def _guard_proactive_claim(conn: sqlite3.Connection, policy: dict) -> dict | None:
+    """Acquire a write lock only if generation still belongs to this claim.
+
+    The model call runs outside the claim transaction.  Every mutable policy
+    fact therefore has to survive a compare-and-swap before an event or Plan is
+    written.  A missing ``claim_token`` keeps the legacy direct-writer API used
+    by older local callers; the production scheduler always supplies one.
+    """
+
+    if not _clip(policy.get("claim_token"), 80):
+        return dict(policy)
+    columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(proactive_policies)")
+    }
+    where, params = _proactive_claim_where(policy, columns)
+    claimed = conn.execute(
+        f"UPDATE proactive_policies SET lease_until=lease_until WHERE {where}",
+        params,
+    )
+    if claimed.rowcount != 1:
+        return None
+    row = conn.execute(
+        "SELECT * FROM proactive_policies WHERE user_id=?",
+        (_clip(policy.get("user_id"), 80),),
+    ).fetchone()
+    if not row:
+        return None
+    current = dict(row)
+    tables = {
+        str(item[0]) for item in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    policy_kind = _clip(current.get("policy_kind") or policy.get("policy_kind") or "social", 40)
+    user_id = _clip(current.get("user_id"), 80)
+    latest_row = None
+    if policy_kind == "group_social" and user_id.startswith("group:") and "group_messages" in tables:
+        latest_row = conn.execute(
+            "SELECT MAX(created_at) FROM group_messages WHERE group_id=? AND sender_id<>'bot'",
+            (user_id[6:],),
+        ).fetchone()
+    elif policy_kind != "group_social" and "conversations" in tables:
+        latest_row = conn.execute(
+            "SELECT MAX(created_at) FROM conversations WHERE user_id=? AND role='user'",
+            (user_id,),
+        ).fetchone()
+    latest_user = parse_datetime(latest_row[0] if latest_row else "")
+    claimed_user = parse_datetime(policy.get("last_user_at"))
+    if latest_user and (claimed_user is None or latest_user > claimed_user):
+        next_check = latest_user + timedelta(
+            minutes=max(15, int(current.get("min_silence_minutes") or 15)),
+        )
+        conn.execute(
+            f"""UPDATE proactive_policies
+                SET last_user_at=?,state='waiting_silence',
+                    state_reason='generation_interrupted_by_activity',
+                    next_check_at=?,lease_until='',updated_at=?
+                WHERE {where}""",
+            (
+                timestamp(latest_user),
+                timestamp(next_check),
+                timestamp(),
+                *params,
+            ),
+        )
+        return None
+    for key in ("claim_token", "send_session", "known_session", "observed_user_at"):
+        if key in policy:
+            current[key] = policy[key]
+    return current
+
+
+def _stale_proactive_claim(policy: dict) -> dict:
+    return {
+        "action": "skip",
+        "intent": "silence",
+        "reason": "proactive_claim_stale",
+        "message": "",
+        "topic_key": "",
+        "user_id": _clip(policy.get("user_id"), 80),
+    }
+
+
+def _cancel_decision_opportunity(conn: sqlite3.Connection, decision: dict) -> None:
+    opportunity_id = _clip(decision.get("opportunity_id"), 80)
+    if not opportunity_id:
+        return
+    from bridge_social_opportunity import cancel_start_opportunity
+
+    cancel_start_opportunity(conn, opportunity_id)
+
+
+def _release_proactive_claim(
+    conn: sqlite3.Connection,
+    policy: dict,
+    *,
+    reason: str,
+    now: datetime,
+) -> None:
+    if not _clip(policy.get("claim_token"), 80):
+        return
+    columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(proactive_policies)")
+    }
+    where, params = _proactive_claim_where(policy, columns)
+    conn.execute(
+        f"""UPDATE proactive_policies
+            SET state='scheduled',state_reason=?,next_check_at=?,
+                lease_until='',updated_at=? WHERE {where}""",
+        (
+            _clip(reason, 300),
+            timestamp(now + timedelta(minutes=15)),
+            timestamp(now),
+            *params,
+        ),
+    )
+
+
+def _preflight_claimed_social_start(
+    conn: sqlite3.Connection,
+    policy: dict,
+    *,
+    now: datetime,
+) -> dict | None:
+    """Recheck mutable access/session facts after model generation."""
+
+    if not _clip(policy.get("claim_token"), 80):
+        return None
+    feature_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='assistant_feature_flags'",
+    ).fetchone()
+    enabled = (
+        conn.execute(
+            "SELECT enabled FROM assistant_feature_flags WHERE name='relationship_proactive_v2'",
+        ).fetchone()
+        if feature_table
+        else None
+    )
+    if not enabled or not bool(enabled[0]):
+        return None
+    from bridge_social_start import owner_social_start_preflight
+
+    result = owner_social_start_preflight(conn, policy)
+    if result.get("allowed"):
+        return None
+    reason = _clip(result.get("reason") or "proactive_preflight_denied", 300)
+    _release_proactive_claim(conn, policy, reason=reason, now=now)
+    return {
+        **_stale_proactive_claim(policy),
+        "reason": reason,
+    }
 
 
 def claim_due_proactive_policies(conn: sqlite3.Connection, *, now: datetime | None = None, limit: int = 3) -> list[dict]:
@@ -559,28 +828,49 @@ def claim_due_proactive_policies(conn: sqlite3.Connection, *, now: datetime | No
                 str(messaging_gate.get("reason") or "proactive_messaging_policy"),
                 current + interval,
                 current,
+                expected_policy=item,
             )
             continue
         observed = parse_datetime(item.get("observed_user_at"))
         saved_user = parse_datetime(item.get("last_user_at"))
         last_user = max(filter(None, (observed, saved_user)), default=None)
         if observed and (saved_user is None or observed > saved_user):
-            conn.execute(
-                "UPDATE proactive_policies SET last_user_at=?, consecutive_unanswered=0 WHERE user_id=?",
-                (timestamp(observed), user_id),
+            policy_columns = {
+                str(column[1]) for column in conn.execute("PRAGMA table_info(proactive_policies)")
+            }
+            generation_where, generation_params = _proactive_generation_where(item, policy_columns)
+            observed_update = conn.execute(
+                f"""UPDATE proactive_policies SET last_user_at=?, consecutive_unanswered=0
+                    WHERE {generation_where}""",
+                (timestamp(observed), *generation_params),
             )
+            if observed_update.rowcount != 1:
+                continue
             item["consecutive_unanswered"] = 0
         if not _clip(item.get("send_session"), 300):
-            _defer_policy(conn, user_id, "pending_session", "qq_session_unavailable", current + timedelta(minutes=15), current)
+            _defer_policy(conn, user_id, "pending_session", "qq_session_unavailable", current + timedelta(minutes=15), current, expected_policy=item)
             continue
+        if not is_group:
+            from bridge_proactive_feedback import reconcile_recorded_private_activity
+            from bridge_social_start import private_reply_obligation_reason
+
+            if last_user:
+                reconciled = reconcile_recorded_private_activity(conn, item, observed_at=last_user)
+                if reconciled:
+                    item.update(reconciled)
+            pending_reason = private_reply_obligation_reason(conn, item)
+            if pending_reason:
+                _defer_policy(conn, user_id, "waiting_response", pending_reason,
+                              current + interval, current, expected_policy=item)
+                continue
         quiet_until = _quiet_end(current, item)
         if quiet_until:
-            _defer_policy(conn, user_id, "quiet", "quiet_hours", quiet_until, current)
+            _defer_policy(conn, user_id, "quiet", "quiet_hours", quiet_until, current, expected_policy=item)
             continue
         if last_user:
             silence_until = last_user + timedelta(minutes=int(item["min_silence_minutes"]))
             if silence_until > current:
-                _defer_policy(conn, user_id, "waiting_silence", "minimum_silence", silence_until, current)
+                _defer_policy(conn, user_id, "waiting_silence", "minimum_silence", silence_until, current, expected_policy=item)
                 continue
         dormant_until = (
             group_proactive.dormant_group_next_check(
@@ -598,54 +888,104 @@ def claim_due_proactive_policies(conn: sqlite3.Connection, *, now: datetime | No
                 "group_activity_stale",
                 dormant_until,
                 current,
+                expected_policy=item,
+            )
+            continue
+        generic_backoff = (
+            group_proactive.generic_group_history_backoff(
+                last_user=last_user,
+                current=current,
+            )
+            if is_group
+            else None
+        )
+        if generic_backoff:
+            _defer_policy(
+                conn,
+                user_id,
+                "waiting_activity",
+                generic_backoff["reason"],
+                generic_backoff["next_check_at"],
+                current,
+                expected_policy=item,
             )
             continue
         last_sent = parse_datetime(item.get("last_sent_at"))
         if last_sent:
             gap_until = last_sent + timedelta(minutes=int(item["min_gap_minutes"]))
             if gap_until > current:
-                _defer_policy(conn, user_id, "cooldown", "minimum_gap", gap_until, current)
+                _defer_policy(conn, user_id, "cooldown", "minimum_gap", gap_until, current, expected_policy=item)
                 continue
-        if not is_group and int(item.get("consecutive_unanswered") or 0) >= int(item["unanswered_limit"]):
-            _defer_policy(conn, user_id, "waiting_reply", "unanswered_limit", current + interval, current)
+        event_columns = {
+            str(column[1]) for column in conn.execute("PRAGMA table_info(proactive_events)")
+        }
+        event_clauses = ["user_id=?"]
+        event_params: list[object] = [user_id]
+        for column, value in (
+            ("assistant_id", _clip(item.get("assistant_id"), 80)),
+            ("policy_kind", _clip(item.get("policy_kind"), 40)),
+            ("policy_version", max(1, int(item.get("policy_version") or 1))),
+        ):
+            if column in event_columns and value:
+                event_clauses.append(f"{column}=?")
+                event_params.append(value)
+        event_where = " AND ".join(event_clauses)
+        if not is_group:
+            waiting_sql = f"""SELECT 1 FROM proactive_events WHERE {event_where}
+                AND action='send' AND delivered_at<>'' AND responded_at='' AND error='' LIMIT 1"""
+            if conn.execute(waiting_sql, tuple(event_params)).fetchone():
+                _defer_policy(conn, user_id, "waiting_reply", "delivered_unanswered", current + interval, current, expected_policy=item)
+                continue
+        # One delivered private social message is the complete unanswered
+        # budget.  A stale stored limit of 2 must not authorize a nudge.
+        if not is_group and int(item.get("consecutive_unanswered") or 0) >= 1:
+            _defer_policy(conn, user_id, "waiting_reply", "unanswered_limit", current + interval, current, expected_policy=item)
             continue
         pending = conn.execute(
-            """SELECT 1 FROM proactive_events WHERE user_id=? AND action='send'
+            f"""SELECT 1 FROM proactive_events WHERE {event_where} AND action='send'
                AND delivered_at='' AND error='' LIMIT 1""",
-            (user_id,),
+            tuple(event_params),
         ).fetchone()
         if pending:
-            _defer_policy(conn, user_id, "delivery_pending", "delivery_pending", current + timedelta(minutes=15), current)
+            _defer_policy(conn, user_id, "delivery_pending", "delivery_pending", current + timedelta(minutes=15), current, expected_policy=item)
             continue
         zone = _timezone(item.get("timezone"))
         day_start = _period_start(current, zone, week=False)
         week_start = _period_start(current, zone, week=True)
         daily = conn.execute(
-            "SELECT COUNT(*) FROM proactive_events WHERE user_id=? AND action='send' AND decision_at>=?",
-            (user_id, timestamp(day_start)),
+            f"SELECT COUNT(*) FROM proactive_events WHERE {event_where} AND action='send' AND decision_at>=?",
+            (*event_params, timestamp(day_start)),
         ).fetchone()[0]
         weekly = conn.execute(
-            "SELECT COUNT(*) FROM proactive_events WHERE user_id=? AND action='send' AND decision_at>=?",
-            (user_id, timestamp(week_start)),
+            f"SELECT COUNT(*) FROM proactive_events WHERE {event_where} AND action='send' AND decision_at>=?",
+            (*event_params, timestamp(week_start)),
         ).fetchone()[0]
         if daily >= int(item["daily_limit"]):
             tomorrow = datetime.combine(current.astimezone(zone).date() + timedelta(days=1), time.min, tzinfo=zone)
-            _defer_policy(conn, user_id, "budget_wait", "daily_limit", tomorrow.astimezone(timezone.utc), current)
+            _defer_policy(conn, user_id, "budget_wait", "daily_limit", tomorrow.astimezone(timezone.utc), current, expected_policy=item)
             continue
         if weekly >= int(item["weekly_limit"]):
             next_week = datetime.combine(current.astimezone(zone).date() + timedelta(days=7-current.astimezone(zone).weekday()), time.min, tzinfo=zone)
-            _defer_policy(conn, user_id, "budget_wait", "weekly_limit", next_week.astimezone(timezone.utc), current)
+            _defer_policy(conn, user_id, "budget_wait", "weekly_limit", next_week.astimezone(timezone.utc), current, expected_policy=item)
             continue
         lease_until = timestamp(current + timedelta(minutes=5))
+        policy_columns = {
+            str(column[1]) for column in conn.execute("PRAGMA table_info(proactive_policies)")
+        }
+        generation_where, generation_params = _proactive_generation_where(item, policy_columns)
         updated = conn.execute(
-            """UPDATE proactive_policies SET state='evaluating', state_reason='', lease_until=?,
+            f"""UPDATE proactive_policies SET state='evaluating', state_reason='', lease_until=?,
                       last_evaluated_at=?, updated_at=?
-               WHERE user_id=? AND enabled=1 AND authorized=1
+               WHERE {generation_where} AND enabled=1 AND authorized=1
                  AND (lease_until='' OR lease_until<=?)""",
-            (lease_until, current_text, current_text, user_id, current_text),
+            (lease_until, current_text, current_text, *generation_params, current_text),
         )
         if updated.rowcount == 1:
-            item.update({"last_user_at": timestamp(last_user) if last_user else "", "lease_until": lease_until})
+            item.update({
+                "last_user_at": timestamp(last_user) if last_user else "",
+                "lease_until": lease_until,
+                "claim_token": current_text,
+            })
             claimed.append(item)
     return claimed
 
@@ -659,6 +999,15 @@ def record_proactive_decision(
 ) -> dict:
     ensure_automation_tables(conn)
     current = (now or utc_now()).astimezone(timezone.utc)
+    guarded_policy = _guard_proactive_claim(conn, policy)
+    if guarded_policy is None:
+        _cancel_decision_opportunity(conn, decision)
+        return _stale_proactive_claim(policy)
+    policy = guarded_policy
+    preflight_denial = _preflight_claimed_social_start(conn, policy, now=current)
+    if preflight_denial is not None:
+        _cancel_decision_opportunity(conn, decision)
+        return preflight_denial
     action = "send" if str(decision.get("action") or "").strip().lower() == "send" else "skip"
     intent = _clip(decision.get("intent") or ("check_in" if action == "send" else "silence"), 40)
     messaging_gate = policy_gate_if_present(conn, str(policy.get("user_id") or ""))
@@ -692,6 +1041,28 @@ def record_proactive_decision(
         next_minutes = max(15, min(int(decision.get("next_check_minutes") or policy.get("evaluation_interval_minutes") or 60), 10080))
     except (TypeError, ValueError):
         next_minutes = max(15, int(policy.get("evaluation_interval_minutes") or 60))
+    next_minutes = group_proactive.proactive_result_recheck_minutes(
+        policy_kind=_clip(policy.get("policy_kind") or "social", 40),
+        action=action,
+        requested_minutes=next_minutes,
+    )
+    if action == "skip" and _clip(policy.get("policy_kind") or "social", 40) == "social":
+        # Repeated silence is information, not a quota deficit. A new human
+        # inbound event resets this streak and may bring the next check forward.
+        recent = conn.execute(
+            """SELECT action,decision_at FROM proactive_events
+               WHERE user_id=? ORDER BY decision_at DESC LIMIT 3""",
+            (policy["user_id"],),
+        ).fetchall()
+        last_user = parse_datetime(policy.get("last_user_at"))
+        streak = 0
+        for prior in recent:
+            decided = parse_datetime(prior["decision_at"])
+            if prior["action"] != "skip" or (last_user and decided and decided <= last_user):
+                break
+            streak += 1
+        if streak >= 2:
+            next_minutes = max(next_minutes, min(60 * (2 ** min(streak, 4)), 960))
     topic_key = _clip(decision.get("topic_key"), 120)
     feature_table = conn.execute(
         """
@@ -757,6 +1128,9 @@ def record_proactive_decision(
         "approach": _clip(decision.get("approach"), 24),
         "meme_intent": _clip(decision.get("meme_intent") or "none", 16),
         "evidence_snapshot": decision.get("evidence_snapshot") or {},
+        # The proposal is hashed for idempotency but is not persisted until all
+        # final message gates below still resolve to a real send.
+        "interaction_plan": decision.get("interaction_plan") if isinstance(decision.get("interaction_plan"), dict) else {},
     }
     request_hash = hashlib.sha256(
         json.dumps(
@@ -796,6 +1170,39 @@ def record_proactive_decision(
         ).fetchone()
         if repeated:
             action, intent, reason, message, topic_key = "skip", "silence", "topic_cooldown", "", ""
+    opportunity_id = decision_payload["opportunity_id"]
+    if opportunity_id:
+        from bridge_social_opportunity import decide_opportunity
+
+        decide_opportunity(
+            conn,
+            opportunity_id,
+            {
+                "action": "reply" if action == "send" else "silent",
+                "reason_code": reason,
+                "why_now": decision_payload["why_now"] if action == "send" else "",
+                "topic_candidate_id": (
+                    decision_payload["topic_candidate_id"] if action == "send" else ""
+                ),
+                "approach": decision_payload["approach"] if action == "send" else "",
+                "confidence": decision.get("confidence", 1.0),
+                "meme_intent": decision_payload["meme_intent"],
+            },
+        )
+    if action == "send" and decision_payload["interaction_plan"]:
+        from bridge_interaction_repository import create_interaction_plan
+
+        interaction_plan = create_interaction_plan(
+            conn,
+            str(policy["user_id"]),
+            decision_payload["interaction_plan"],
+            request_source="qq",
+            classifier_source="proactive_agent_derived",
+        )
+        decision_payload["evidence_snapshot"] = {
+            **dict(decision_payload["evidence_snapshot"]),
+            "interaction_plan_id": interaction_plan["id"],
+        }
     jitter = max(0, min(int(policy.get("schedule_jitter_minutes") or 0), 180))
     if jitter:
         seed = int(hashlib.sha256(event_id.encode("ascii")).hexdigest()[:8], 16)
@@ -832,12 +1239,28 @@ def record_proactive_decision(
         if action == "send"
         else ("review_pending" if action == "review" else ("draft_pending" if action == "draft" else "scheduled"))
     )
-    conn.execute(
-        """UPDATE proactive_policies SET state=?, state_reason=?, next_check_at=?,
+    policy_where = "user_id=?"
+    policy_where_params: list[object] = [policy["user_id"]]
+    if _clip(policy.get("claim_token"), 80):
+        policy_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(proactive_policies)")
+        }
+        policy_where, policy_where_params = _proactive_claim_where(policy, policy_columns)
+    updated_policy = conn.execute(
+        f"""UPDATE proactive_policies SET state=?, state_reason=?, next_check_at=?,
                   lease_until='', decision_count=decision_count+1,
-                  skip_count=skip_count+?, updated_at=? WHERE user_id=?""",
-        (state, reason, timestamp(current + timedelta(minutes=next_minutes)), 1 if action == "skip" else 0, timestamp(current), policy["user_id"]),
+                  skip_count=skip_count+?, updated_at=? WHERE {policy_where}""",
+        (
+            state,
+            reason,
+            timestamp(current + timedelta(minutes=next_minutes)),
+            1 if action == "skip" else 0,
+            timestamp(current),
+            *policy_where_params,
+        ),
     )
+    if _clip(policy.get("claim_token"), 80) and updated_policy.rowcount != 1:
+        raise RuntimeError("proactive_claim_changed_during_record")
     saved = dict(conn.execute("SELECT * FROM proactive_events WHERE id=?", (event_id,)).fetchone())
     if action == "send" and stage_proactive_delivery(conn, policy, event_id, message):
         saved["action_staged"] = True
@@ -865,6 +1288,7 @@ __all__ = [
     "reserve_automation_items",
     "seconds_until_next_event",
     "settle_automation_dispatch",
+    "transition_automation_job_archive",
     "upsert_automation_job",
     "upsert_proactive_policy",
 ]

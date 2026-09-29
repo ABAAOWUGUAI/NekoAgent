@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 import hashlib
 import json
 import sqlite3
@@ -11,6 +12,9 @@ from bridge_migrations import MigrationDriftError, utc_now
 
 
 NATURAL_GROUP_PARTICIPATION_FEATURE_FLAG = "natural_group_participation_v1"
+GROUP_DAILY_REPLY_BUDGET_DEFAULT = 20000
+GROUP_DAILY_REPLY_BUDGET_MAX = 20000
+GROUP_PARTICIPATION_DAY_TIMEZONE = timezone(timedelta(hours=8), "Asia/Shanghai")
 # This field belongs to the existing group policy fact source.  Keep its
 # default closed so old policies cannot silently start consuming media.
 MEDIA_OBSERVATION_POLICY_FIELD = "media_observation_probability"

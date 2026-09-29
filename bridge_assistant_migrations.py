@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from bridge_group_state import apply_group_state_v1, GROUP_STATE_CHECKSUM, require_group_state_schema
 from typing import Mapping
 
 from bridge_migrations import (
@@ -74,6 +75,10 @@ from bridge_continuity_schema import (
     apply_assistant_continuity_v1,
     require_assistant_continuity_schema,
 )
+from bridge_scoped_memory_auto import (
+    SCOPED_MEMORY_MIGRATION_CHECKSUM,
+    apply_scoped_memory_auto_v1,
+)
 from bridge_living_wiki_schema import (
     LIVING_WIKI_MIGRATION_CHECKSUM,
     apply_living_wiki_v2,
@@ -105,10 +110,75 @@ from bridge_group_participation_schema import (
     apply_group_participation_v1,
     require_group_participation_schema,
 )
+from bridge_group_participation_window_schema import (
+    GROUP_PARTICIPATION_WINDOWS_MIGRATION_CHECKSUM,
+    apply_group_participation_windows_v1,
+    require_group_participation_windows_schema,
+)
+from bridge_behavior_observation_schema import (
+    BEHAVIOR_OBSERVATION_MIGRATION_CHECKSUM,
+    apply_behavior_observation_v1,
+    require_behavior_observation_schema,
+)
+from bridge_assistant_affect_shadow_schema import (
+    ASSISTANT_AFFECT_SHADOW_MIGRATION_CHECKSUM,
+    apply_assistant_affect_shadow_v1,
+    require_assistant_affect_shadow_schema,
+)
+from bridge_assistant_affect_runtime_schema import (
+    ASSISTANT_AFFECT_EXPRESSION_MIGRATION_CHECKSUM,
+    apply_assistant_affect_expression_v1,
+    require_assistant_affect_expression_schema,
+)
+from bridge_response_assessment_schema import (
+    RESPONSE_ASSESSMENT_MIGRATION_CHECKSUM,
+    apply_response_assessment_v1,
+    require_response_assessment_schema,
+)
+from bridge_behavior_benchmark_registry import (
+    BEHAVIOR_BENCHMARK_REFERENCE_MIGRATION_CHECKSUM,
+    apply_behavior_benchmark_registry_v1,
+    require_behavior_benchmark_registry_schema,
+)
+from bridge_behavior_candidate_registry import (
+    BEHAVIOR_POLICY_CANDIDATE_MIGRATION_CHECKSUM,
+    apply_behavior_candidate_registry_v1,
+    require_behavior_candidate_registry_schema,
+)
+from bridge_behavior_assistant_isolation import (
+    BEHAVIOR_ASSISTANT_ISOLATION_MIGRATION_CHECKSUM,
+    apply_behavior_assistant_isolation_v2,
+    require_behavior_assistant_isolation_schema,
+)
+from bridge_behavior_owner_authorization_schema import (
+    BEHAVIOR_OWNER_AUTHORIZATION_MIGRATION_CHECKSUM,
+    apply_behavior_owner_authorization_v1,
+    require_behavior_owner_authorization_schema,
+)
+from bridge_behavior_paired_shadow_schema import (
+    PAIRED_SHADOW_CUTOVER_MIGRATION_CHECKSUM,
+    apply_behavior_paired_shadow_cutover_v1,
+    require_behavior_paired_shadow_cutover_schema,
+)
 from bridge_group_topic_window_schema import (
     GROUP_TOPIC_WINDOW_MIGRATION_CHECKSUM,
     apply_group_topic_window_v1,
     require_group_topic_window_schema,
+)
+from bridge_group_topic_delivery_schema import (
+    GROUP_TOPIC_DELIVERY_MIGRATION_CHECKSUM,
+    apply_group_topic_delivery_v1,
+    require_group_topic_delivery_schema,
+)
+from bridge_group_research_schema import (
+    GROUP_RESEARCH_ADMITTED_SCOPE_MIGRATION_CHECKSUM,
+    GROUP_RESEARCH_MIGRATION_CHECKSUM,
+    GROUP_RESEARCH_QUERY_PRIVACY_MIGRATION_CHECKSUM,
+    apply_group_research_admitted_scope_v2,
+    apply_group_research_query_privacy_v3,
+    apply_group_research_v1,
+    require_group_research_schema,
+    require_group_research_scope_schema,
 )
 from bridge_action_commitment_schema import (
     ACTION_COMMITMENT_MIGRATION_CHECKSUM,
@@ -117,6 +187,7 @@ from bridge_action_commitment_schema import (
 )
 from bridge_knowledge_ingestion_schema import KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM, apply_knowledge_ingestion_v1, require_knowledge_ingestion_schema
 from bridge_executor_verification_schema import EXECUTOR_VERIFICATION_MIGRATION_CHECKSUM, EXECUTOR_VERIFICATION_REASON_CODE_CHECKSUM, apply_executor_verification_reason_code_v2, apply_executor_verification_v1, require_executor_verification_schema
+from bridge_qq_quality_receipt_schema import QUALITY_RECEIPT_MIGRATION
 from bridge_social_virtual_schema import SOCIAL_VIRTUAL_MIGRATION_CHECKSUM, apply_social_virtual_v1, require_social_virtual_schema
 from bridge_proactive_messaging_schema import (
     PROACTIVE_MESSAGING_MIGRATION_CHECKSUM,
@@ -148,6 +219,45 @@ from bridge_voice_transport_probe_schema import (
 from bridge_voice_migration_registry import VOICE_MIGRATIONS, require_voice_schemas
 from bridge_assistant_audit import audit, record_security_audit
 from bridge_assistant_schema_result import registered_assistant_schema_result
+from bridge_character_default_seed import (
+    PRIVATE_GREETING_DEFAULT_MIGRATION_CHECKSUM,
+    apply_private_greeting_default_v1,
+)
+from bridge_private_turn_idempotency import (
+    PRIVATE_TURN_MEMBER_MIGRATION_CHECKSUM,
+    apply_private_turn_member_dedupe_v1,
+    require_private_turn_member_schema,
+)
+from bridge_continuous_private_conversation_schema import (
+    CONTINUOUS_PRIVATE_CONVERSATION_MIGRATION_CHECKSUM,
+    apply_continuous_private_conversation_v1,
+    require_continuous_private_conversation_schema,
+)
+from bridge_response_cycle_recovery_schema import (
+    RESPONSE_CYCLE_RECOVERY_MIGRATION_CHECKSUM,
+    apply_response_cycle_recovery_v1,
+    require_response_cycle_recovery_schema,
+)
+from bridge_response_cycle_successor_schema import (
+    RESPONSE_CYCLE_SUCCESSOR_MIGRATION_CHECKSUM,
+    apply_response_cycle_successor_v1,
+    require_response_cycle_successor_schema,
+)
+from bridge_conversation_visual_schema import (
+    CONVERSATION_VISUAL_OBSERVATION_MIGRATION_CHECKSUM,
+    apply_conversation_visual_observation_v1,
+    require_conversation_visual_observation_schema,
+)
+from bridge_group_response_commitment_schema import (
+    GROUP_RESPONSE_COMMITMENT_MIGRATION_CHECKSUM,
+    apply_group_response_commitment_v1,
+    require_group_response_commitment_schema,
+)
+from bridge_persona_presets import (
+    PERSONA_PRESET_MIGRATION_CHECKSUM,
+    apply_persona_presets_v1,
+    require_persona_presets_schema,
+)
 
 
 ASSISTANT_CORE_NAMESPACE = "assistant-core"
@@ -371,11 +481,145 @@ ASSISTANT_CORE_MIGRATIONS = (
     Migration(version=38, name="knowledge_ingestion_v1", apply=apply_knowledge_ingestion_v1, checksum=KNOWLEDGE_INGESTION_MIGRATION_CHECKSUM),
     Migration(version=39, name="executor_verification_state_v1", apply=apply_executor_verification_v1, checksum=EXECUTOR_VERIFICATION_MIGRATION_CHECKSUM),
     Migration(version=40, name="executor_verification_reason_code_v2", apply=apply_executor_verification_reason_code_v2, checksum=EXECUTOR_VERIFICATION_REASON_CODE_CHECKSUM),
+    QUALITY_RECEIPT_MIGRATION,
+    Migration(version=42, name="group_topic_delivery_v1", apply=apply_group_topic_delivery_v1, checksum=GROUP_TOPIC_DELIVERY_MIGRATION_CHECKSUM),
+    Migration(version=43, name="group_research_v1", apply=apply_group_research_v1, checksum=GROUP_RESEARCH_MIGRATION_CHECKSUM),
+    Migration(
+        version=44,
+        name="group_research_admitted_scope_v2",
+        apply=apply_group_research_admitted_scope_v2,
+        checksum=GROUP_RESEARCH_ADMITTED_SCOPE_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=45,
+        name="group_participation_ambient_windows_v1",
+        apply=apply_group_participation_windows_v1,
+        checksum=GROUP_PARTICIPATION_WINDOWS_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=46,
+        name="behavior_observation_v1",
+        apply=apply_behavior_observation_v1,
+        checksum=BEHAVIOR_OBSERVATION_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=47,
+        name="assistant_affect_shadow_v1",
+        apply=apply_assistant_affect_shadow_v1,
+        checksum=ASSISTANT_AFFECT_SHADOW_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=48,
+        name="behavior_benchmark_reference_registry_v1",
+        apply=apply_behavior_benchmark_registry_v1,
+        checksum=BEHAVIOR_BENCHMARK_REFERENCE_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=49,
+        name="response_assessment_v1",
+        apply=apply_response_assessment_v1,
+        checksum=RESPONSE_ASSESSMENT_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=50,
+        name="group_research_query_privacy_v3",
+        apply=apply_group_research_query_privacy_v3,
+        checksum=GROUP_RESEARCH_QUERY_PRIVACY_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=51,
+        name="behavior_policy_candidate_registry_v1",
+        apply=apply_behavior_candidate_registry_v1,
+        checksum=BEHAVIOR_POLICY_CANDIDATE_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=52,
+        name="behavior_assistant_instance_isolation_v2",
+        apply=apply_behavior_assistant_isolation_v2,
+        checksum=BEHAVIOR_ASSISTANT_ISOLATION_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=53,
+        name="behavior_owner_authorization_v1",
+        apply=apply_behavior_owner_authorization_v1,
+        checksum=BEHAVIOR_OWNER_AUTHORIZATION_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=54,
+        name="behavior_paired_shadow_cutover_v1",
+        apply=apply_behavior_paired_shadow_cutover_v1,
+        checksum=PAIRED_SHADOW_CUTOVER_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=55,
+        name="private_character_greeting_default_v1",
+        apply=apply_private_greeting_default_v1,
+        checksum=PRIVATE_GREETING_DEFAULT_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=56,
+        name="private_turn_member_idempotency_v1",
+        apply=apply_private_turn_member_dedupe_v1,
+        checksum=PRIVATE_TURN_MEMBER_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=57,
+        name="continuous_private_conversation_v1",
+        apply=apply_continuous_private_conversation_v1,
+        checksum=CONTINUOUS_PRIVATE_CONVERSATION_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=58,
+        name="response_cycle_recovery_v1",
+        apply=apply_response_cycle_recovery_v1,
+        checksum=RESPONSE_CYCLE_RECOVERY_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=59,
+        name="group_response_commitment_v1",
+        apply=apply_group_response_commitment_v1,
+        checksum=GROUP_RESPONSE_COMMITMENT_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=60,
+        name="assistant_affect_expression_recovery_v1",
+        apply=apply_assistant_affect_expression_v1,
+        checksum=ASSISTANT_AFFECT_EXPRESSION_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=61,
+        name="response_cycle_successor_v1",
+        apply=apply_response_cycle_successor_v1,
+        checksum=RESPONSE_CYCLE_SUCCESSOR_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=62,
+        name="conversation_visual_observation_v1",
+        apply=apply_conversation_visual_observation_v1,
+        checksum=CONVERSATION_VISUAL_OBSERVATION_MIGRATION_CHECKSUM,
+    ),
+    Migration(version=63, name="qq_group_observation_v1", apply=apply_group_state_v1, checksum=GROUP_STATE_CHECKSUM),
+    Migration(
+        version=64,
+        name="persona_presets_v1",
+        apply=apply_persona_presets_v1,
+        checksum=PERSONA_PRESET_MIGRATION_CHECKSUM,
+    ),
+    Migration(
+        version=65,
+        name="scoped_qq_auto_memory_v1",
+        apply=apply_scoped_memory_auto_v1,
+        checksum=SCOPED_MEMORY_MIGRATION_CHECKSUM,
+    ),
 )
 
 
 def _validate_migration_history(conn: sqlite3.Connection) -> list[dict]:
     applied = applied_migrations(conn, ASSISTANT_CORE_NAMESPACE)
+    if any(int(item["version"]) == 63 for item in applied):
+        require_group_state_schema(conn)
+    if any(int(item["version"]) == 64 for item in applied):
+        require_persona_presets_schema(conn)
     definitions = {item.version: item for item in ASSISTANT_CORE_MIGRATIONS}
     unknown = sorted({int(item["version"]) for item in applied} - set(definitions))
     if unknown:
@@ -418,7 +662,26 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
     conversation_participation_schema = None
     conversation_participation_routing_schema = None
     group_participation_schema = None
+    group_participation_windows_schema = None
+    behavior_observation_schema = None
+    assistant_affect_shadow_schema = None
+    assistant_affect_expression_schema = None
+    behavior_benchmark_registry_schema = None
+    behavior_candidate_registry_schema = None
+    behavior_assistant_isolation_schema = None
+    behavior_owner_authorization_schema = None
+    behavior_paired_shadow_cutover_schema = None
+    private_turn_member_schema = None
+    continuous_private_conversation_schema = None
+    response_cycle_recovery_schema = None
+    response_cycle_successor_schema = None
+    conversation_visual_observation_schema = None
+    group_response_commitment_schema = None
+    persona_presets_schema = None
+    response_assessment_schema = None
     group_topic_window_schema = None
+    group_topic_delivery_schema = None
+    group_research_schema = None
     action_commitment_schema = None
     knowledge_ingestion_schema = None
     executor_verification_schema = None
@@ -470,8 +733,51 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         identity_source = identity_source_preflight(conn)
     if 23 in versions:
         group_participation_schema = require_group_participation_schema(conn)
+    if 45 in versions:
+        group_participation_windows_schema = require_group_participation_windows_schema(conn)
+    if 46 in versions:
+        behavior_observation_schema = require_behavior_observation_schema(conn)
+    if 47 in versions:
+        assistant_affect_shadow_schema = require_assistant_affect_shadow_schema(conn)
+    if 60 in versions:
+        assistant_affect_expression_schema = require_assistant_affect_expression_schema(conn)
+    if 48 in versions:
+        behavior_benchmark_registry_schema = require_behavior_benchmark_registry_schema(conn)
+    if 51 in versions:
+        behavior_candidate_registry_schema = require_behavior_candidate_registry_schema(conn)
+    if 52 in versions:
+        behavior_assistant_isolation_schema = require_behavior_assistant_isolation_schema(conn)
+    if 53 in versions:
+        behavior_owner_authorization_schema = require_behavior_owner_authorization_schema(conn)
+    if 54 in versions:
+        behavior_paired_shadow_cutover_schema = require_behavior_paired_shadow_cutover_schema(conn)
+    if 56 in versions:
+        private_turn_member_schema = require_private_turn_member_schema(conn)
+    if 57 in versions:
+        continuous_private_conversation_schema = require_continuous_private_conversation_schema(conn)
+    if 58 in versions:
+        response_cycle_recovery_schema = require_response_cycle_recovery_schema(conn)
+    if 61 in versions:
+        response_cycle_successor_schema = require_response_cycle_successor_schema(conn)
+    if 62 in versions:
+        conversation_visual_observation_schema = (
+            require_conversation_visual_observation_schema(conn)
+        )
+    if 59 in versions:
+        group_response_commitment_schema = require_group_response_commitment_schema(conn)
+    if 64 in versions:
+        persona_presets_schema = require_persona_presets_schema(conn)
+    if 49 in versions:
+        response_assessment_schema = require_response_assessment_schema(conn)
     if 36 in versions:
         group_topic_window_schema = require_group_topic_window_schema(conn)
+    if 42 in versions:
+        group_topic_delivery_schema = require_group_topic_delivery_schema(conn)
+    if 43 in versions:
+        group_research_schema = (
+            require_group_research_scope_schema(conn)
+            if 44 in versions else require_group_research_schema(conn)
+        )
     if 37 in versions:
         action_commitment_schema = require_action_commitment_schema(conn)
     if 38 in versions:
@@ -530,7 +836,26 @@ def assistant_core_migration_plan(conn: sqlite3.Connection) -> dict:
         "conversation_participation_schema": conversation_participation_schema,
         "conversation_participation_routing_schema": conversation_participation_routing_schema,
         "group_participation_schema": group_participation_schema,
+        "group_participation_windows_schema": group_participation_windows_schema,
+        "behavior_observation_schema": behavior_observation_schema,
+        "assistant_affect_shadow_schema": assistant_affect_shadow_schema,
+        "assistant_affect_expression_schema": assistant_affect_expression_schema,
+        "behavior_benchmark_registry_schema": behavior_benchmark_registry_schema,
+        "behavior_candidate_registry_schema": behavior_candidate_registry_schema,
+        "behavior_assistant_isolation_schema": behavior_assistant_isolation_schema,
+        "behavior_owner_authorization_schema": behavior_owner_authorization_schema,
+        "behavior_paired_shadow_cutover_schema": behavior_paired_shadow_cutover_schema,
+        "private_turn_member_schema": private_turn_member_schema,
+        "continuous_private_conversation_schema": continuous_private_conversation_schema,
+        "response_cycle_recovery_schema": response_cycle_recovery_schema,
+        "response_cycle_successor_schema": response_cycle_successor_schema,
+        "conversation_visual_observation_schema": conversation_visual_observation_schema,
+        "group_response_commitment_schema": group_response_commitment_schema,
+        "persona_presets_schema": persona_presets_schema,
+        "response_assessment_schema": response_assessment_schema,
         "group_topic_window_schema": group_topic_window_schema,
+        "group_topic_delivery_schema": group_topic_delivery_schema,
+        "group_research_schema": group_research_schema,
         "social_virtual_schema": social_virtual_schema,
         "proactive_messaging_schema": proactive_messaging_schema,
         "learning_schema": learning_schema,
@@ -614,8 +939,61 @@ def validate_registered_assistant_core(conn: sqlite3.Connection) -> dict:
     group_participation_schema = (
         require_group_participation_schema(conn) if 23 in versions else None
     )
+    group_participation_windows_schema = (
+        require_group_participation_windows_schema(conn) if 45 in versions else None
+    )
+    behavior_observation_schema = (
+        require_behavior_observation_schema(conn) if 46 in versions else None
+    )
+    assistant_affect_shadow_schema = (
+        require_assistant_affect_shadow_schema(conn) if 47 in versions else None
+    )
+    behavior_benchmark_registry_schema = (
+        require_behavior_benchmark_registry_schema(conn) if 48 in versions else None
+    )
+    behavior_candidate_registry_schema = (
+        require_behavior_candidate_registry_schema(conn) if 51 in versions else None
+    )
+    behavior_assistant_isolation_schema = (
+        require_behavior_assistant_isolation_schema(conn) if 52 in versions else None
+    )
+    behavior_owner_authorization_schema = (
+        require_behavior_owner_authorization_schema(conn) if 53 in versions else None
+    )
+    behavior_paired_shadow_cutover_schema = (
+        require_behavior_paired_shadow_cutover_schema(conn) if 54 in versions else None
+    )
+    private_turn_member_schema = (
+        require_private_turn_member_schema(conn) if 56 in versions else None
+    )
+    continuous_private_conversation_schema = (
+        require_continuous_private_conversation_schema(conn) if 57 in versions else None
+    )
+    response_cycle_recovery_schema = (
+        require_response_cycle_recovery_schema(conn) if 58 in versions else None
+    )
+    response_cycle_successor_schema = (
+        require_response_cycle_successor_schema(conn) if 61 in versions else None
+    )
+    conversation_visual_observation_schema = (
+        require_conversation_visual_observation_schema(conn) if 62 in versions else None
+    )
+    group_response_commitment_schema = (
+        require_group_response_commitment_schema(conn) if 59 in versions else None
+    )
+    response_assessment_schema = (
+        require_response_assessment_schema(conn) if 49 in versions else None
+    )
     group_topic_window_schema = (
         require_group_topic_window_schema(conn) if 36 in versions else None
+    )
+    group_topic_delivery_schema = (
+        require_group_topic_delivery_schema(conn) if 42 in versions else None
+    )
+    group_research_schema = (
+        require_group_research_scope_schema(conn)
+        if 44 in versions else require_group_research_schema(conn)
+        if 43 in versions else None
     )
     action_commitment_schema = (
         require_action_commitment_schema(conn) if 37 in versions else None

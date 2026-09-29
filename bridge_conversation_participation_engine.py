@@ -195,6 +195,14 @@ def deterministic_inbound_decision(
             reason=ParticipationReason.GROUP_DISABLED,
         )
 
+    if (conversation_frame or {}).get("bare_mention_repeat"):
+        return _decision(
+            event,
+            candidate=CandidateKind.INBOUND_DIRECT,
+            action=ParticipationAction.SILENT,
+            reason=ParticipationReason.CONTINUATION_ACKNOWLEDGEMENT,
+        )
+
     if event.reply_to_assistant:
         return _decision(
             event,
@@ -309,13 +317,12 @@ def deterministic_acknowledgement(
 ) -> str:
     if event.message_kind is not MessageKind.MENTION_ONLY:
         return ""
-    # A bare @ is an attention signal.  When the group has usable topic
-    # context, let the normal Interaction Plan and reply model interpret it;
-    # only context-free attention receives a deterministic acknowledgement.
-    if (conversation_frame or {}).get("topic_active"):
+    # An attention signal has no request text. Only a resolved quote or a
+    # recent uninterrupted exchange may use the existing one-reply path.
+    if (conversation_frame or {}).get("bare_mention_context_anchor"):
         return ""
     name = str(assistant_name or "助手").strip()
-    return f"{name}在。直接告诉我想聊什么，或要我做什么就可以。"
+    return f"{name}在，怎么啦？"
 
 
 __all__ = [

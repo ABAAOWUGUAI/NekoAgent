@@ -6,9 +6,15 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from typing import Callable
 
 import bridge_assistant_identity as assistant_identity
+from bridge_assistant_affect_observer import observe_visible_group_affect
+from bridge_group_response_assessment import (
+    build_group_response_assessment,
+    record_response_assessment,
+)
 from bridge_media_observation import select_media_observation
 from bridge_media_observation_helpers import (
     has_visual_attachment as _has_visual_attachment,
@@ -55,6 +61,7 @@ from bridge_group_truth_gate import (
     apply_group_final_truth_gate,
     apply_group_safety_gate,
 )
+from bridge_qq_quality_receipt import record_group_dispatch_quality_receipt
 from bridge_social_engine import (
     get_group_policy,
     group_hard_gate,
@@ -63,9 +70,9 @@ from bridge_social_engine import (
 )
 
 
-def _assistant_id(conn: sqlite3.Connection) -> str:
+def _assistant_id(conn: sqlite3.Connection, *, integrity_scope: str = "identity") -> str:
     try:
-        current = assistant_identity.current_assistant(conn)
+        current = assistant_identity.current_assistant(conn, integrity_scope=integrity_scope)
     except (sqlite3.Error, ValueError):
         current = None
     return str((current or {}).get("id") or "assistant-default")
@@ -80,8 +87,11 @@ def qq_participation_event(
     thread_ref: str,
     plain_text: str,
     is_mention: bool = False,
+    assistant_id: str = "",
 ):
-    assistant_id = _assistant_id(conn)
+    assistant_id = str(assistant_id or "").strip() or _assistant_id(
+        conn, integrity_scope="identity" if scope in {"group", "qq_group"} else "database",
+    )
     components = list(payload.get("message_components") or []) if isinstance(payload.get("message_components"), list) else []
     attachments = list(payload.get("attachments") or []) if isinstance(payload.get("attachments"), list) else []
     mentions = list(payload.get("mention_targets") or []) if isinstance(payload.get("mention_targets"), list) else []
@@ -150,19 +160,23 @@ def prepare_group_shadow(
         "reply_to_external_message_id": str(
             payload.get("reply_to_external_message_id") or ""
         )[:300],
+        # The QQ adapter verified the quoted sender against this event's bot
+        # ID.  Preserve only that role fact, never the quoted body or sender ID.
+        "reply_to_assistant": bool(
+            payload.get("reply_to_external_message_id")
+            and payload.get("reply_to_assistant")
+        ),
     }
     if _has_visual_attachment(event.attachments):
         media_policy = project_media_observation_policy(policy)
-        burst_count, daily_remaining = _media_budget_snapshot(conn, group_id, media_policy)
         media_decision = select_media_observation(
             event_id=event.event_id,
             participation_mode=str(media_policy.get("participation_mode") or ""),
             addressed=bool(is_mention or payload.get("reply_to_assistant") or payload.get("visual_question") or payload.get("media_question")),
             topic_active=bool(topic_active or payload.get("topic_active") or payload.get("_topic_active")),
             probability=media_policy.get("media_observation_probability", 0.0),
-            burst_count=burst_count,
-            daily_remaining=daily_remaining,
-            burst_limit=_media_burst_limit(media_policy),
+            burst_count=0,
+            daily_remaining=0,
         )
         metadata["media_observation"] = media_decision
     return event, retention, {
@@ -214,7 +228,10 @@ def record_group_inbound(
         },
     )
     current_id = int(current.get("id") or 0)
-    context = group_context(conn, group_id, int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT), preserve_latest_message_id=current_id)
+    context = group_context(
+        conn, group_id, int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
+        preserve_latest_message_id=current_id, min_remaining_seconds=600,
+    )
     # Preserve the current inbound body through this turn even when its
     # external event timestamp is delayed; later context reads still apply
     # retention and redaction rules.
@@ -234,6 +251,7 @@ def finalize_group_shadow(
     decision_override=None,
     conversation_frame: dict | None = None,
     interaction_decision: dict | None = None,
+    paired_shadow_runtime: dict | None = None,
 ) -> None:
     if event is None:
         return
@@ -308,6 +326,16 @@ def prepare_group_dispatch(
     deterministic_decision = None
     context_before = group_context(
         conn, group_id, int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
+        min_remaining_seconds=600,
+    )
+    try:
+        short_turn_participation = int(policy.get("short_turn_participation") or 1) != 0
+    except (TypeError, ValueError):
+        short_turn_participation = True
+    bare_mention = bool(
+        is_mention
+        and not str(payload.get("message") or "").strip()
+        and not payload.get("attachments")
     )
     conversation_frame = build_group_conversation_frame(
         context_before,
@@ -317,12 +345,17 @@ def prepare_group_dispatch(
             "content": message,
             "is_mention": is_mention,
             "reply_to_assistant": bool(payload.get("reply_to_assistant")),
+            "external_message_id": str(payload.get("_external_message_id") or ""),
+            "reply_to_external_message_id": str(
+                payload.get("reply_to_external_message_id") or ""
+            ),
             "attachments": list(payload.get("attachments") or []),
             "created_at": str(payload.get("_event_timestamp") or utc_now()),
-            "message_kind": "",
+            "message_kind": "mention_only" if bare_mention else "",
         },
         context_limit=int(policy.get("max_context") or DEFAULT_GROUP_CONTEXT_LIMIT),
         continuation_window_seconds=int(policy.get("continuation_window_seconds") or 120),
+        short_turn_participation=short_turn_participation,
     )
     if deterministic_participation_enabled(conn):
         probe_event = qq_participation_event(
@@ -340,16 +373,14 @@ def prepare_group_dispatch(
         # keep the event silent; its decision is now made after this preflight.
         if _has_visual_attachment(probe_event.attachments):
             media_policy = project_media_observation_policy(policy)
-            burst_count, daily_remaining = _media_budget_snapshot(conn, group_id, media_policy)
             conversation_frame["media_observation"] = select_media_observation(
                 event_id=probe_event.event_id,
                 participation_mode=str(media_policy.get("participation_mode") or ""),
                 addressed=bool(is_mention or payload.get("reply_to_assistant") or payload.get("visual_question") or payload.get("media_question")),
                 topic_active=bool(conversation_frame.get("topic_active") or payload.get("topic_active") or payload.get("_topic_active")),
                 probability=media_policy.get("media_observation_probability", 0.0),
-                burst_count=burst_count,
-                daily_remaining=daily_remaining,
-                burst_limit=_media_burst_limit(media_policy),
+                burst_count=0,
+                daily_remaining=0,
             )
         deterministic_decision = deterministic_inbound_decision(
             probe_event,
@@ -366,22 +397,51 @@ def prepare_group_dispatch(
             is_mention=is_mention,
             continuation_candidate=bool(conversation_frame.get("active_continuation")),
         )
-    event, current, context = record_group_inbound(
-        conn,
-        payload,
-        policy=policy,
-        group_id=group_id,
-        sender_id=sender_id,
-        sender_name=sender_name,
-        session=session,
-        plain_text=message,
-        is_mention=is_mention,
-        allowed=allowed,
-        reason=reason,
-    )
+    is_directed = bool(is_mention or payload.get("reply_to_assistant"))
+    ingress_started = time.monotonic()
+    try:
+        event, current, context = record_group_inbound(
+            conn,
+            payload,
+            policy=policy,
+            group_id=group_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            session=session,
+            plain_text=message,
+            is_mention=is_mention,
+            allowed=allowed,
+            reason=reason,
+        )
+    except sqlite3.OperationalError as exc:
+        code = "sqlite_busy" if "locked" in str(exc).lower() or "busy" in str(exc).lower() else "sqlite_error"
+        print(f"group_voice_stage stage=ingress_write group_id={group_id} elapsed_ms={int((time.monotonic()-ingress_started)*1000)} status={code}", flush=True)
+        raise
+    print(f"group_voice_stage stage=ingress_write group_id={group_id} elapsed_ms={int((time.monotonic()-ingress_started)*1000)} status=ok", flush=True)
     policy = get_group_policy(conn, group_id) or policy
     natural_guard = None
-    is_directed = bool(is_mention or payload.get("reply_to_assistant"))
+    # BE-3 observes the current visible event only while it is already in the
+    # channel path.  Its stored output is opaque, short-lived and Shadow-only;
+    # a detector failure must never suppress this inbound turn or change its
+    # delivery/permission path.
+    try:
+        observe_visible_group_affect(
+            conn,
+            group_id=group_id,
+            sender_id=sender_id,
+            source_message_id=(
+                current.get("external_message_id")
+                or payload.get("_external_message_id")
+                or current.get("id")
+                or ""
+            ),
+            message=message,
+            directed_to_assistant=is_directed,
+            assistant_id=str(getattr(event, "assistant_id", "") or ""),
+            topic_revision=int(current.get("id") or 0),
+        )
+    except (sqlite3.Error, ValueError):
+        pass
     if (
         deterministic_decision is None
         and natural_group_participation_enabled(conn)
@@ -571,6 +631,7 @@ def complete_group_dispatch(
     result: dict,
     assistant_name: str,
     conversation_frame: dict | None = None,
+    paired_shadow_runtime: dict | None = None,
 ) -> bool:
     reply = str(result.get("reply") or "").strip()
     result.update(media_trace_categories(conversation_frame))
@@ -583,7 +644,28 @@ def complete_group_dispatch(
     # and deterministic truth issues (media claim without evidence, fabricated
     # experience, unsupported fact, target mismatch, sycophantic agreement,
     # signature overuse) block the Delivery enqueue.
-    reply = apply_group_final_truth_gate(result, conversation_frame)
+    reply_obligation = bool(
+        current.get("reply_to_assistant")
+        or current.get("is_mention")
+        or payload.get("reply_to_assistant")
+        or payload.get("is_mention")
+        or str((conversation_frame or {}).get("attention") or "")
+        in {"reply_to_assistant", "explicit_mention"}
+    )
+    # The final persona boundary needs the same concrete turn and dynamic
+    # Assistant identity as generation.  Bind both before the gate; setting the
+    # name only after a successful reply made identity corrections generic.
+    result["group_request_text"] = str(
+        result.get("group_request_text", "")
+        if (result.get("_group_quality_context") or {}).get("anchor_message_id")
+        else current.get("content") or payload.get("message") or ""
+    )[:4000]
+    result["assistant_name"] = str(assistant_name or "助手")[:120]
+    reply = apply_group_final_truth_gate(
+        result,
+        conversation_frame,
+        reply_obligation=reply_obligation,
+    )
     planned_reply = bool(result.get("ok") and reply)
     finalize_group_shadow(
         conn,
@@ -606,15 +688,83 @@ def complete_group_dispatch(
         # actual assistant message and flips this inbound row to ``replied``.
         replied=False,
     )
+    receipt_decision_id = str(
+        getattr(deterministic_decision, "decision_id", "")
+        or current.get("engagement_decision_id")
+        or ""
+    )
+    receipt = record_group_dispatch_quality_receipt(
+        conn,
+        result=result,
+        decision=decision,
+        group_id=group_id,
+        inbound_ref=str(
+            current.get("external_message_id")
+            or payload.get("_external_message_id")
+            or getattr(event, "event_id", "")
+            or ""
+        ),
+        decision_id=receipt_decision_id,
+        event_ref=str(getattr(event, "event_id", "") or ""),
+        conversation_frame=conversation_frame,
+    )
+    if receipt:
+        # The opaque ID travels only inside the Delivery payload so settlement
+        # can join ACK facts back to this body-free decision receipt.
+        result["_quality_receipt_id"] = str(receipt["id"])
+        # A direct @/reply has a different product promise from ambient
+        # participation.  When its final Quality Receipt says no response was
+        # possible, add a default-off, body-free outcome observation.  This
+        # cannot turn a blocked turn into a send or alter the established
+        # Truth/Quality decision.
+        try:
+            from bridge_behavior_observation import observe_reply_obligation_receipt
+
+            if str(receipt.get("delivery_status") or "") not in {"generated", "pending", "queued"}:
+                observe_reply_obligation_receipt(
+                    conn,
+                    receipt,
+                    conversation_frame=conversation_frame,
+                )
+        except (sqlite3.Error, ValueError):
+            pass
+    # The assessment is a fact-first internal decision trace, not a reply
+    # template.  Its feature plane is default-off, and no assessment result is
+    # copied into Delivery, Memory, Knowledge, Relationship or Affect.
+    try:
+        assessment = build_group_response_assessment(
+            group_id=group_id,
+            sender_id=str(current.get("sender_id") or payload.get("sender_id") or ""),
+            source_message_id=(
+                current.get("external_message_id")
+                or payload.get("_external_message_id")
+                or current.get("id")
+                or ""
+            ),
+            topic_revision=int(current.get("id") or 0),
+            decision=decision,
+            result=result,
+            conversation_frame=conversation_frame,
+            research_context=result.get("group_research") if isinstance(result.get("group_research"), dict) else {},
+        )
+        if receipt:
+            record_response_assessment(
+                conn,
+                assessment,
+                source_kind="quality-receipt",
+                source_ref="quality-receipt:" + str(receipt["id"]),
+                assistant_id=str(getattr(event, "assistant_id", "") or ""),
+            )
+    except (TypeError, ValueError, sqlite3.Error):
+        # Assessment evidence is additive at this gate.  The established
+        # Truth/Quality path remains the enforcement and must not be weakened
+        # by an observation-plane storage problem.
+        pass
     if planned_reply:
         # ``finalize_group_shadow`` persists the authoritative decision, while
         # ``current`` still holds the preliminary AC-1 projection.  Carry the
         # final ID into Delivery; do not fabricate a bot context row yet.
-        result["engagement_decision_id"] = str(
-            getattr(deterministic_decision, "decision_id", "")
-            or current.get("engagement_decision_id")
-            or ""
-        )
+        result["engagement_decision_id"] = receipt_decision_id
         result["assistant_name"] = str(assistant_name or "助手")
     return planned_reply
 
@@ -630,7 +780,16 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
     group_id = str(payload.get("group_id") or "").strip()
     content = str(payload.get("content") or "").strip()[:4000]
     delivery_id = str(delivery.get("id") or "").strip()
-    if payload.get("kind") != "assistant_reply" or not group_id or not content or not delivery_id:
+    meme = payload.get('meme') if isinstance(payload.get('meme'), dict) else {}
+    image_only = bool(not content and payload.get('delivery_form') == 'sticker_only'
+                      and str(meme.get('selection_id') or '').strip()
+                      and str(meme.get('public_url') or '').startswith(('https://', 'http://', '/memes/assets/'))
+                      and (delivery.get('acked_at') or delivery.get('delivery_certainty') == 'confirmed'))
+    if image_only:
+        # Project the actually sent component, not a draft that the client never
+        # received. This enables the existing ACK/receipt/reply-count settlement.
+        content = '（发送了一张表情包）'
+    if payload.get("kind") not in {"assistant_reply", "assistant_voice_reply", "proactive_chat"} or not group_id or not content or not delivery_id:
         return None
     source_message_id = str(payload.get("source_message_id") or delivery.get("source_message_id") or "").strip()
     existing = conn.execute(
@@ -663,7 +822,9 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
             "source_external_message_id": source_message_id,
             "dispatch": str(payload.get("response_kind") or ""),
             "social_action": str(payload.get("social_action") or ""),
+            "proactive_event_id": str(payload.get("proactive_event_id") or ""),
             "delivery_state": "confirmed",
+            "delivery_form": str(payload.get('delivery_form') or 'text'),
             "media_trace": {
                 key: media_trace[key]
                 for key in (
@@ -712,15 +873,19 @@ def confirm_group_delivery(conn: sqlite3.Connection, delivery: dict) -> dict | N
         conn,
         group_id=group_id,
         replied_at=now,
-        count_towards_budget=bool(payload.get("uninvited_group_action")),
+        count_towards_budget=bool(
+            payload.get("uninvited_group_action") or payload.get("kind") == "proactive_chat"
+        ),
     )
-    transition_group_participation(
-        conn,
-        decision_id=str(delivery.get("engagement_decision_id") or ""),
-        stage="ack_confirmed",
-        action="contextual_participation",
-        reason_code="delivery_confirmed",
-    )
+    engagement_decision_id = str(delivery.get("engagement_decision_id") or "").strip()
+    if engagement_decision_id:
+        transition_group_participation(
+            conn,
+            decision_id=engagement_decision_id,
+            stage="ack_confirmed",
+            action="contextual_participation",
+            reason_code="delivery_confirmed",
+        )
     message_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
     return {
         "projected": True,

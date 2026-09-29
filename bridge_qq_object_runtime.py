@@ -149,6 +149,18 @@ class QqObjectRuntime:
         }
 
     def handle_get(self, request, path: str, query: dict, principal: PrincipalKind) -> bool:
+        if path == "/assistant/qq-memories":
+            if principal not in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN, PrincipalKind.ADMIN_GATEWAY}:
+                return self._failure(request, PermissionError("forbidden"))
+            try:
+                from bridge_scoped_memory_auto import list_scoped_memory_management
+                with self._assistant_db_connect() as conn:
+                    items = list_scoped_memory_management(conn,
+                        self._query_value(query,"channel"), self._query_value(query,"subject_id"))
+            except Exception as exc:
+                return self._failure(request, exc)
+            self._json_response(request, 200, {"ok": True, "memories": items})
+            return True
         if path == "/qq/object-access/cutover":
             if principal not in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN}:
                 return self._failure(request, PermissionError("forbidden"))
@@ -174,12 +186,18 @@ class QqObjectRuntime:
                 return True
             if path == "/assistant/memories":
                 user_id = self._query_value(query, "user_id", "web-console")
-                memories = self._list_memories(
-                    user_id=user_id,
-                    query=self._query_value(query, "q"),
-                    limit=max(1, min(int(self._query_value(query, "limit", "20")), 100)),
-                    request_source="admin", owner_management=True,
-                )
+                try:
+                    memories = self._list_memories(
+                        user_id=user_id,
+                        query=self._query_value(query, "q"),
+                        limit=max(1, min(int(self._query_value(query, "limit", "20")), 100)),
+                        request_source="admin", owner_management=True, fail_on_read_error=True,
+                    )
+                except RuntimeError as exc:
+                    if str(exc) != "memory_read_failed":
+                        raise
+                    self._json_response(request, 503, {"ok": False, "error": "memory_read_failed"})
+                    return True
                 self._json_response(request, 200, {"ok": True, "memories": memories})
                 return True
             if path == "/tasks/stats":
@@ -313,6 +331,19 @@ class QqObjectRuntime:
         payload: dict,
         principal: PrincipalKind,
     ) -> bool:
+        if path == "/assistant/qq-memories":
+            if principal not in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN, PrincipalKind.ADMIN_GATEWAY}:
+                return self._failure(request, PermissionError("forbidden"))
+            try:
+                from bridge_scoped_memory_auto import mutate_scoped_memory_management
+                with self._assistant_db_connect() as conn:
+                    result = mutate_scoped_memory_management(conn,
+                        str(payload.get("channel") or ""),
+                        str(payload.get("subject_id") or ""), payload)
+            except Exception as exc:
+                return self._failure(request, exc)
+            self._json_response(request, 200, {"ok": True, **result})
+            return True
         if path == "/qq/object-access/cutover":
             if principal not in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN}:
                 return self._failure(request, PermissionError("forbidden"))

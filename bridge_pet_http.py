@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Callable
 from urllib.parse import unquote
 
-from bridge_pet_service import delete_pet_pack, import_pet_pack, pet_asset, pet_state, save_pet_settings
+from bridge_pet_service import delete_pet_pack, import_pet_pack, pet_asset, pet_portrait_asset, pet_state, save_pet_settings
+from bridge_public_admin_policy import PolicyError, match_public_admin_request
 
 
 class PetHttpApi:
@@ -21,6 +23,22 @@ class PetHttpApi:
             with self._db_connect() as conn:
                 state = pet_state(conn)
             self._json_response(request, 200, {"ok": True, "pet": state})
+            return True
+        if re.fullmatch(r"/assistant/pets/assets/[^/]+/portrait", path):
+            try:
+                matched = match_public_admin_request("GET", request.path, browser=False)
+                pack_id = matched.canonical_path.split("/")[-2]
+                version = dict(matched.query)["v"]
+            except (PolicyError, KeyError):
+                self._json_response(request, 400, {"ok": False, "error": "invalid_portrait_request"})
+                return True
+            with self._db_connect() as conn:
+                asset = pet_portrait_asset(conn, pack_id, version)
+            if asset is None:
+                self._json_response(request, 404, {"ok": False, "error": "pet_portrait_not_found"})
+                return True
+            data, mime = asset
+            self._binary_response(request, 200, data, mime, cache_control="private, max-age=3600", etag=hashlib.sha256(data).hexdigest())
             return True
         if path.startswith("/assistant/pets/assets/"):
             pack_id = unquote(path.rsplit("/", 1)[-1])

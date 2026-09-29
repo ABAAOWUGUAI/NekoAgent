@@ -25,6 +25,10 @@ SENSITIVE_RE = re.compile(
     r"(?i)(api[_ -]?key|token|password|passwd|secret|private[_ -]?key|cookie|"
     r"access[_ -]?key|sk-[A-Za-z0-9_-]{8,})",
 )
+PRIVATE_SENSITIVE_TOPIC_RE = re.compile(
+    r"(?:抑郁|焦虑症|诊断|药物|病史|收入|负债|银行卡|住址|家庭地址|政治立场|宗教|性取向|身份证)"
+)
+REPORTED_TOPIC_RE = re.compile(r"(?:朋友|同事|他|她|别人|原文|引用).{0,8}(?:说|写|表示)|[“‘\"]")
 LOW_RISK_EXPRESSION_TYPES = {"prefer", "avoid"}
 
 # This is an admission policy, not a list of things the model may infer. A
@@ -55,7 +59,7 @@ LEARNING_ADMISSION_POLICY = {
 }
 
 LEARNING_NEVER_AUTOMATIC = (
-    "事实、跨会话记忆、知识库、关系状态、权限、审批、网络、模型凭据、Skill、代码与敏感内容"
+    "敏感或无来源事实、群聊记忆、知识库、关系状态、权限、审批、网络、模型凭据、Skill与代码"
 )
 
 
@@ -333,6 +337,180 @@ def capture_owner_group_expression_candidate(
     )
 
 
+def _private_topic_phrase(content: str) -> tuple[str, str, bool]:
+    """Admit only narrow source-backed self-statements or repeated praise."""
+    text = str(content or "").strip()
+    match = re.fullmatch(r"我(不喜欢|喜欢|更喜欢|偏好)([^，。！？!?；;]{2,40})", text)
+    if match:
+        return ("avoid" if match.group(1) == "不喜欢" else "prefer", match.group(2).strip(), True)
+    match = re.fullmatch(r"([^，。！？!?；;]{2,40})(?:不错|挺好|很有意思|真有意思)", text)
+    if match and not any(token in match.group(1) for token in ("他", "她", "朋友", "别人", "听说")):
+        return "prefer", match.group(1).strip(), False
+    return "", "", False
+
+
+def capture_private_topic_signal(conn: sqlite3.Connection, memory_candidate_id: str) -> dict | None:
+    """Two distinct human sources, not two deliveries, authorize implicit trial."""
+    if not low_risk_learning_enabled(conn):
+        return None
+    row = conn.execute(
+        """SELECT c.*,t.channel_type,t.external_thread_ref
+           FROM memory_candidates AS c JOIN conversation_threads AS t ON t.id=c.source_thread_id
+           WHERE c.id=? AND c.scope_type='thread' AND c.kind='preference'
+             AND t.channel_type='qq_private'""", (memory_candidate_id,),
+    ).fetchone()
+    if not row or row["status"] not in {"accepted", "pending", "merged"} or not row["source_message_id"]:
+        return None
+    source = conn.execute(
+        """SELECT id,content,actor_ref FROM conversation_messages
+           WHERE id=? AND thread_id=? AND role='user'""",
+        (row["source_message_id"], row["source_thread_id"]),
+    ).fetchone()
+    if not source or (source["actor_ref"] and str(source["actor_ref"]) != str(row["subject_actor_ref"])):
+        return None
+    content = str(row["content"] or "")
+    source_text = str(source["content"] or "")
+    if source_text.count(content) != 1 or _sensitivity(content) == "sensitive" or PRIVATE_SENSITIVE_TOPIC_RE.search(content):
+        return None
+    source_offset = source_text.index(content)
+    if REPORTED_TOPIC_RE.search(source_text[max(0, source_offset - 40):source_offset]):
+        return None
+    mode, topic, explicit = _private_topic_phrase(content)
+    if not topic or len(topic) > 40:
+        return None
+    canonical_id = str(row["duplicate_of"] or row["id"])
+    assistant_id, owner_actor_id = _active_assistant(conn)
+    user_id = str(row["external_thread_ref"])
+    topic_digest = hashlib.sha256(f"{mode}\0{topic}".encode("utf-8")).hexdigest()
+    signal = record_learning_signal(
+        conn, actor_ref=user_id, channel_type="qq_private",
+        thread_id=str(row["source_thread_id"]), source_message_id=str(source["id"]),
+        signal_type="private_topic_content", domain="topic_direction",
+        payload={"topic_digest": topic_digest, "source_candidate_id": canonical_id,
+                 "explicit": explicit},
+        confidence=0.95 if explicit else 0.72,
+        consent_basis="explicit_self_preference" if explicit else "repeated_positive_content",
+        message_for_sensitivity=content,
+    )
+    signals = conn.execute(
+        """SELECT source_message_id,payload_json FROM learning_signals
+           WHERE assistant_id=? AND actor_ref=? AND channel_type='qq_private'
+             AND domain='topic_direction' AND signal_type='private_topic_content'""",
+        (assistant_id, user_id),
+    ).fetchall()
+    independent = set()
+    for item in signals:
+        source_id = str(item["source_message_id"] or "")
+        if not source_id or json.loads(str(item["payload_json"] or "{}")).get("topic_digest") != topic_digest:
+            continue
+        source_candidates = conn.execute(
+            """SELECT status,content,conflict_with FROM memory_candidates
+               WHERE assistant_id=? AND scope_type='thread' AND subject_actor_ref=?
+                 AND source_message_id=?""",
+            (assistant_id, str(row["subject_actor_ref"]), source_id),
+        ).fetchall()
+        if any(
+            candidate["status"] in {"pending", "accepted", "merged"}
+            and not candidate["conflict_with"]
+            and _private_topic_phrase(str(candidate["content"] or ""))[:2] == (mode, topic)
+            and (
+                candidate["status"] != "accepted"
+                or conn.execute(
+                    """SELECT 1 FROM memory_records WHERE assistant_id=? AND status='active'
+                       AND source_message_id=? AND content=? LIMIT 1""",
+                    (assistant_id, source_id, candidate["content"]),
+                ).fetchone()
+            )
+            for candidate in source_candidates
+        ):
+            independent.add(source_id)
+    evidence_count = len(independent)
+    key = "topic:" + topic_digest[:24]
+    existing = conn.execute(
+        """SELECT * FROM learning_candidates WHERE assistant_id=? AND subject_type='private_user'
+           AND subject_id=? AND domain='topic_direction' AND candidate_key=?
+           AND status NOT IN ('rejected','expired','superseded') ORDER BY updated_at DESC LIMIT 1""",
+        (assistant_id, user_id, key),
+    ).fetchone()
+    if existing and existing["status"] in {"trial", "stable"}:
+        return dict(existing)
+    if row["conflict_with"]:
+        status = "needs_confirmation"
+    else:
+        status = "trial" if explicit or evidence_count >= 2 else "candidate"
+    value = {"mode": mode, "topic_digest": topic_digest, "memory_candidate_id": canonical_id}
+    now = utc_now()
+    candidate_id = str(existing["id"]) if existing else "learning-candidate-" + uuid.uuid4().hex
+    expiry = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat() if status == "trial" else ""
+    if existing:
+        conn.execute(
+            """UPDATE learning_candidates SET value_json=?,status=?,evidence_count=?,
+               source_signal_id=?,trial_expires_at=?,updated_at=? WHERE id=?""",
+            (_json(value), status, evidence_count, signal["id"], expiry, now, candidate_id),
+        )
+    else:
+        conn.execute(
+            """INSERT INTO learning_candidates(
+               id,assistant_id,owner_actor_id,subject_type,subject_id,scope_type,scope_id,
+               domain,candidate_key,value_json,status,risk_level,confidence,evidence_count,
+               source_signal_id,conflict_with,supersedes_id,trial_expires_at,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (candidate_id, assistant_id, owner_actor_id, "private_user", user_id,
+             "private_user", "user:" + user_id, "topic_direction", key, _json(value),
+             status, "low", 0.95 if explicit else 0.72, evidence_count,
+             signal["id"], str(row["conflict_with"] or ""), "", expiry, now, now),
+        )
+    if status == "trial":
+        apply_learning_candidate(conn, candidate_id, reason="source_backed_private_topic_trial")
+    return dict(conn.execute("SELECT * FROM learning_candidates WHERE id=?", (candidate_id,)).fetchone())
+
+
+def active_private_topic_constraints(conn: sqlite3.Connection, *, user_id: str) -> dict[str, list[str]]:
+    """Read only live, scoped trial applications; corrections disappear at once."""
+    assistant_id, _ = _active_assistant(conn)
+    now = utc_now()
+    rows = conn.execute(
+        """SELECT a.applied_value_json,c.trial_expires_at
+           FROM learning_applications AS a JOIN learning_candidates AS c ON c.id=a.candidate_id
+           WHERE a.assistant_id=? AND c.subject_type='private_user' AND c.subject_id=?
+             AND c.domain='topic_direction' AND c.status IN ('trial','stable')
+             AND a.target_type='topic_direction' AND a.status IN ('trial','accepted')""",
+        (assistant_id, str(user_id)),
+    ).fetchall()
+    result: dict[str, list[str]] = {"prefer": [], "avoid": []}
+    for item in rows:
+        if item["trial_expires_at"] and str(item["trial_expires_at"]) < now:
+            continue
+        try:
+            value = json.loads(str(item["applied_value_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        source_candidate = conn.execute(
+            "SELECT status,content,source_message_id FROM memory_candidates WHERE id=?",
+            (str(value.get("memory_candidate_id") or ""),),
+        ).fetchone()
+        if not source_candidate or source_candidate["status"] not in {"accepted", "pending"}:
+            continue
+        if source_candidate["status"] == "accepted":
+            live_memory = conn.execute(
+                """SELECT 1 FROM memory_records WHERE assistant_id=? AND status='active'
+                   AND source_message_id=? AND content=? LIMIT 1""",
+                (assistant_id, source_candidate["source_message_id"], source_candidate["content"]),
+            ).fetchone()
+            if not live_memory:
+                continue
+        mode, topic, _ = _private_topic_phrase(str(source_candidate["content"] or ""))
+        if mode in result and mode == value.get("mode") and topic and topic not in result[mode]:
+            result[mode].append(topic)
+    return {key: values[:6] for key, values in result.items()}
+
+
+def active_private_topic_preferences(conn: sqlite3.Connection, *, user_id: str) -> list[str]:
+    return active_private_topic_constraints(conn, user_id=user_id)["prefer"]
+
+
 def apply_learning_candidate(
     conn: sqlite3.Connection,
     candidate_id: str,
@@ -367,26 +545,32 @@ def apply_learning_candidate(
     target_id = "learning-" + hashlib.sha256(
         f"{row['subject_type']}\0{row['subject_id']}\0{row['candidate_key']}".encode("utf-8"),
     ).hexdigest()[:20]
-    previous = conn.execute("SELECT * FROM expression_habits WHERE id=?", (target_id,)).fetchone()
-    previous_value = dict(previous) if previous else {}
-    from bridge_social_experience import upsert_expression_habit
+    if row["domain"] == "topic_direction" and row["subject_type"] == "private_user":
+        target_type, previous_value, applied_value = "topic_direction", {}, value
+    elif row["domain"] == "expression":
+        previous = conn.execute("SELECT * FROM expression_habits WHERE id=?", (target_id,)).fetchone()
+        previous_value = dict(previous) if previous else {}
+        from bridge_social_experience import upsert_expression_habit
 
-    habit = upsert_expression_habit(
-        conn,
-        {
-            "id": target_id,
-            "situation": "由对话反馈形成的表达偏好",
-            "cues": "",
-            "style": value.get("style") or "",
-            "scope": "daily" if row["subject_type"] == "private_user" else "group",
-            "subject_type": row["subject_type"],
-            "subject_id": row["subject_id"],
-            "origin": "learning_trial",
-            "confidence": row["confidence"],
-            "priority": 16,
-            "enabled": 1,
-        },
-    )
+        applied_value = upsert_expression_habit(
+            conn,
+            {
+                "id": target_id,
+                "situation": "由对话反馈形成的表达偏好",
+                "cues": "",
+                "style": value.get("style") or "",
+                "scope": "daily" if row["subject_type"] == "private_user" else "group",
+                "subject_type": row["subject_type"],
+                "subject_id": row["subject_id"],
+                "origin": "learning_trial",
+                "confidence": row["confidence"],
+                "priority": 16,
+                "enabled": 1,
+            },
+        )
+        target_type = "expression_habit"
+    else:
+        raise ValueError("learning_candidate_target_invalid")
     app_id = "learning-application-" + uuid.uuid4().hex
     conn.execute(
         """
@@ -396,8 +580,8 @@ def apply_learning_candidate(
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            app_id, row["id"], row["assistant_id"], "expression_habit", target_id,
-            _json(previous_value), _json(habit),
+            app_id, row["id"], row["assistant_id"], target_type, target_id,
+            _json(previous_value), _json(applied_value),
             "accepted" if owner_confirmable_group_expression else "trial",
             _clip(reason, 120), utc_now(), "",
         ),
@@ -431,20 +615,26 @@ def record_learning_feedback(
         "SELECT * FROM learning_applications WHERE candidate_id=? ORDER BY applied_at DESC LIMIT 1",
         (candidate_id,),
     ).fetchone()
-    if feedback_type in {"undo", "reject"} and app:
+    if feedback_type in {"undo", "reject", "correct"} and app:
         target_id = str(app["target_id"])
         previous = json.loads(str(app["previous_value_json"] or "{}"))
-        if previous:
-            from bridge_social_experience import upsert_expression_habit
-            upsert_expression_habit(conn, previous)
-        else:
-            conn.execute("UPDATE expression_habits SET enabled=0,updated_at=? WHERE id=?", (utc_now(), target_id))
+        if app["target_type"] == "expression_habit":
+            if previous:
+                from bridge_social_experience import upsert_expression_habit
+                upsert_expression_habit(conn, previous)
+            else:
+                conn.execute("UPDATE expression_habits SET enabled=0,updated_at=? WHERE id=?", (utc_now(), target_id))
         conn.execute(
             "UPDATE learning_applications SET status='reverted',reverted_at=? WHERE id=?",
             (utc_now(), app["id"]),
         )
     status = "stable" if feedback_type == "accept" else "rejected" if feedback_type in {"reject", "undo"} else "needs_confirmation"
-    conn.execute("UPDATE learning_candidates SET status=?,updated_at=? WHERE id=?", (status, utc_now(), candidate_id))
+    conn.execute(
+        "UPDATE learning_candidates SET status=?,trial_expires_at=CASE WHEN ?='stable' THEN '' ELSE trial_expires_at END,updated_at=? WHERE id=?",
+        (status, status, utc_now(), candidate_id),
+    )
+    if feedback_type == "accept" and app and app["status"] == "trial":
+        conn.execute("UPDATE learning_applications SET status='accepted' WHERE id=?", (app["id"],))
     if feedback_type == "accept" and str(row["risk_level"]) == "medium":
         apply_learning_candidate(
             conn,
@@ -470,6 +660,46 @@ def record_learning_feedback(
     }
 
 
+def revoke_private_topic_applications_for_source(conn: sqlite3.Connection, source_message_id: str) -> int:
+    """Invalidate trials when their exact memory source is corrected or deleted."""
+    affected = set()
+    for signal in conn.execute(
+        """SELECT assistant_id,actor_ref,payload_json FROM learning_signals
+           WHERE source_message_id=? AND signal_type='private_topic_content'
+             AND domain='topic_direction'""",
+        (source_message_id,),
+    ).fetchall():
+        try:
+            digest = json.loads(str(signal["payload_json"] or "{}")).get("topic_digest")
+        except json.JSONDecodeError:
+            continue
+        if digest:
+            affected.add((str(signal["assistant_id"]), str(signal["actor_ref"]), str(digest)))
+    rows = conn.execute(
+        """SELECT a.id,a.applied_value_json,c.id AS candidate_id,
+                  c.assistant_id,c.subject_id FROM learning_applications AS a
+           JOIN learning_candidates AS c ON c.id=a.candidate_id
+           WHERE a.target_type='topic_direction' AND a.status IN ('trial','accepted')
+             AND c.domain='topic_direction'""",
+    ).fetchall()
+    count = 0
+    for item in rows:
+        value = json.loads(str(item["applied_value_json"] or "{}"))
+        if (str(item["assistant_id"]), str(item["subject_id"]),
+            str(value.get("topic_digest") or "")) in affected:
+            conn.execute(
+                "UPDATE learning_applications SET status='reverted',reverted_at=? WHERE id=?",
+                (utc_now(), item["id"]),
+            )
+            conn.execute(
+                """UPDATE learning_candidates SET status='needs_confirmation',updated_at=?
+                   WHERE id=? AND status IN ('trial','stable')""",
+                (utc_now(), item["candidate_id"]),
+            )
+            count += 1
+    return count
+
+
 def record_context_trace(
     conn: sqlite3.Connection,
     *,
@@ -481,7 +711,13 @@ def record_context_trace(
     decision: str,
     detail: Mapping[str, object] | None = None,
 ) -> dict:
-    assistant_id, _ = _active_assistant(conn)
+    # This prompt-side trace records an observation, not a learning admission.
+    # Check its Assistant identity without scanning unrelated chat-history FKs;
+    # the runtime connection enforces the trace row's Assistant FK on INSERT.
+    assistant = current_assistant(conn, integrity_scope="identity")
+    if not assistant:
+        raise ValueError("active_assistant_required")
+    assistant_id = str(assistant["id"])
     trace_id = "learning-trace-" + uuid.uuid4().hex
     conn.execute(
         """

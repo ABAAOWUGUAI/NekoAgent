@@ -20,11 +20,18 @@ READ_ACTIONS = frozenset({
     "service_status", "service_logs", "container_status", "container_list",
     "container_logs", "container_env", "container_file_exists", "qq_login_probe",
     "container_bridge_probe", "config_test", "qq_qrcode_info", "qq_qrcode_png",
+    "aiclient_proxy_status",
 })
 WRITE_ACTIONS = frozenset({
     "service_restart", "container_restart", "proxy_reload",
     "astrbot_plugin_set_enabled", "astrbot_plugin_operate",
     "admin_token_rotate",
+    "aiclient_proxy_save", "aiclient_proxy_test", "aiclient_proxy_apply",
+    "aiclient_proxy_rollback",
+    "proxy_select", "proxy_subscription_refresh", "proxy_subscription_switch",
+    "proxy_subscription_disable", "proxy_subscription_delete",
+    "proxy_subscription_create", "proxy_subscription_update",
+    "proxy_subscription_enable",
 })
 ALL_ACTIONS = READ_ACTIONS | WRITE_ACTIONS
 SERVICE_TARGETS = frozenset({
@@ -35,7 +42,8 @@ CONTAINER_TARGETS = frozenset({"astrbot", "maim-bot-napcat", "mihomo", "maim-bot
 ROOT_FIELDS = frozenset({"contract_version", "action", "target", "args", "approval"})
 ARG_FIELDS = frozenset({
     "lines", "timeout_seconds", "name", "path", "plugin_id", "enabled", "operation",
-    "new_token",
+    "new_token", "expected_revision", "subscription_key", "group", "node",
+    "apply_intent", "form_version", "url", "url_update_present",
 })
 APPROVAL_FIELDS = frozenset({"action_hash", "version", "idempotency_key", "expires_at"})
 
@@ -122,7 +130,7 @@ def validate_request(payload: Any, *, now: datetime | None = None) -> dict[str, 
         raise OpsBrokerContractError("config_test_target_forbidden")
     if action == "qq_login_probe" and target != "maim-bot-napcat":
         raise OpsBrokerContractError("qq_login_probe_target_forbidden")
-    if action in {"qq_qrcode_info", "qq_qrcode_png"} and target != "maim-bot-napcat":
+    if action in {"qq_qrcode_info", "qq_qrcode_png"} and target not in {"maim-bot-napcat", "llbot"}:
         raise OpsBrokerContractError("qq_qrcode_target_forbidden")
     if action == "container_bridge_probe" and target != "astrbot":
         raise OpsBrokerContractError("container_bridge_probe_target_forbidden")
@@ -132,10 +140,22 @@ def validate_request(payload: Any, *, now: datetime | None = None) -> dict[str, 
         raise OpsBrokerContractError("astrbot_plugin_target_forbidden")
     if action == "admin_token_rotate" and target != "bridge-admin-token":
         raise OpsBrokerContractError("admin_token_target_forbidden")
+    if action in {"aiclient_proxy_status", "aiclient_proxy_save", "aiclient_proxy_test", "aiclient_proxy_apply", "aiclient_proxy_rollback"} and target != "aiclient2api":
+        raise OpsBrokerContractError("aiclient_proxy_target_forbidden")
+    if action.startswith("proxy_subscription_") and target != "mihomo":
+        raise OpsBrokerContractError("proxy_subscription_target_forbidden")
+    if action == "proxy_select" and target != "mihomo":
+        raise OpsBrokerContractError("proxy_select_target_forbidden")
 
     args = _object(root.get("args") or {}, "args")
     _unknown_fields(args, ARG_FIELDS, "args")
     normalized_args: dict[str, Any] = {}
+    subscription_revision_actions = {
+        "proxy_subscription_create", "proxy_subscription_update",
+        "proxy_subscription_refresh", "proxy_subscription_enable",
+        "proxy_subscription_disable", "proxy_subscription_delete",
+        "proxy_subscription_switch",
+    }
     if "lines" in args:
         lines = args["lines"]
         if isinstance(lines, bool) or not isinstance(lines, int) or not 1 <= lines <= 500:
@@ -143,7 +163,8 @@ def validate_request(payload: Any, *, now: datetime | None = None) -> dict[str, 
         normalized_args["lines"] = lines
     if "timeout_seconds" in args:
         timeout = args["timeout_seconds"]
-        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 30:
+        maximum_timeout = 120 if action == "aiclient_proxy_test" else 30
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= maximum_timeout:
             raise OpsBrokerContractError("args.timeout_seconds_out_of_range")
         normalized_args["timeout_seconds"] = timeout
     if action == "container_env":
@@ -151,6 +172,10 @@ def validate_request(payload: Any, *, now: datetime | None = None) -> dict[str, 
         if name != "ASSISTANT_PLATFORM_BRIDGE_URL":
             raise OpsBrokerContractError("args.name_forbidden")
         normalized_args["name"] = name
+    elif action in {
+        "proxy_subscription_create", "proxy_subscription_update",
+    }:
+        normalized_args["name"] = _string(args.get("name"), "args.name", max_length=64)
     elif "name" in args:
         raise OpsBrokerContractError("args.name_not_supported")
     if action == "container_file_exists":
@@ -171,13 +196,93 @@ def validate_request(payload: Any, *, now: datetime | None = None) -> dict[str, 
         normalized_args["plugin_id"] = plugin_id
     elif "plugin_id" in args:
         raise OpsBrokerContractError("args.plugin_id_not_supported")
+    consumer_selection_actions = {"aiclient_proxy_save"}
+    if action in consumer_selection_actions:
+        enabled = args.get("enabled")
+        if not isinstance(enabled, bool):
+            raise OpsBrokerContractError("args.enabled_boolean_required")
+        normalized_args["enabled"] = enabled
+        for field, maximum in (("subscription_key", 128), ("group", 128), ("node", 192), ("form_version", 96)):
+            normalized_args[field] = _string(args.get(field), f"args.{field}", max_length=maximum)
+        if normalized_args["group"] != "Proxies":
+            raise OpsBrokerContractError("args.group_forbidden")
+        intent = _string(args.get("apply_intent"), "args.apply_intent", max_length=40)
+        if intent != "controlled_mihomo":
+            raise OpsBrokerContractError("args.apply_intent_forbidden")
+        normalized_args["apply_intent"] = intent
+    elif any(field in args for field in ("subscription_key", "group", "node", "apply_intent", "form_version")):
+        if action not in {
+            "proxy_subscription_refresh", "proxy_subscription_switch",
+            "proxy_subscription_disable", "proxy_subscription_delete",
+            "proxy_subscription_create", "proxy_subscription_update",
+            "proxy_subscription_enable", "proxy_select",
+        }:
+            raise OpsBrokerContractError("args.consumer_selection_not_supported")
+    if action == "proxy_select":
+        if "group" in args:
+            raise OpsBrokerContractError("args.group_not_supported")
+        normalized_args["subscription_key"] = _string(
+            args.get("subscription_key"), "args.subscription_key", max_length=128,
+        )
+        normalized_args["node"] = _string(args.get("node"), "args.node", max_length=192)
+    if action.startswith("proxy_subscription_"):
+        key = args.get("subscription_key")
+        if action != "proxy_subscription_create" or key not in {None, ""}:
+            normalized_args["subscription_key"] = _string(key, "args.subscription_key", max_length=128)
+        if action == "proxy_subscription_create":
+            url = args.get("url")
+            if (
+                not isinstance(url, str)
+                or not url.strip()
+                or len(url) > 4096
+                or any(char in url for char in ("\x00", "\n", "\r"))
+            ):
+                raise OpsBrokerContractError("args.url_invalid")
+            normalized_args["url"] = url.strip()
+        elif action == "proxy_subscription_update":
+            update_present = args.get("url_update_present")
+            if not isinstance(update_present, bool):
+                raise OpsBrokerContractError("args.url_update_present_boolean_required")
+            normalized_args["url_update_present"] = update_present
+            if update_present:
+                url = args.get("url")
+                if (
+                    not isinstance(url, str)
+                    or not url.strip()
+                    or len(url) > 4096
+                    or any(char in url for char in ("\x00", "\n", "\r"))
+                ):
+                    raise OpsBrokerContractError("args.url_invalid")
+                normalized_args["url"] = url.strip()
+            elif "url" in args and str(args.get("url") or "").strip():
+                raise OpsBrokerContractError("args.url_without_update_flag")
+    elif "url" in args:
+        raise OpsBrokerContractError("args.url_not_supported")
+    if action in {
+        "aiclient_proxy_save", "aiclient_proxy_test",
+        "aiclient_proxy_apply", "aiclient_proxy_rollback",
+        "proxy_select",
+    } or action in subscription_revision_actions:
+        revision = args.get("expected_revision")
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+            raise OpsBrokerContractError("args.expected_revision_invalid")
+        normalized_args["expected_revision"] = revision
+    elif "expected_revision" in args:
+        raise OpsBrokerContractError("args.expected_revision_not_supported")
     if action == "astrbot_plugin_set_enabled":
         enabled = args.get("enabled")
         if not isinstance(enabled, bool):
             raise OpsBrokerContractError("args.enabled_boolean_required")
         normalized_args["enabled"] = enabled
-    elif "enabled" in args:
+    elif action in {"proxy_subscription_create", "proxy_subscription_update"}:
+        enabled = args.get("enabled")
+        if not isinstance(enabled, bool):
+            raise OpsBrokerContractError("args.enabled_boolean_required")
+        normalized_args["enabled"] = enabled
+    elif "enabled" in args and action not in consumer_selection_actions:
         raise OpsBrokerContractError("args.enabled_not_supported")
+    if "url_update_present" in args and action != "proxy_subscription_update":
+        raise OpsBrokerContractError("args.url_update_present_not_supported")
     if action == "astrbot_plugin_operate":
         operation = _string(args.get("operation"), "args.operation", max_length=16).lower()
         if operation not in {"install", "update", "uninstall"}:

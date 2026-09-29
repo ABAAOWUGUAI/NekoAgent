@@ -5,13 +5,13 @@ const V4_IMPLEMENTATION_STATES = Object.freeze({
   partial: Object.freeze({ label: '新版日用层', description: '日常入口在新版；受保护或管理操作仍回到旧控制台。' }),
 });
 const V4_OWNER_SURFACES = Object.freeze([
-  { id: 'overview', label: '概览', section: '小菲', legacyViews: ['overview'], implementationState: 'partial', implementationNote: '新版概览层；现有读模型保持原路径' },
+  { id: 'overview', label: '概览', section: '助手', legacyViews: ['overview'], implementationState: 'partial', implementationNote: '新版概览层；现有读模型保持原路径' },
   { id: 'qq', label: 'QQ', section: '对话', legacyViews: ['qq'], implementationState: 'legacy' },
   { id: 'chat', label: 'AI Chat', section: '对话', legacyViews: [], fallbackLegacyView: 'overview', fallbackLabel: '日常空间', implementationState: 'partial', implementationNote: '新版对话前台；连续上下文与受保护操作仍复用既有路径' },
   { id: 'work', label: '工作', section: '工作', legacyViews: ['tasks', 'projects', 'automations'], implementationState: 'legacy' },
   { id: 'artifact', label: '成品', section: '工作', legacyViews: ['artifacts'], implementationState: 'partial', implementationNote: '新版日用层；完整成品库仍使用旧控制台' },
-  { id: 'memory', label: '记忆', section: '小菲', legacyViews: ['brain'], implementationState: 'legacy' },
-  { id: 'assistant', label: '小菲', section: '小菲', legacyViews: ['assistant', 'relationship', 'social', 'growth'], implementationState: 'legacy' },
+  { id: 'memory', label: '记忆', section: '助手', legacyViews: ['brain'], implementationState: 'legacy' },
+  { id: 'assistant', label: '助手', section: '助手', legacyViews: ['assistant', 'relationship', 'social', 'growth'], implementationState: 'legacy' },
   { id: 'console', label: 'Console', section: '后台', legacyViews: ['models', 'capabilities', 'proxy', 'services', 'logs'], console: true, implementationState: 'legacy' },
   { id: 'settings', label: '设置', section: '后台', legacyViews: ['settings'], implementationState: 'legacy' },
 ]);
@@ -110,7 +110,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') (() => {
     sidebar.setAttribute('aria-label', '新版工作区导航');
     sidebar.innerHTML = '<div class="v4-brand"><span class="v4-brand-avatar" aria-hidden="true"></span><span><strong>当前 Assistant</strong><small>私人 AI 工作区</small></span></div><div class="v4-presence"><span class="v4-presence-mark" aria-hidden="true"></span><span><strong>从概览继续</strong><small>对话、工作与记忆在同一工作区</small></span></div><nav class="v4-primary-nav" aria-label="V4.1 主导航"></nav><div class="v4-sidebar-footer"><button id="v4ReturnLegacyBtn" type="button">返回旧版界面</button><button id="v4LogoutBtn" type="button">退出登录</button></div>';
     const nav = $('.v4-primary-nav', sidebar);
-    for (const sectionName of ['小菲', '对话', '工作', '后台']) {
+    for (const sectionName of ['助手', '对话', '工作', '后台']) {
       const section = document.createElement('section');
       section.className = 'v4-nav-section';
       const heading = document.createElement('p');

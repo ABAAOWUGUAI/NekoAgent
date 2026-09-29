@@ -11,6 +11,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
+from bridge_group_participation_schema import GROUP_DAILY_REPLY_BUDGET_DEFAULT
+from bridge_assistant_identity_schema import DEFAULT_OWNER_ACTOR_ID
+
 
 EXPRESSION_SUBJECT_TYPES = {"global", "private_user", "qq_group"}
 
@@ -54,6 +57,62 @@ DEFAULT_EXPRESSION_HABITS = (
         "style": "先直接回答，再按需要补充；不要把简单问题扩写成报告。",
         "scope": "all",
         "priority": 6,
+    },
+    {
+        "id": "group-accept-praise",
+        "situation": "群友具体夸奖助手、认可本轮表现或友好示好",
+        "cues": "真棒,厉害,不错,牛,可以啊,做得好,可爱,聪明",
+        "style": "自然接住对方的肯定；可以轻轻得意或回一个小转折，但不要把夸奖扭成抬杠、回怼，也不要固定复读同一句口癖。",
+        "scope": "group",
+        "priority": 12,
+    },
+    {
+        "id": "group-correction-repair",
+        "situation": "群友指出助手理解错、说错或认错对象",
+        "cues": "你说错,说错了,不对,不是这样,搞错,误会,理解错",
+        "style": "先用短句承认纠正，再按新事实继续；不要狡辩，也不要继续沿用已经被指出的旧玩笑或错误设定。",
+        "scope": "group",
+        "priority": 14,
+    },
+    {
+        "id": "group-emotion-specific",
+        "situation": "群友在具体事情中疲惫、烦躁、委屈或难受",
+        "cues": "很累,好累,烦,难受,委屈,生气,崩了,倒霉",
+        "style": "回应触发情绪的具体事情，可以短暂站在对方一边；没有求建议就不列方案，也不用空泛的“理解你的感受”。",
+        "scope": "group",
+        "priority": 13,
+    },
+    {
+        "id": "group-share-good-news",
+        "situation": "群友分享通过、完成、获胜或其他具体好消息",
+        "cues": "通过了,成功了,搞定了,上岸,赢了,好了,开心,好消息",
+        "style": "真诚地一起高兴，并点回对方刚说的具体成果；避免客服式祝贺和夸张吹捧。",
+        "scope": "group",
+        "priority": 12,
+    },
+    {
+        "id": "group-bounded-disagreement",
+        "situation": "群友明确表示不同意或邀请助手表达不同看法",
+        "cues": "我不同意,不同意,不赞成,我不觉得,我觉得不是,不一定",
+        "style": "直接说自己的看法并给一个具体理由；保持对事不对人，不自动升级语气，也不用讥讽抢赢。",
+        "scope": "group",
+        "priority": 11,
+    },
+    {
+        "id": "group-work-truth",
+        "situation": "群里询问修复、部署、测试、失败或当前进度",
+        "cues": "修复,上线,部署,测试,日志,报错,失败,进度,完成了吗",
+        "style": "把事实、阶段和结果说清；未执行、未验证或失败就照实说明，不用卖萌或玩笑掩盖状态。",
+        "scope": "group",
+        "priority": 15,
+    },
+    {
+        "id": "group-identity-lightness",
+        "situation": "群友在确实对助手说话时叫 AI、机器人、人机或 bot",
+        "cues": "机器人,人机,ai,bot",
+        "style": "轻轻接住眼前称呼或话题，不自嘲、不讥讽，也不展开客服式身份说明；只有明确追问身份时，才简短如实说明这里是虚拟助手。",
+        "scope": "group",
+        "priority": 12,
     },
 )
 
@@ -164,7 +223,7 @@ def compile_runtime_voice_contract(settings: dict, *, mode: str, group: bool) ->
             item for item in examples
             if not any(marker in item["scenario"] for marker in ("群聊", "群里", "群友", "工作", "任务", "执行", "操作"))
         ]
-    return {**common, "relationship": _clip(settings.get("relationship") or "熟悉的朋友与工作助手", 240), "persona": _clip(settings.get("persona"), 1200), "style": _clip(settings.get("style"), 1200), "identity_core": text("identity_core", settings.get("persona") or ""), "relationship_stance": text("relationship_stance", "有自己的判断，必要时温和指出问题；不谄媚、不复读用户。", 800), "values": _voice_list(source, "values", 12, 160), "boundaries": _voice_list(source, "boundaries", 12, 240), "optional_persona_applied": True, "contract_source": "settings.voice_contract" if source else "legacy_settings", "stance": text("relationship_stance", "有自己的判断，必要时温和指出问题；不谄媚、不复读用户。", 800), "warmth": rule("warmth", "关心具体而不客服化"), "directness": rule("directness", "先说结论，再补必要依据"), "directness_key": _clip(source.get("directness") or "balanced", 40), "initiative": rule("initiative", "缺关键条件时才追问"), "humor": rule("humor", "语境允许时轻轻接梗"), "rhythm": rule("rhythm", "自然短句和小段"), "question_policy": rule("question_policy", "缺必需条件时才追问一个问题"), "question_policy_key": _clip(source.get("question_policy") or "contextual", 40), "address_policy": rule("address_policy", "称呼随语境自然出现"), "private_length": _clip(source.get("private_length") or "short", 40), "group_length": _clip(source.get("group_length") or "brief", 40), "work_length": _clip(source.get("work_length") or "structured_compact", 40), "length_rule": _VOICE_LENGTHS[channel].get(length_key, "先说重点"), "work_continuity": text("work_continuity", "区分计划、执行中、完成和失败；只有可验证结果才能表述为已完成。", 800), "meme_policy": rule("meme_policy", "表情包由审核后的发送层按语境选择"), "meme_policy_key": _clip(source.get("meme_policy") or "contextual", 40), "group_stance": _clip(source.get("group_stance") or "observant", 40), "group_reaction_style": _clip(source.get("group_reaction_style") or "specific", 40), "group_sentence_rhythm": _clip(source.get("group_sentence_rhythm") or "one_beat", 40), "group_ending_policy": _clip(source.get("group_ending_policy") or "drop", 40), "preferred_phrases": [] if group else _voice_list(source, "preferred_phrases", 16, 120), "avoid_phrases": _voice_list(source, "avoid_phrases", 16, 120), "examples": (relevant_examples or examples)[:3]}
+    return {**common, "relationship": _clip(settings.get("relationship") or "熟悉的朋友与工作助手", 240), "persona": _clip(settings.get("persona"), 1200), "style": _clip(settings.get("style"), 1200), "identity_core": text("identity_core", settings.get("persona") or ""), "relationship_stance": text("relationship_stance", "有自己的判断，必要时温和指出问题；不谄媚、不复读用户。", 800), "values": _voice_list(source, "values", 12, 160), "boundaries": _voice_list(source, "boundaries", 12, 240), "optional_persona_applied": True, "contract_source": "settings.voice_contract" if source else "legacy_settings", "stance": text("relationship_stance", "有自己的判断，必要时温和指出问题；不谄媚、不复读用户。", 800), "warmth": rule("warmth", "关心具体而不客服化"), "directness": rule("directness", "先说结论，再补必要依据"), "directness_key": _clip(source.get("directness") or "balanced", 40), "initiative": rule("initiative", "缺关键条件时才追问"), "humor": rule("humor", "语境允许时轻轻接梗"), "rhythm": rule("rhythm", "自然短句和小段"), "question_policy": rule("question_policy", "缺必需条件时才追问一个问题"), "question_policy_key": _clip(source.get("question_policy") or "contextual", 40), "address_policy": rule("address_policy", "称呼随语境自然出现"), "private_length": _clip(source.get("private_length") or "short", 40), "group_length": _clip(source.get("group_length") or "brief", 40), "work_length": _clip(source.get("work_length") or "structured_compact", 40), "length_rule": _VOICE_LENGTHS[channel].get(length_key, "先说重点"), "work_continuity": text("work_continuity", "区分计划、执行中、完成和失败；只有可验证结果才能表述为已完成。", 800), "meme_policy": rule("meme_policy", "表情包由审核后的发送层按语境选择"), "meme_policy_key": _clip(source.get("meme_policy") or "contextual", 40), "group_stance": _clip(source.get("group_stance") or "observant", 40), "group_reaction_style": _clip(source.get("group_reaction_style") or "specific", 40), "group_sentence_rhythm": _clip(source.get("group_sentence_rhythm") or "one_beat", 40), "group_ending_policy": _clip(source.get("group_ending_policy") or "drop", 40), "preferred_phrases": _voice_list(source, "preferred_phrases", 16, 120), "avoid_phrases": _voice_list(source, "avoid_phrases", 16, 120), "examples": (relevant_examples or examples)[:3]}
 
 
 def _slug(value: object, fallback: str) -> str:
@@ -202,7 +261,7 @@ def ensure_social_experience_tables(conn: sqlite3.Connection) -> None:
         if name not in habit_columns:
             conn.execute(f"ALTER TABLE expression_habits ADD COLUMN {name} {definition}")
     conn.execute(
-        """CREATE TABLE IF NOT EXISTS group_policies (
+        f"""CREATE TABLE IF NOT EXISTS group_policies (
             group_id TEXT PRIMARY KEY, group_name TEXT NOT NULL DEFAULT '', session TEXT NOT NULL DEFAULT '',
             enabled INTEGER NOT NULL DEFAULT 0, mention_only INTEGER NOT NULL DEFAULT 1,
             active_reply INTEGER NOT NULL DEFAULT 0, reply_probability REAL NOT NULL DEFAULT 0.2,
@@ -213,10 +272,13 @@ def ensure_social_experience_tables(conn: sqlite3.Connection) -> None:
             participation_mode TEXT NOT NULL DEFAULT '', quiet_gap_seconds INTEGER NOT NULL DEFAULT 8,
             burst_window_seconds INTEGER NOT NULL DEFAULT 12,
              burst_max_messages INTEGER NOT NULL DEFAULT 6,
-             daily_reply_budget INTEGER NOT NULL DEFAULT 20,
+             daily_reply_budget INTEGER NOT NULL DEFAULT {GROUP_DAILY_REPLY_BUDGET_DEFAULT},
              continuation_window_seconds INTEGER NOT NULL DEFAULT 120,
              max_auto_continuations INTEGER NOT NULL DEFAULT 2,
              media_observation_probability REAL NOT NULL DEFAULT 0.0,
+             attachment_participation INTEGER NOT NULL DEFAULT 1,
+             short_turn_participation INTEGER NOT NULL DEFAULT 1,
+             addressed_reply INTEGER NOT NULL DEFAULT 1,
              last_reply_at TEXT NOT NULL DEFAULT '', message_count INTEGER NOT NULL DEFAULT 0,
             reply_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         )""",
@@ -246,10 +308,13 @@ def ensure_social_experience_tables(conn: sqlite3.Connection) -> None:
         "quiet_gap_seconds": "INTEGER NOT NULL DEFAULT 8",
         "burst_window_seconds": "INTEGER NOT NULL DEFAULT 12",
         "burst_max_messages": "INTEGER NOT NULL DEFAULT 6",
-        "daily_reply_budget": "INTEGER NOT NULL DEFAULT 20",
+        "daily_reply_budget": f"INTEGER NOT NULL DEFAULT {GROUP_DAILY_REPLY_BUDGET_DEFAULT}",
         "continuation_window_seconds": "INTEGER NOT NULL DEFAULT 120",
         "max_auto_continuations": "INTEGER NOT NULL DEFAULT 2",
         "media_observation_probability": "REAL NOT NULL DEFAULT 0.0",
+        "attachment_participation": "INTEGER NOT NULL DEFAULT 1",
+        "short_turn_participation": "INTEGER NOT NULL DEFAULT 1",
+        "addressed_reply": "INTEGER NOT NULL DEFAULT 1",
         "last_reply_at": "TEXT NOT NULL DEFAULT ''",
         "message_count": "INTEGER NOT NULL DEFAULT 0",
         "reply_count": "INTEGER NOT NULL DEFAULT 0",
@@ -380,11 +445,30 @@ def select_expression_habits(
     scored: list[tuple[int, dict]] = []
     for row in rows:
         item = dict(row)
+        governed_learning = item.get("origin") == "learning_trial"
+        if governed_learning:
+            # An applied preference has no keyword cues: it governs expression
+            # within the already filtered subject/scope. Require its actual
+            # application and active candidate, rather than trusting a label.
+            active = conn.execute(
+                "SELECT 1 FROM learning_applications a "
+                "JOIN learning_candidates c ON c.id=a.candidate_id "
+                "JOIN assistant_instances i ON i.id=c.assistant_id AND i.id=a.assistant_id "
+                "WHERE a.target_type='expression_habit' AND a.target_id=? "
+                "AND i.status='active' AND i.owner_actor_id=? "
+                "AND a.status IN ('trial','accepted') "
+                "AND c.subject_type=? AND c.subject_id=? "
+                "AND (c.status='stable' OR (c.status='trial' AND "
+                "(c.trial_expires_at='' OR julianday(c.trial_expires_at)>julianday('now')))) LIMIT 1",
+                (item['id'], DEFAULT_OWNER_ACTOR_ID, item['subject_type'], item['subject_id']),
+            ).fetchone()
+            if not active:
+                continue
         cues = [part.strip().lower() for part in re.split(r"[,，\s]+", item.get("cues") or "") if part.strip()]
         matches = sum(1 for cue in cues if cue in query)
         scoped_bonus = 1000 if item.get("subject_type") != "global" else 0
         score = scoped_bonus + matches * 100 + int(item.get("priority") or 0)
-        if matches or item.get("scope") == "all" or item.get("origin") == "user_feedback":
+        if matches or item.get("scope") == "all" or item.get("origin") == "user_feedback" or governed_learning:
             scored.append((score, item))
     scored.sort(key=lambda pair: (pair[0], -int(pair[1].get("use_count") or 0)), reverse=True)
     selected = [item for _, item in scored[: max(1, min(int(limit or 3), 5))]]
@@ -417,9 +501,9 @@ def detect_expression_feedback(message: str) -> dict | None:
         feedback_type = "prefer"
     elif any(word in text for word in expression_words) and any(re.search(pattern, text) for pattern in avoid_patterns):
         feedback_type = "avoid"
-    elif any(word in text.lower() for word in ("像ai", "像 ai", "机器人话", "客服话")) and any(
-        word in text for word in expression_words
-    ):
+    elif any(word in text.lower() for word in (
+        "像ai", "像 ai", "机器人话", "客服话", "不像真人", "不自然", "机械", "没人味",
+    )) and any(word in text for word in expression_words):
         feedback_type = "avoid"
     if not feedback_type:
         return None
@@ -427,7 +511,9 @@ def detect_expression_feedback(message: str) -> dict | None:
     if any(word in normalized for word in ("简短", "简洁", "短一点", "直接一点", "别啰嗦", "太长", "冗长")):
         preference_code = "brief_direct"
         learned = "默认简短直接；除非被要求，不展开成说明书。"
-    elif any(word in normalized for word in ("像ai", "像 ai", "机器人话", "客服话", "太正式", "生硬")):
+    elif any(word in normalized for word in (
+        "像ai", "像 ai", "机器人话", "客服话", "太正式", "生硬", "不像真人", "不自然", "机械", "没人味",
+    )):
         preference_code = "natural_conversational"
         learned = "避免客服式套话和自我说明；使用自然、克制的口语表达。"
     elif any(word in normalized for word in ("表情", "emoji", "颜文字")):
@@ -596,8 +682,20 @@ def hydrate_expression_context(
                     domain="expression",
                     source_type="expression_context",
                     source_id=str((learned or {}).get("id") or (learned or {}).get("candidate_id") or ""),
-                    decision="applied" if habits else "observed",
-                    detail={"habit_count": len(habits), "candidate_status": str((learned or {}).get("status") or "")},
+                    # Selection is prompt input evidence, not proof that a
+                    # learned change influenced the eventual delivered reply.
+                    decision="selected" if habits else "observed",
+                    detail={
+                        "habit_count": len(habits),
+                        "candidate_status": str((learned or {}).get("status") or ""),
+                        "habit_sources": [
+                            {"id": str(item.get("id") or ""), "origin": str(item.get("origin") or "unknown")}
+                            for item in habits
+                        ],
+                        "learned_habit_count": sum(item.get("origin") in {"learning_trial", "user_feedback"} for item in habits),
+                        "governed_learning_count": sum(item.get("origin") == "learning_trial" for item in habits),
+                        "legacy_feedback_count": sum(item.get("origin") == "user_feedback" for item in habits),
+                    },
                 )
         return {"learned_feedback": learned, "habits": habits}
     except (sqlite3.Error, ValueError):

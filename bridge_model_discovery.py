@@ -34,12 +34,26 @@ def _provider_row(conn, provider_id: object):
     return dict(row)
 
 
-def _catalog_url(base_url: object) -> str:
-    """Derive an OpenAI-compatible models endpoint without preserving secrets."""
+def _validated_url_parts(base_url: object):
+    """Reject persisted URLs that could carry credentials or hidden queries."""
 
     parts = urlsplit(str(base_url or "").strip())
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         raise ValueError("invalid_provider_base_url")
+    try:
+        hostname = parts.hostname
+        parts.port
+    except ValueError as exc:
+        raise ValueError("invalid_provider_base_url") from exc
+    if not hostname or parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        raise ValueError("invalid_provider_base_url")
+    return parts
+
+
+def _catalog_url(base_url: object) -> str:
+    """Derive an OpenAI-compatible models endpoint without preserving secrets."""
+
+    parts = _validated_url_parts(base_url)
     path = parts.path.rstrip("/")
     if path.endswith("/chat/completions"):
         path = path[: -len("/chat/completions")]
@@ -47,17 +61,13 @@ def _catalog_url(base_url: object) -> str:
 
 
 def _native_catalog_url(base_url: object, suffix: str, *, query: dict[str, str] | None = None) -> str:
-    parts = urlsplit(str(base_url or "").strip())
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
-        raise ValueError("invalid_provider_base_url")
+    parts = _validated_url_parts(base_url)
     path = parts.path.rstrip("/")
     return urlunsplit((parts.scheme, parts.netloc, f"{path}/{suffix.lstrip('/')}", urlencode(query or {}), ""))
 
 
 def _anthropic_catalog_url(base_url: object) -> str:
-    parts = urlsplit(str(base_url or "").strip())
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
-        raise ValueError("invalid_provider_base_url")
+    parts = _validated_url_parts(base_url)
     path = parts.path.rstrip("/")
     if path.endswith("/v1"):
         path = path[: -len("/v1")]
@@ -215,6 +225,8 @@ def discovered_model_validation_settings(conn, provider_id: object, model: objec
         raise ValueError("discovered_model_name_invalid")
     try:
         api_key = resolve_provider_secret(conn, provider)
+        parts = _validated_url_parts(provider.get("base_url"))
+        safe_base_url = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
     except Exception as exc:
         raise ValueError("provider_secret_or_url_unavailable") from exc
     if not api_key and str(provider.get("billing_scope") or "api_key") != "local_proxy":
@@ -223,7 +235,7 @@ def discovered_model_validation_settings(conn, provider_id: object, model: objec
     settings.update(
         {
             "chat_provider": "external_api",
-            "chat_base_url": str(provider.get("base_url") or ""),
+            "chat_base_url": safe_base_url,
             "chat_api_key": api_key,
             "chat_model": model_name,
             "chat_provider_label": str(provider.get("name") or provider.get("id") or "API connection"),

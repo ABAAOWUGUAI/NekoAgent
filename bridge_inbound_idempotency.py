@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 
 from bridge_reliability_schema import require_reliability_schema
@@ -14,6 +15,10 @@ from bridge_reliability_service import reliability_enabled
 
 
 MESSAGE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,180}$")
+_LOGICAL_TURN_TRANSPORT_FIELDS = {
+    "logical_turn_id", "logical_turn_has_text", "source_message_ids",
+    "attachments", "message_components", "visual_media",
+}
 
 
 class InboundRequestValidationError(ValueError):
@@ -69,6 +74,21 @@ def web_dispatch_receipt_context(
     }
 
 
+def _stable_receipt_payload(payload: dict) -> dict:
+    """Ignore joined-media transport detail when digesting a logical turn.
+
+    The primary QQ ID and actual text remain fingerprinted. Only fields that
+    differ when a primary event is replayed after the plugin collector restart
+    are excluded.
+    """
+
+    stable = {key: value for key, value in payload.items() if key != "trace_id"}
+    if str(stable.get("logical_turn_id") or "").strip():
+        for key in _LOGICAL_TURN_TRANSPORT_FIELDS:
+            stable.pop(key, None)
+    return stable
+
+
 def begin_receipt(
     connect, platform_message_id: str, actor_id: str, conversation_ref: str, payload: dict,
     *, require_receipt: bool = False,
@@ -82,7 +102,7 @@ def begin_receipt(
         raise InboundRequestValidationError(
             "web_dispatch_request_id_invalid" if require_receipt else "qq_message_id_invalid",
         )
-    stable_payload = {key: value for key, value in payload.items() if key != "trace_id"}
+    stable_payload = _stable_receipt_payload(payload)
     digest = hashlib.sha256(
         json.dumps(stable_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
     ).hexdigest()
@@ -179,10 +199,21 @@ def execute_once(
     connect, platform_message_id: str, actor_id: str, conversation_ref: str,
     payload: dict, operation, *, require_receipt: bool = False,
 ) -> dict:
-    receipt = begin_receipt(
-        connect, platform_message_id, actor_id, conversation_ref, payload,
-        require_receipt=require_receipt,
-    )
+    group_id = str(payload.get("group_id") or "").strip()
+    group_id = group_id if re.fullmatch(r"\d{6,}", group_id) else ""
+    started = time.monotonic()
+    try:
+        receipt = begin_receipt(
+            connect, platform_message_id, actor_id, conversation_ref, payload,
+            require_receipt=require_receipt,
+        )
+    except sqlite3.OperationalError as exc:
+        if group_id:
+            code = "sqlite_busy" if "locked" in str(exc).lower() or "busy" in str(exc).lower() else "sqlite_error"
+            print(f"group_voice_stage stage=receipt_claim group_id={group_id} elapsed_ms={int((time.monotonic()-started)*1000)} status={code}", flush=True)
+        raise
+    if group_id:
+        print(f"group_voice_stage stage=receipt_claim group_id={group_id} elapsed_ms={int((time.monotonic()-started)*1000)} status=ok", flush=True)
     if receipt and receipt.get("replay") is not None:
         return dict(receipt["replay"])
     try:
@@ -190,7 +221,23 @@ def execute_once(
     except Exception:
         fail_receipt(connect, receipt)
         raise
-    complete_receipt(connect, receipt, response)
+    for attempt in range(2):
+        started = time.monotonic()
+        try:
+            # Only repeat this idempotent receipt UPDATE. The operation may
+            # already have queued Delivery and must never be run again.
+            complete_receipt(connect, receipt, response)
+            if group_id:
+                print(f"group_voice_stage stage=receipt_settle group_id={group_id} elapsed_ms={int((time.monotonic()-started)*1000)} status=ok attempt={attempt+1}", flush=True)
+            break
+        except sqlite3.OperationalError as exc:
+            busy = "locked" in str(exc).lower() or "busy" in str(exc).lower()
+            if group_id:
+                code = "sqlite_busy" if busy else "sqlite_error"
+                print(f"group_voice_stage stage=receipt_settle group_id={group_id} elapsed_ms={int((time.monotonic()-started)*1000)} status={code} attempt={attempt+1}", flush=True)
+            if not busy or attempt:
+                raise
+            time.sleep(0.05)
     return response
 
 

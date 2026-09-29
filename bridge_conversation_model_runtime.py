@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
-from bridge_conversation_reply_runtime import call_openai_conversation_reply
+from bridge_conversation_reply_runtime import (
+    call_openai_conversation_reply,
+    remaining_timeout,
+)
 from bridge_prompt_cache_contract import provider_cache_replay_metadata
 from bridge_social_reply import group_reply_style_issues_for_delivery
 
@@ -61,6 +65,8 @@ def run_conversation_model_reply(
     run_codex: Callable[..., dict],
     cwd,
     group_reply_finalizer: Callable[[str, dict], tuple[str, dict]] | None = None,
+    deadline_monotonic: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> tuple[dict, dict]:
     """Run exactly one reply model without performing planning or persistence."""
 
@@ -84,6 +90,7 @@ def run_conversation_model_reply(
             user_id=user_id, call_model=call_model, record_model=record_model,
             conversation_scope=conversation_scope, group_context=group_context,
             group_reply_finalizer=group_reply_finalizer,
+            deadline_monotonic=deadline_monotonic, clock=clock,
         ), provider_cache_replay_metadata(messages)
     prompt = format_prompt(
         user_id, message, memories, history,
@@ -95,11 +102,40 @@ def run_conversation_model_reply(
         _codex_prompt_turn_envelope(prompt, message)
         if conversation_scope == "group" else prompt
     )
-    result = run_codex(
-        codex_prompt, cwd=cwd,
-        timeout=max(30, min(int(timeout or 180), 600)),
-        settings_override=settings,
-    )
+    requested_timeout = max(30, min(int(timeout or 180), 600))
+    attempt_timeout = remaining_timeout(requested_timeout, deadline_monotonic, clock)
+    if deadline_monotonic is not None and attempt_timeout <= 0:
+        result = {
+            "ok": False,
+            "reply": "",
+            "output": "",
+            "error": "reply_deadline_exhausted",
+            "error_kind": "deadline_exhausted",
+            "retryable": False,
+            "finish_reason": "",
+            "reasoning_only": False,
+            "usage": {},
+            "provider": "codex",
+            "model": str(settings.get("chat_model") or ""),
+            "reply_attempt_count": 0,
+            "retry_suppressed_by_deadline": False,
+            "deadline_outcome": "expired_before_attempt",
+        }
+    else:
+        result = run_codex(
+            codex_prompt, cwd=cwd,
+            timeout=attempt_timeout,
+            settings_override=settings,
+        )
+        result.update({
+            "reply_attempt_count": 1,
+            "retry_suppressed_by_deadline": False,
+            "deadline_outcome": (
+                "not_configured"
+                if deadline_monotonic is None
+                else "attempted_within_deadline"
+            ),
+        })
     result["provider"] = "codex"
     result["conversation_scope"] = conversation_scope
     if conversation_scope != "group":

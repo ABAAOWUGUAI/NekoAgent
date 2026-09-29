@@ -17,7 +17,7 @@ class OpsBrokerClientError(RuntimeError):
 class OpsBrokerClient:
     def __init__(self, socket_path: str | None = None, *, timeout: float = 8.0) -> None:
         self.socket_path = socket_path or os.environ.get("OPS_BROKER_SOCKET", "/run/agent-bridge/ops.sock")
-        self.timeout = max(0.5, min(float(timeout), 30.0))
+        self.timeout = max(0.5, min(float(timeout), 150.0))
 
     def request(self, payload: dict[str, Any]) -> dict[str, Any]:
         message = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")

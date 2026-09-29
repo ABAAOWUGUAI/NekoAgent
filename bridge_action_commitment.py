@@ -431,6 +431,7 @@ def resolve_action_commitment(
     thread_ref: str,
     message: str,
     now: str = "",
+    before_transition=None,
 ) -> dict | None:
     """Resolve one valid Owner reply without executing its action."""
 
@@ -443,6 +444,8 @@ def resolve_action_commitment(
         return None
     resolution = _resolution_kind(message)
     if resolution == "decline":
+        if callable(before_transition):
+            before_transition()
         declined = repository.decline(
             commitment["id"],
             actor_id=actor_id,
@@ -454,6 +457,8 @@ def resolve_action_commitment(
         return declined
     if resolution != "accept":
         return None
+    if callable(before_transition):
+        before_transition()
     resolved = repository.accept(
         commitment["id"],
         actor_id=actor_id,

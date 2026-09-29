@@ -6,13 +6,17 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from bridge_action_registry import action_definition
-from bridge_automation_actions import dispatch_automation_action, execute_automation_action
+from bridge_action_execution import (
+    build_registered_action_mode_decision,
+    execute_registered_action,
+)
+from bridge_action_commitment import resolve_action_commitment
+from bridge_automation_actions import dispatch_automation_action
 from bridge_qq_admin_actions import (
     build_qq_control_model_readiness,
     dispatch_qq_admin_action,
-    execute_qq_admin_action,
 )
-from bridge_interaction_contract import PLAN_SCHEMA_VERSION, assemble_response
+from bridge_interaction_contract import PLAN_SCHEMA_VERSION, assemble_response, fallback_interaction_plan
 from bridge_request_router import initial_route_disposition, route_execution_missing_result, route_metadata
 
 
@@ -22,6 +26,111 @@ _AUTOMATION_ACTION_TYPES = {
     "automation_disable": "automation.schedule.disable",
     "automation_run_now": "automation.schedule.run_now",
 }
+
+
+def dispatch_committed_action(
+    *,
+    assistant_connect: Callable[[], Any],
+    store: object,
+    actor_id: str,
+    message: str,
+    trace_id: str,
+    source: str,
+    inbound_context: Mapping[str, object],
+    commitment: Mapping[str, object] | None,
+    action_commitments: object,
+    automation_preflight: Callable[[dict], dict],
+    get_fallback: Callable[[], dict],
+    get_role_settings: Callable[[str, dict], dict],
+    readiness_check: Callable[[dict], tuple[bool, str]],
+) -> dict | None:
+    """Execute one accepted private Owner Commitment through the registry."""
+
+    item = dict(commitment or {})
+    action = item.get("action")
+    if (
+        not isinstance(action, Mapping)
+        or not str(item.get("id") or "")
+        or str(source or "") not in {"qq", "qq_private", "private"}
+        or str((inbound_context or {}).get("group_id") or "")
+    ):
+        return None
+    if str(item.get("state") or "") == "declined":
+        mode_decision = {
+            "mode": "daily",
+            "intent": "chat",
+            "confidence": 1.0,
+            "reason": "Owner 明确撤回了尚未执行的操作承诺。",
+            "need_tools": False,
+            "emotion": "neutral",
+        }
+        mode_decision["interaction_plan"] = fallback_interaction_plan(message, mode_decision)
+        plan_record = store.persist(actor_id, mode_decision, source=source)
+        reply = "好的，这项操作已取消，本次没有执行任何配置变更。"
+        store.record_exchange(
+            actor_id,
+            message,
+            reply,
+            mode_decision,
+            source=source,
+            inbound_context=dict(inbound_context or {}),
+        )
+        return {
+            "ok": True,
+            "dispatch": "action_commitment_declined",
+            "reply": reply,
+            "mode": "daily",
+            "intent": "chat",
+            "mode_decision": mode_decision,
+            "interaction_plan": mode_decision["interaction_plan"],
+            "interaction_plan_record": plan_record,
+            "action_commitment": item,
+        }
+    execution_action = dict(action)
+    # Batch admission removal is executable only after the repository has
+    # recorded the exact accepted Owner commitment.  The executor rechecks it
+    # against this marker before touching settings.
+    execution_action["_action_commitment_id"] = str(item["id"])
+    try:
+        result = execute_registered_action(
+            assistant_connect,
+            actor_id=actor_id,
+            action=execution_action,
+            trace_id=trace_id,
+            automation_preflight=automation_preflight,
+            qq_model_readiness=lambda: build_qq_control_model_readiness(
+                get_fallback, get_role_settings, readiness_check,
+            ),
+        )
+        mode_decision = build_registered_action_mode_decision(action)
+    except (KeyError, TypeError, ValueError):
+        return None
+    plan_record = store.persist(actor_id, mode_decision, source=source)
+    store.record_exchange(
+        actor_id,
+        message,
+        str(result.get("reply") or ""),
+        mode_decision,
+        source=source,
+        inbound_context=dict(inbound_context or {}),
+    )
+    receipts = result.get("action_receipts")
+    receipt = next((dict(value) for value in receipts or [] if isinstance(value, Mapping)), None)
+    marked = action_commitments.mark_execution(
+        str(item["id"]),
+        actor_id=actor_id,
+        thread_ref=f"qq:private:{actor_id}",
+        receipt=receipt,
+    )
+    result.update({
+        "mode": "work",
+        "intent": mode_decision["intent"],
+        "mode_decision": mode_decision,
+        "interaction_plan": mode_decision["interaction_plan"],
+        "interaction_plan_record": plan_record,
+        "action_commitment": marked or {"id": str(item["id"]), "state": "failed"},
+    })
+    return result
 
 
 def _composite_mode_decision(decision: Mapping[str, object]) -> dict:
@@ -172,26 +281,17 @@ def _dispatch_composite_route(
                 result = _composite_action_failure(candidate, reason="action_type_unsupported")
                 component_results.append(result)
                 continue
-            if domain == "automation":
-                result = execute_automation_action(
-                    assistant_connect,
-                    actor_id=actor_id,
-                    action=action,
-                    trace_id=trace_id,
-                    preflight=automation_preflight,
-                )
-            elif domain == "qq":
-                result = execute_qq_admin_action(
-                    assistant_connect,
-                    actor_id=actor_id,
-                    action=action,
-                    trace_id=trace_id,
-                    model_readiness=lambda: build_qq_control_model_readiness(
-                        get_fallback, get_role_settings, readiness_check,
-                    ),
-                )
-            else:
-                result = {"ok": False, "dispatch": "composite_unsupported_domain", "reply": "本轮动作域不受支持。"}
+            action["action_type"] = _AUTOMATION_ACTION_TYPES.get(raw_action, raw_action)
+            result = execute_registered_action(
+                assistant_connect,
+                actor_id=actor_id,
+                action=action,
+                trace_id=trace_id,
+                automation_preflight=automation_preflight,
+                qq_model_readiness=lambda: build_qq_control_model_readiness(
+                    get_fallback, get_role_settings, readiness_check,
+                ),
+            )
         except Exception:
             # Never expose exception text or abort independent candidates.
             result = _composite_action_failure(candidate)
@@ -255,6 +355,8 @@ def dispatch_deterministic_route(
     get_fallback: Callable[[], dict],
     get_role_settings: Callable[[str, dict], dict],
     readiness_check: Callable[[dict], tuple[bool, str]],
+    action_commitments: object | None = None,
+    before_effect: Callable[[], object] | None = None,
 ) -> tuple[dict | None, dict]:
     """Return an executed route result or the decision for generic planning.
 
@@ -264,10 +366,46 @@ def dispatch_deterministic_route(
     """
 
     group_id = str(inbound_context.get("group_id") or "")
+    if action_commitments is not None and not group_id and str(source or "") in {"qq", "qq_private", "private"}:
+        commitment = resolve_action_commitment(
+            action_commitments,
+            actor_id=actor_id,
+            thread_ref=f"qq:private:{actor_id}",
+            message=message,
+            before_transition=before_effect,
+        )
+        if commitment is not None:
+            committed = dispatch_committed_action(
+                assistant_connect=assistant_connect,
+                store=store,
+                actor_id=actor_id,
+                message=message,
+                trace_id=trace_id,
+                source=source,
+                inbound_context=inbound_context,
+                commitment=commitment,
+                action_commitments=action_commitments,
+                automation_preflight=automation_preflight,
+                get_fallback=get_fallback,
+                get_role_settings=get_role_settings,
+                readiness_check=readiness_check,
+            )
+            if committed is not None:
+                decision = {
+                    "status": "matched",
+                    "domain": "action_commitment",
+                    "action_type": str(commitment.get("action_type") or ""),
+                    "reason": "owner_action_commitment_resolved",
+                }
+                committed["route_decision"] = decision
+                committed["route_metadata"] = route_metadata(decision)
+                return committed, decision
     decision, blocked = initial_route_disposition(message, history, current_group_id=group_id)
     if blocked is not None:
         return blocked, decision
     if decision.get("status") == "mixed":
+        if callable(before_effect):
+            before_effect()
         result = _dispatch_composite_route(
             decision=decision,
             assistant_connect=assistant_connect,
@@ -286,6 +424,8 @@ def dispatch_deterministic_route(
         result["route_decision"] = decision
         result["route_metadata"] = route_metadata(decision)
         return result, decision
+    if decision.get("status") == "resolved" and callable(before_effect):
+        before_effect()
     result = dispatch_automation_action(
         assistant_connect, store, actor_id, message, history, trace_id, source, group_id,
         preflight=automation_preflight, inbound_context=inbound_context,
@@ -295,6 +435,7 @@ def dispatch_deterministic_route(
         result = dispatch_qq_admin_action(
             assistant_connect, store, actor_id, message, history, trace_id, source,
             get_fallback, get_role_settings, readiness_check, current_group_id=group_id,
+            action_commitments=action_commitments,
         )
     if result is None:
         result = route_execution_missing_result(decision)
@@ -304,4 +445,4 @@ def dispatch_deterministic_route(
     return result, decision
 
 
-__all__ = ["dispatch_deterministic_route"]
+__all__ = ["dispatch_committed_action", "dispatch_deterministic_route"]

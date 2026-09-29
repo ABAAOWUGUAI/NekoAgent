@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import hashlib
+import json
 import re
 import sqlite3
 import uuid
@@ -18,10 +19,23 @@ from bridge_qq_access_service import (
     get_qq_access_settings,
     update_qq_access_settings,
 )
+from bridge_assistant_migrations import record_security_audit
+from bridge_qq_action_commitment import (
+    bind_qq_status_action_offer,
+    invalidate_unrendered_qq_status_offer,
+)
+from bridge_qq_control_plan import build_qq_control_mode_decision
 from bridge_social_engine import get_group_policy, upsert_group_policy
 
 
 _GROUP_ID_PATTERN = re.compile(r"(?<!\d)([1-9][0-9]{4,19})(?!\d)")
+# The Owner's natural phrasing commonly attaches the classifier directly to a
+# numeric identifier (for example ``12345 群``).  Do not add bare ``群`` as a
+# global hint: that would make unrelated prose with a number look actionable.
+_NUMERIC_GROUP_REFERENCE_PATTERN = re.compile(
+    r"(?<!\d)[1-9][0-9]{4,19}\s*(?:qq\s*群|qq群|群)",
+    re.IGNORECASE,
+)
 _GROUP_CONTEXT_HINTS = (
     "qq群",
     "qq 群",
@@ -45,6 +59,7 @@ _STATUS_FOLLOWUP_HINTS = (
     "配置怎么样", "状态怎么样", "确认一下状态", "查一下状态",
 )
 _ALLOWLIST_LIST_HINTS = ("准入列表", "白名单列表", "哪些群", "多少个群", "几个群", "所有准入群", "已加入的群")
+_ALL_SCOPE_HINTS = ("全部", "所有", "全体", "全都", "都")
 _DIAGNOSTIC_HINTS = ("查日志", "看日志", "直接查", "排查", "没有回复", "没回复", "不回复")
 _POLICY_CLONE_HINTS = ("对齐", "保持一致", "一致", "复制", "同步", "一样", "相同")
 _GROUP_POLICY_COPY_FIELDS = (
@@ -79,6 +94,15 @@ def _actor_ref(actor_id: str) -> str:
     return f"qq_admin:{digest}"
 
 
+def _has_group_context(value: object) -> bool:
+    """Recognise explicit QQ group references without broadening to all text."""
+
+    text = str(value or "").lower()
+    return any(hint in text for hint in _GROUP_CONTEXT_HINTS) or bool(
+        _NUMERIC_GROUP_REFERENCE_PATTERN.search(text)
+    )
+
+
 def _candidate_group_id(
     message: str,
     history: list[dict] | None = None,
@@ -88,15 +112,12 @@ def _candidate_group_id(
     texts = [str(message or "")]
     texts.extend(str(item.get("content") or "") for item in reversed(history or []))
     for text in texts:
-        lowered = text.lower()
-        if not any(hint in lowered for hint in _GROUP_CONTEXT_HINTS):
+        if not _has_group_context(text):
             continue
         match = _GROUP_ID_PATTERN.search(text)
         if match:
             return match.group(1)
-    if current_group_id and any(
-        hint in str(message or "").lower() for hint in _GROUP_CONTEXT_HINTS
-    ):
+    if current_group_id and _has_group_context(message):
         return str(current_group_id).strip()
     return ""
 
@@ -112,9 +133,7 @@ def _current_group_reference(text: str) -> bool:
     """Whether the current turn itself names or points at a QQ group."""
 
     value = str(text or "").lower()
-    return bool(_GROUP_ID_PATTERN.search(value)) or any(
-        hint in value for hint in _GROUP_CONTEXT_HINTS
-    )
+    return bool(_GROUP_ID_PATTERN.search(value)) or _has_group_context(value)
 
 
 def _status_followup_reference(text: str, history: list[dict] | None) -> bool:
@@ -130,7 +149,7 @@ def _status_followup_reference(text: str, history: list[dict] | None) -> bool:
         for item in (history or [])[-4:]
         if isinstance(item, dict)
     ).lower()
-    return any(hint in recent for hint in _GROUP_CONTEXT_HINTS) and bool(
+    return _has_group_context(recent) and bool(
         _GROUP_ID_PATTERN.search(recent)
     )
 
@@ -199,6 +218,16 @@ def _allowlist_list_requested(text: str) -> bool:
     )
 
 
+def _all_allowlist_disable_requested(text: str) -> bool:
+    """Recognise only an explicit request to remove every QQ group admission."""
+
+    return (
+        any(hint in text for hint in _ALL_SCOPE_HINTS)
+        and any(hint in text for hint in ("准入", "白名单"))
+        and any(hint in text for hint in _DISABLE_HINTS)
+    )
+
+
 def parse_qq_admin_action(
     message: str,
     history: list[dict] | None = None,
@@ -212,14 +241,18 @@ def parse_qq_admin_action(
     # Continuation turns often say only “then align it with …”.  The target
     # remains explicit in recent private context, so retain it for deterministic
     # routing instead of falling through to a general-purpose chat model.
-    group_context = any(hint in context_text for hint in _GROUP_CONTEXT_HINTS)
-    current_group_context = any(hint in text for hint in _GROUP_CONTEXT_HINTS)
+    group_context = _has_group_context(context_text)
+    current_group_context = _has_group_context(text)
     access_context = "白名单" in context_text or "准入" in context_text
     group_id = _candidate_group_id(
         message,
         history,
         current_group_id=current_group_id,
     )
+    # This is intentionally before the one-group branch.  "取消全部准入" is
+    # a bounded Owner control request even though it names no particular group.
+    if access_context and _all_allowlist_disable_requested(text):
+        return {"action_type": "qq_group_allowlist_disable_all"}
     if group_context and _clone_requested(text):
         group_id = _clone_target_group_id(
             message,
@@ -342,6 +375,216 @@ def _receipt(action_type: str, status: str, group_id: str, **facts: object) -> d
     }
 
 
+def _enabled_group_ids(current: dict) -> list[str]:
+    return sorted({
+        str(item.get("group_id") or "")
+        for item in current.get("group_allowlist") or []
+        if item.get("enabled") and str(item.get("group_id") or "")
+    })
+
+
+def _group_set_hash(group_ids: list[str]) -> str:
+    """Return a fixed-target digest without disclosing QQ group identifiers."""
+
+    return hashlib.sha256("\n".join(sorted(group_ids)).encode("utf-8")).hexdigest()
+
+
+def _frozen_bulk_target(action: dict) -> tuple[list[str], str, int] | None:
+    """Validate the exact target set frozen in an Owner commitment."""
+
+    raw_ids = action.get("target_group_ids")
+    supplied_hash = str(action.get("target_set_hash") or "").strip().lower()
+    try:
+        expected_version = int(action.get("expected_config_version") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(raw_ids, list) or expected_version < 1:
+        return None
+    group_ids = [str(value or "").strip() for value in raw_ids]
+    if (
+        not group_ids
+        or len(group_ids) != len(set(group_ids))
+        or any(not _GROUP_ID_PATTERN.fullmatch(group_id) for group_id in group_ids)
+    ):
+        return None
+    group_ids = sorted(group_ids)
+    if len(supplied_hash) != 64 or supplied_hash != _group_set_hash(group_ids):
+        return None
+    return group_ids, supplied_hash, expected_version
+
+
+def _accepted_bulk_commitment(conn: sqlite3.Connection, actor_id: str, action: dict) -> bool:
+    """Require the exact accepted private action; a raw action JSON cannot execute."""
+
+    commitment_id = _clip(action.get("_action_commitment_id"), 160)
+    if not commitment_id:
+        return False
+    frozen = {key: value for key, value in action.items() if key != "_action_commitment_id"}
+    row = conn.execute(
+        """
+        SELECT action_json FROM interaction_action_commitments
+        WHERE id=? AND owner_actor_id=? AND thread_ref=?
+          AND action_type='qq_group_allowlist_disable_all'
+          AND state IN ('accepted','amended')
+        """,
+        (commitment_id, actor_id, f"qq:private:{actor_id}"),
+    ).fetchone()
+    if not row:
+        return False
+    try:
+        stored = json.loads(str(row[0] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(stored, dict) and stored == frozen
+
+
+def _bulk_preview(current: dict) -> dict:
+    group_ids = _enabled_group_ids(current)
+    version = int(current["settings"].get("config_version") or 0)
+    if not group_ids:
+        receipt = _receipt(
+            "qq_group_allowlist_disable_all",
+            "no_op",
+            "",
+            target_group_count=0,
+            config_version=version,
+        )
+        return {
+            "ok": True,
+            "dispatch": "control_action",
+            "reply": "当前没有已启用的 QQ 群准入；本轮没有生成确认操作，也没有修改配置。",
+            "action_receipts": [receipt],
+        }
+    target_hash = _group_set_hash(group_ids)
+    receipt = _receipt(
+        "qq_group_allowlist_disable_all",
+        "preview",
+        "",
+        target_group_count=len(group_ids),
+        target_set_hash=target_hash,
+        config_version=version,
+    )
+    return {
+        "ok": True,
+        "dispatch": "control_preview",
+        "reply": (
+            f"已生成批量撤销预览：将撤销当前 {len(group_ids)} 个 QQ 群的准入，"
+            f"并关闭群聊总开关；配置版本 {version}。"
+        ),
+        "action_receipts": [receipt],
+        "action_offer": {
+            "action_type": "qq_group_allowlist_disable_all",
+            # This exact list is stored only in the Owner commitment.  It is
+            # never rendered into the QQ reply or action receipt.
+            "target_group_ids": group_ids,
+            "target_group_count": len(group_ids),
+            "target_set_hash": target_hash,
+            "expected_config_version": version,
+        },
+    }
+
+
+def _execute_frozen_bulk_disable(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: str,
+    action: dict,
+    trace_id: str,
+) -> dict:
+    """Atomically disable precisely the groups shown in the confirmed preview."""
+
+    frozen = _frozen_bulk_target(action)
+    if frozen is None:
+        return {
+            "ok": True,
+            "dispatch": "control_failed",
+            "reply": "批量撤销没有执行：确认目标不完整或已损坏；请重新发起预览。",
+            "action_receipts": [_receipt(
+                "qq_group_allowlist_disable_all", "failed", "", reason="bulk_target_invalid",
+            )],
+        }
+    group_ids, target_hash, expected_version = frozen
+    if not _accepted_bulk_commitment(conn, actor_id, action):
+        return {
+            "ok": True,
+            "dispatch": "control_failed",
+            "reply": "批量撤销需要当前 Owner 私聊中的有效确认；本轮没有修改配置。",
+            "action_receipts": [_receipt(
+                "qq_group_allowlist_disable_all", "failed", "", reason="bulk_commitment_required",
+            )],
+        }
+    current = get_qq_access_settings(conn)
+    actual_ids = _enabled_group_ids(current)
+    actual_version = int(current["settings"].get("config_version") or 0)
+    if actual_version != expected_version or actual_ids != group_ids or _group_set_hash(actual_ids) != target_hash:
+        return {
+            "ok": True,
+            "dispatch": "control_failed",
+            "reply": "批量撤销没有执行：预览生成后准入配置已变化，请重新发起预览并确认。",
+            "action_receipts": [_receipt(
+                "qq_group_allowlist_disable_all",
+                "failed",
+                "",
+                reason="bulk_preview_stale",
+                target_group_count=len(group_ids),
+                target_set_hash=target_hash,
+                expected_config_version=expected_version,
+                current_config_version=actual_version,
+            )],
+        }
+    groups = [
+        dict(item)
+        for item in current.get("group_allowlist") or []
+        if str(item.get("group_id") or "") not in set(group_ids)
+    ]
+    changed_by = _actor_ref(actor_id)
+    payload = _settings_payload(current, groups=groups, group_chat_enabled=False)
+    payload["expected_version"] = expected_version
+    updated = update_qq_access_settings(
+        conn,
+        payload,
+        idempotency_key=(
+            "qq-admin:qq_group_allowlist_disable_all:"
+            f"{expected_version}:{target_hash}:{_clip(action.get('_action_commitment_id'), 40)}"
+        ),
+        changed_by=changed_by,
+    )
+    for group_id in group_ids:
+        upsert_group_policy(
+            conn,
+            _policy_payload(get_group_policy(conn, group_id), group_id, enabled=False),
+        )
+    applied_version = int(updated["settings"].get("config_version") or 0)
+    record_security_audit(
+        conn,
+        "qq_group_allowlist_disable_all",
+        "success",
+        actor_type=changed_by,
+        detail={
+            "target_group_count": len(group_ids),
+            "target_set_hash": target_hash,
+            "expected_config_version": expected_version,
+            "applied_config_version": applied_version,
+        },
+    )
+    receipt = _receipt(
+        "qq_group_allowlist_disable_all",
+        "completed",
+        "",
+        target_group_count=len(group_ids),
+        target_set_hash=target_hash,
+        expected_config_version=expected_version,
+        applied_config_version=applied_version,
+        audit_event="qq_group_allowlist_disable_all",
+    )
+    return {
+        "ok": True,
+        "dispatch": "control_action",
+        "reply": f"已按确认预览撤销 {len(group_ids)} 个 QQ 群的准入，并关闭群聊总开关；配置版本 {applied_version}。",
+        "action_receipts": [receipt],
+    }
+
+
 def _group_access_state(conn: sqlite3.Connection, group_id: str) -> dict:
     current = get_qq_access_settings(conn)
     groups = list(current.get("group_allowlist") or [])
@@ -435,11 +678,27 @@ def execute_qq_admin_action(
             "reply": "我已识别到要对齐群配置，但缺少作为模板的 QQ 群号；本轮没有修改任何配置。",
             "action_receipts": [_receipt(action_type, "not_started", "", reason="source_group_required")],
         }
-    if not group_id and action_type != "qq_group_allowlist_list":
+    if not group_id and action_type not in {
+        "qq_group_allowlist_list",
+        "qq_group_allowlist_disable_all",
+    }:
         return None
 
     try:
         with connect() as conn:
+            if action_type == "qq_group_allowlist_disable_all":
+                # The immediate transaction prevents a setting write between
+                # target-set revalidation and the aggregate disable.
+                conn.execute("BEGIN IMMEDIATE")
+                _authorise(conn, actor_id)
+                if _frozen_bulk_target(action) is None:
+                    return _bulk_preview(get_qq_access_settings(conn))
+                return _execute_frozen_bulk_disable(
+                    conn,
+                    actor_id=actor_id,
+                    action=action,
+                    trace_id=trace_id,
+                )
             _authorise(conn, actor_id)
             if action_type == "qq_group_allowlist_list":
                 current = get_qq_access_settings(conn)
@@ -478,13 +737,19 @@ def execute_qq_admin_action(
                         "models": model_readiness() if model_readiness else {},
                     }
                 receipt = _receipt(action_type, "completed", group_id, **state)
-                return {
+                result = {
                     "ok": True,
                     "dispatch": "control_diagnostic" if diagnostic is not None else "control_status",
                     "reply": _format_state_reply(group_id, state, diagnostic=diagnostic),
                     "action_receipts": [receipt],
                     "diagnostic": diagnostic,
                 }
+                if action_type == "qq_group_status_read" and not state["allowlisted"]:
+                    result["action_offer"] = {
+                        "action_type": "qq_group_allowlist_enable",
+                        "group_id": group_id,
+                    }
+                return result
 
             if action_type not in {
                 "qq_group_allowlist_enable",
@@ -666,60 +931,6 @@ def build_qq_control_model_readiness(
     return result
 
 
-def build_qq_control_mode_decision(action: dict) -> dict:
-    action_type = str(action.get("action_type") or "qq_control")
-    plan = {
-        "schema_version": 1,
-        "summary_mode": "work",
-        "primary_intent": "ops",
-        "confidence": 1.0,
-        "reason": "命中 Bridge 受支持的确定性 QQ 管理动作。",
-        "intents": [
-            {
-                "id": "intent-1",
-                "type": "ops",
-                "confidence": 1.0,
-                "objective": "执行或查询 QQ 群准入状态",
-                "requires_tools": False,
-                "risk_level": "low" if action_type.endswith(("read", "diagnose")) else "medium",
-            },
-        ],
-        "reply_parts": [],
-        # The server-issued ActionReceipt represents execution.  The plan only
-        # declares that a factual response will be assembled; it grants no LLM
-        # control-plane authority.
-        "actions": [
-            {
-                "id": "action-1",
-                "type": "respond",
-                "intent_id": "intent-1",
-                "objective": f"返回 {action_type} 的结构化事实与回执",
-                "requires_tools": False,
-                "risk_level": "none",
-            },
-        ],
-        "approval_requests": [],
-        "memory_candidates": [],
-    }
-    return {
-        "mode": "work",
-        "intent": "ops",
-        "confidence": 1.0,
-        "reason": plan["reason"],
-        "work_lifecycle": "none",
-        "end_work": False,
-        "allow_emoji": False,
-        "need_tools": False,
-        "response_style": "structured",
-        "emotion": "neutral",
-        "reply_length": "medium",
-        "meme_intent": "none",
-        "engagement": "respond",
-        "source": "qq_control_router",
-        "interaction_plan": plan,
-    }
-
-
 def dispatch_qq_admin_action(
     connect: Callable[[], sqlite3.Connection],
     store: object,
@@ -732,6 +943,7 @@ def dispatch_qq_admin_action(
     get_role_settings: Callable[[str, dict], dict],
     readiness_check: Callable[[dict], tuple[bool, str]],
     current_group_id: str = "",
+    action_commitments: object | None = None,
 ) -> dict | None:
     """Run one supported control route and persist its factual exchange."""
 
@@ -755,13 +967,34 @@ def dispatch_qq_admin_action(
         return None
     mode_decision = build_qq_control_mode_decision(action)
     plan_record = store.persist(actor_id, mode_decision, source=source)
-    store.record_exchange(
-        actor_id,
-        message,
-        str(result.get("reply") or ""),
-        mode_decision,
+    reply = str(result.get("reply") or "")
+    reply, commitment = bind_qq_status_action_offer(
+        action_commitments=action_commitments,
+        offered=result.get("action_offer"),
+        plan_record=plan_record,
+        actor_id=actor_id,
         source=source,
+        reply=reply,
     )
+    # The committed rendering is the one the Owner must actually receive.
+    # Otherwise an offer can exist in storage while its confirmation wording
+    # is absent from this delivery response.
+    result["reply"] = reply
+    try:
+        store.record_exchange(
+            actor_id,
+            message,
+            reply,
+            mode_decision,
+            source=source,
+        )
+    except Exception:
+        invalidate_unrendered_qq_status_offer(
+            action_commitments,
+            commitment,
+            actor_id=actor_id,
+        )
+        raise
     result.update(
         {
             "mode": "work",
@@ -771,11 +1004,12 @@ def dispatch_qq_admin_action(
             "interaction_plan_record": plan_record,
         },
     )
+    if commitment is not None:
+        result["action_commitment"] = commitment
     return result
 
 
 __all__ = [
-    "build_qq_control_mode_decision",
     "build_qq_control_model_readiness",
     "dispatch_qq_admin_action",
     "execute_qq_admin_action",

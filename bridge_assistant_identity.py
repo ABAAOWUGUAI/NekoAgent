@@ -155,14 +155,21 @@ def list_assistants(conn: sqlite3.Connection, owner_actor_id: str = DEFAULT_OWNE
     return [_public_assistant(row) for row in _rows_as_dicts(cursor)]
 
 
-def current_assistant(conn: sqlite3.Connection, owner_actor_id: str = DEFAULT_OWNER_ACTOR_ID) -> dict | None:
-    require_identity_schema(conn)
+def _read_current_assistant(
+    conn: sqlite3.Connection,
+    owner_actor_id: str = DEFAULT_OWNER_ACTOR_ID,
+) -> dict | None:
     cursor = conn.execute(
         _assistant_query() + " WHERE a.owner_actor_id=? AND a.status='active' LIMIT 1",
         (owner_actor_id,),
     )
     rows = _rows_as_dicts(cursor)
     return _public_assistant(rows[0]) if rows else None
+
+
+def current_assistant(conn: sqlite3.Connection, owner_actor_id: str = DEFAULT_OWNER_ACTOR_ID, *, integrity_scope: str = "database") -> dict | None:
+    require_identity_schema(conn, integrity_scope=integrity_scope)
+    return _read_current_assistant(conn, owner_actor_id)
 
 
 def identity_resources(conn: sqlite3.Connection, owner_actor_id: str = DEFAULT_OWNER_ACTOR_ID) -> dict:
@@ -209,9 +216,10 @@ def identity_resources(conn: sqlite3.Connection, owner_actor_id: str = DEFAULT_O
     return {"personas": personas, "appearances": appearances, "voices": voices}
 
 
-def identity_shadow_compare(conn: sqlite3.Connection) -> dict:
-    require_identity_schema(conn)
-    current = current_assistant(conn)
+def _identity_shadow_compare_snapshot(
+    conn: sqlite3.Connection,
+    current: Mapping[str, object] | None,
+) -> dict:
     if current is None:
         return {"ok": False, "mismatches": ["active_assistant"], "checked_fields": 5}
     rows = conn.execute(
@@ -236,6 +244,11 @@ def identity_shadow_compare(conn: sqlite3.Connection) -> dict:
         "assistant_id": current["id"],
         "feature_enabled": identity_feature_enabled(conn),
     }
+
+
+def identity_shadow_compare(conn: sqlite3.Connection) -> dict:
+    require_identity_schema(conn)
+    return _identity_shadow_compare_snapshot(conn, _read_current_assistant(conn))
 
 
 def identity_cutover_plan(conn: sqlite3.Connection) -> dict:
@@ -286,13 +299,16 @@ def set_identity_feature(
     return identity_cutover_plan(conn)
 
 
-def identity_overlay_settings(conn: sqlite3.Connection, legacy_settings: dict) -> dict:
+def identity_overlay_settings(
+    conn: sqlite3.Connection, legacy_settings: dict, *, integrity_scope: str = "database",
+) -> dict:
     if not identity_feature_enabled(conn):
         return dict(legacy_settings)
-    shadow = identity_shadow_compare(conn)
+    require_identity_schema(conn, integrity_scope=integrity_scope)
+    current = _read_current_assistant(conn)
+    shadow = _identity_shadow_compare_snapshot(conn, current)
     if not shadow["ok"]:
         raise ValueError("identity_shadow_compare_failed")
-    current = current_assistant(conn)
     if current is None:
         raise ValueError("active_assistant_missing")
     result = dict(legacy_settings)

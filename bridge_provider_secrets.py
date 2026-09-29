@@ -36,12 +36,40 @@ class ProviderSecretStore:
                 break
         if database_path:
             return cls(Path(database_path).resolve().parent / "provider-secrets")
-        return cls(
-            Path(tempfile.gettempdir())
-            / "agent-provider-secrets-tests"
-            / str(os.getpid())
-            / f"conn-{id(conn):x}"
-        )
+        # ``id(conn)`` is not a connection lifetime token: CPython may reuse
+        # it immediately after an in-memory SQLite connection closes.  Keep a
+        # one-row TEMP session record instead, so every live in-memory
+        # connection gets a stable, private root while it exists.
+        try:
+            conn.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS _provider_secret_store_session (root TEXT NOT NULL)",
+            )
+            row = conn.execute(
+                "SELECT root FROM _provider_secret_store_session LIMIT 1",
+            ).fetchone()
+            if row:
+                return cls(str(row[0]))
+            root = (
+                Path(tempfile.gettempdir())
+                / "agent-provider-secrets-tests"
+                / str(os.getpid())
+                / uuid.uuid4().hex
+            )
+            conn.execute(
+                "INSERT INTO _provider_secret_store_session(root) VALUES(?)",
+                (str(root),),
+            )
+            return cls(root)
+        except sqlite3.Error:
+            # This fallback remains unique even for unusual in-memory handles
+            # that disallow TEMP DDL; it must never fall back to a reusable
+            # object address.
+            return cls(
+                Path(tempfile.gettempdir())
+                / "agent-provider-secrets-tests"
+                / str(os.getpid())
+                / uuid.uuid4().hex
+            )
 
     @staticmethod
     def _provider_id(value: object) -> str:
@@ -173,11 +201,13 @@ def provider_secret_public(conn: sqlite3.Connection, row: sqlite3.Row | dict, ma
             plaintext = resolve_provider_secret(conn, item)
         except Exception:
             available, plaintext = False, ""
-    item.update(
-        api_key_set=bool(secret_ref or plaintext),
-        secret_available=available,
-        api_key_preview=mask(plaintext),
-    )
+    # Registry DTOs are consumed by browser clients.  A mask is still credential
+    # material, and raw storage/rotation fields do not belong to a public DTO.
+    item.pop("last_error", None)
+    item.pop("secret_ref", None)
+    item.pop("secret_version", None)
+    item.pop("secret_rotated_at", None)
+    item.update(api_key_set=bool(secret_ref or plaintext), secret_available=available)
     return item
 
 

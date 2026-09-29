@@ -15,6 +15,7 @@ actually executes the regression, not just the smoke contract checks:
 from __future__ import annotations
 
 import sqlite3
+import re
 import sys
 from pathlib import Path
 
@@ -272,13 +273,21 @@ def test_meow_cadence_budget_blocks_over_35_percent() -> None:
     ]
     issues = signature_budget_issues(draft="再来一条喵", recent_confirmed=history)
     assert "persona_signature_overuse" in issues
-    # 2/10 meow leaves room for one more (3/10 = 30% <= 35%).
+    # The confirmed projection is newest-first.  Two nonconsecutive tokens
+    # leave room for one more; consecutive endings have their own stricter gate.
     sparse = [
-        {"content": f"样本 {i} 喵" if i in {0, 1} else f"样本 {i}"}
+        {"content": f"样本 {i} 喵" if i in {1, 3} else f"样本 {i}"}
         for i in range(10)
     ]
     ok = signature_budget_issues(draft="再来一条喵", recent_confirmed=sparse)
     assert "persona_signature_overuse" not in ok
+    consecutive = [
+        {"content": f"样本 {i} 喵" if i in {0, 1} else f"样本 {i}"}
+        for i in range(10)
+    ]
+    assert "persona_signature_overuse" in signature_budget_issues(
+        draft="再来一条喵", recent_confirmed=consecutive,
+    )
 
 
 def test_retrieval_keyword_fallback_is_bounded_and_compound() -> None:
@@ -508,7 +517,12 @@ def test_admin_web_dispatch_contract_cannot_be_disabled_by_payload_source() -> N
     workbench = (ROOT / "admin" / "views-workbench.js").read_text(encoding="utf-8")
     inbound = (ROOT / "bridge_inbound_idempotency.py").read_text(encoding="utf-8")
 
-    assert "is_admin_web_dispatch = principal in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN}" in bridge
+    assert re.search(
+        r"is_admin_web_dispatch\s*=\s*principal\s+in\s*\{\s*"
+        r"PrincipalKind\.ADMIN_SESSION,\s*PrincipalKind\.ADMIN_TOKEN,\s*"
+        r"PrincipalKind\.ADMIN_GATEWAY,\s*\}",
+        bridge,
+    )
     assert "if str(payload.get(\"source\") or \"\").strip() == \"web-console\"" not in bridge
     assert "require_receipt=is_admin_web_dispatch" in bridge
     assert "source=\"admin\" if is_admin_web_dispatch else QQ_TASK_SOURCE" in bridge

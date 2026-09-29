@@ -7,6 +7,7 @@ import sqlite3
 from typing import Callable
 
 from bridge_goal_followup import followup_resolution_reply, resolve_goal_followup
+from bridge_task_expression import task_failure_projection_text
 
 
 def followup_scope(source: str, user_id: str, delivery_recipient_id: str) -> tuple[str, str]:
@@ -72,9 +73,49 @@ def unresolved_followup_result(
     }
 
 
+def resolved_failure_followup_result(
+    target: dict | None,
+    *,
+    message: str,
+    conversation_ref: str,
+    channel: str,
+    record_conversation: Callable[..., object],
+) -> dict | None:
+    """Resolve explanation-only and dismiss follow-ups before any planner call."""
+
+    if not target or target.get("resolution") != "resolved":
+        return None
+    kind = str(target.get("kind") or "")
+    if kind == "explain_failure":
+        projection = target.get("failure_projection")
+        if not isinstance(projection, dict):
+            return None
+        reply = task_failure_projection_text(projection)
+        dispatch = "failure_explanation"
+    elif kind == "dismiss_failure":
+        reply = "好，这件事先停在这里。我不会因为这句话重新执行，也不会把已经结束的任务说成又取消了一次。"
+        dispatch = "failure_dismissed"
+    else:
+        return None
+    record_conversation(conversation_ref, "user", message, source=channel)
+    record_conversation(conversation_ref, "assistant", reply, source=channel)
+    return {
+        "ok": True,
+        "dispatch": dispatch,
+        "reply": reply,
+        "semantic": kind,
+        "execution_forbidden": True,
+        "target_task_id": str(target.get("legacy_task_id") or ""),
+        "target_run_id": str(target.get("run_id") or ""),
+        "target_goal_id": str(target.get("goal_id") or ""),
+        "continuity_resolution": target,
+    }
+
+
 __all__ = [
     "followup_history",
     "followup_scope",
     "load_goal_followup",
+    "resolved_failure_followup_result",
     "unresolved_followup_result",
 ]

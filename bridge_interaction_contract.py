@@ -30,7 +30,11 @@ PLAN_TOP_LEVEL_FIELDS = {
     "actions",
     "approval_requests",
     "memory_candidates",
+    "research",
+    "delivery",
+    "meme_intent",
 }
+MEME_INTENTS = {"none", "optional", "strong"}
 AFFECT_KINDS = {
     "neutral", "happy", "sad", "tired", "annoyed", "playful", "curious", "comfort",
 }
@@ -50,6 +54,8 @@ TOOL_DEFAULT_INTENTS = {"ops", "code", "research", "automation"}
 REPLY_PART_TYPES = {"social_ack", "transition", "progress", "risk", "next_step"}
 ACTION_TYPES = set(action_types())
 RISK_LEVELS = {"none", "low", "medium", "high"}
+RESEARCH_DELIVERABLE_TYPES = {"none", "document", "report", "file"}
+DELIVERY_MODES = {"INLINE", "ARTIFACT", "BOTH"}
 FACT_BLOCK_TYPES = {
     "fact",
     "code",
@@ -72,6 +78,85 @@ def _safe_confidence(value: object, default: float = 0.5) -> float:
     except (TypeError, ValueError):
         number = default
     return max(0.0, min(number, 1.0))
+
+
+def research_goal_from_message(message: str) -> dict[str, str]:
+    """Derive the bounded M1 research goal carried by fallback Interaction Plans."""
+    original = _clip(message, 300)
+    match = re.search(
+        r"(?:[，,;；。]\s*)?(?:(?:最后|并|然后|再)\s*)?(?:给我\s*)?"
+        r"(?:整理|做|弄|制作|生成|写)(?:成|为)?(?:一份|一个|份|个)?"
+        r"(?P<deliverable>文档|报告|文件)\s*[。！？!?]*$",
+        original,
+    )
+    if match is None:
+        return {"subject": "", "deliverable": "none"}
+    deliverable = {"文档": "document", "报告": "report", "文件": "file"}[match.group("deliverable")]
+    subject = original[:match.start()]
+    subject = re.sub(
+        r"^\s*(?:(?:[^，,。！？!?]{1,16})[，,]\s*)?"
+        r"(?:(?:请|请你|麻烦你|能否|可以)\s*)?(?:帮我|帮|请)?\s*"
+        r"(?:调查|研究(?:一下)?|查(?:一下)?|了解(?:一下)?|分析)\s*",
+        "",
+        subject,
+    ).strip(" ，,;；。")
+    if len(subject) < 4:
+        return {"subject": "", "deliverable": "none"}
+    return {"subject": _clip(subject, 240), "deliverable": deliverable}
+
+
+def _explicit_delivery_mode(message: str, research: Mapping[str, object] | None = None) -> str:
+    """Return a deterministic user override, or an empty string.
+
+    This is the compatibility fallback inside the existing Interaction Plan;
+    it is not a second classifier.  Explicit presentation requests must win
+    over model classification, while unrecognized wording remains available
+    to the structured planner.
+    """
+
+    text = re.sub(r"\s+", "", str(message or "")).lower()
+    no_file = _contains_any(
+        text,
+        ("不要文件", "不用文件", "不需要文件", "无需文件", "只要答案", "只告诉我"),
+    )
+    if no_file:
+        return "INLINE"
+    only_file = _contains_any(
+        text,
+        ("只给我文件", "只要文件", "只需文件", "不用解释", "不要解释", "不要摘要"),
+    )
+    artifact_requested = bool(
+        re.search(
+            r"(?:整理|写|生成|制作|做|弄)(?:成|为)?(?:一份|一个|份|个)?"
+            r"(?:文档|报告|文件|excel|xlsx|表格|ppt|pptx|幻灯片)",
+            text,
+            flags=re.I,
+        )
+        or re.search(r"(?:给我|发我|提供)(?:一份|一个|份|个)?(?:文件|文档|报告)", text)
+    )
+    deliverable = str((research or {}).get("deliverable") or "none")
+    research_artifact = deliverable in {"document", "report", "file"}
+    direct = _contains_any(text, ("直接告诉我", "直接说", "直接回答", "告诉我答案"))
+    if only_file and (artifact_requested or research_artifact or "文件" in text):
+        return "ARTIFACT"
+    if research_artifact:
+        return "BOTH"
+    if artifact_requested and direct:
+        return "BOTH"
+    if artifact_requested:
+        return "ARTIFACT"
+    if direct:
+        return "INLINE"
+    return ""
+
+
+def delivery_mode_from_message(
+    message: str,
+    research: Mapping[str, object] | None = None,
+) -> str:
+    """Return the bounded fallback Delivery Decision for an Interaction Plan."""
+
+    return _explicit_delivery_mode(message, research) or "INLINE"
 
 
 def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
@@ -196,10 +281,13 @@ def fallback_interaction_plan(message: str, mode_decision: Mapping[str, object])
                 "requires_consent": True,
             },
         )
+    research = research_goal_from_message(message)
     return {
         "schema_version": PLAN_SCHEMA_VERSION,
         "summary_mode": mode,
         "primary_intent": primary,
+        "meme_intent": str(mode_decision.get("meme_intent") or "none")
+        if str(mode_decision.get("meme_intent") or "none") in MEME_INTENTS else "none",
         "confidence": _safe_confidence(mode_decision.get("confidence"), 0.68),
         "reason": _clip(mode_decision.get("reason") or "compatibility fallback", 500),
         "affect": {
@@ -216,6 +304,8 @@ def fallback_interaction_plan(message: str, mode_decision: Mapping[str, object])
         "actions": actions[:12],
         "approval_requests": [],
         "memory_candidates": memory_candidates,
+        "research": research,
+        "delivery": {"mode": delivery_mode_from_message(message, research)},
     }
 
 
@@ -242,7 +332,9 @@ def build_interaction_plan_messages(
                 "你是私人助手的交互规划器，只输出一个 JSON 对象。"
                 "一条消息可以同时包含多个意图，禁止把聊天与办事强制二选一。\n"
                 "顶层字段必须且只能是 schema_version, summary_mode, primary_intent, confidence, reason, affect, "
-                "intents, reply_parts, actions, approval_requests, memory_candidates。schema_version 固定为 2。\n"
+                "intents, reply_parts, actions, approval_requests, memory_candidates, research, delivery, meme_intent。schema_version 固定为 2。\n"
+                "meme_intent 只能是 none/optional/strong，仅表达本轮是否适合附已审核图片表情，不授予任务或发送权限；"
+                "日常接梗或庆祝且图片短反应明显更贴合时可选 strong，普通问答、严肃求助、争执和工作执行选 none。\n"
                 "affect 只描述用户本轮明确表达的情绪，字段必须为 expression_present,kind,confidence,intensity；"
                 "kind 只能是 neutral/happy/sad/tired/annoyed/playful/curious/comfort，"
                 "intensity 只能是 low/medium/high。没有明确情绪时 expression_present=false 且 kind=neutral。\n"
@@ -255,6 +347,16 @@ def build_interaction_plan_messages(
                 "字段为 id,type,intent_id,objective,requires_tools,risk_level,depends_on；depends_on 只能引用更早动作 ID，type 只能是 "
                 f"{planner_action_types()}。\n"
                 "approval_requests 和 memory_candidates 只给类别元数据，不得复制消息中的敏感内容。"
+                "memory_candidates 最多 4 项，每项可含 kind,scope_hint,requires_consent,start,end；"
+                "start/end 为当前原始用户消息中证据片段的零基字符区间 [start,end)，禁止写正文。"
+                "对本人明确、稳定、低风险的兴趣或表达偏好，即使没有说'记住'，也可提出 preference 证据区间；"
+                "引述他人、敏感或含糊信息不要当作本人偏好，不能用历史消息的区间冒充本轮来源。"
+                "research 的字段必须为 subject,deliverable；deliverable 只能是 none/document/report/file。"
+                "当本轮是调查/研究并要求交付文档、报告或文件时，subject 只写研究对象，不得包含交付措辞；"
+                "其余情况 subject 为空且 deliverable=none。"
+                "delivery 的字段必须且只能为 mode，值只能是 INLINE/ARTIFACT/BOTH。"
+                "普通问答、直接告诉我、简单总结用 INLINE；明确只要文件用 ARTIFACT；"
+                "调查研究并要求文档或报告、或同时要求聊天结论和文件时用 BOTH。"
                 "代码、命令、日志、引用、文件、校验值不属于 reply_parts。"
             ),
         },
@@ -348,6 +450,32 @@ def _normalize_affect(value: object) -> dict:
     }
 
 
+def _normalize_research_goal(value: object) -> dict[str, str]:
+    if value is None:
+        return {"subject": "", "deliverable": "none"}
+    if not isinstance(value, dict) or set(value) != {"subject", "deliverable"}:
+        raise ValueError("interaction_plan_research_invalid")
+    subject = _clip(value.get("subject"), 240)
+    deliverable = _clip(value.get("deliverable") or "none", 24).lower()
+    if deliverable not in RESEARCH_DELIVERABLE_TYPES:
+        raise ValueError("interaction_plan_research_invalid")
+    if deliverable != "none" and not subject:
+        raise ValueError("interaction_plan_research_invalid")
+    return {"subject": subject, "deliverable": deliverable}
+
+
+def _normalize_delivery(value: object, research: Mapping[str, object]) -> dict[str, str]:
+    if value is None:
+        mode = "BOTH" if str(research.get("deliverable") or "none") != "none" else "INLINE"
+        return {"mode": mode}
+    if not isinstance(value, dict) or set(value) != {"mode"}:
+        raise ValueError("interaction_plan_delivery_invalid")
+    mode = _clip(value.get("mode"), 16).upper()
+    if mode not in DELIVERY_MODES:
+        raise ValueError("interaction_plan_delivery_invalid")
+    return {"mode": mode}
+
+
 def _normalize_reply_parts(items: object) -> list[dict]:
     if not isinstance(items, list):
         raise ValueError("interaction_plan_reply_parts_required")
@@ -429,13 +557,40 @@ def _normalize_metadata_list(items: object, allowed: set[str], limit: int) -> li
     return result
 
 
+def _normalize_memory_candidates(items: object) -> list[dict]:
+    """Keep optional offsets, never a second copy of the private body."""
+    if not isinstance(items, list):
+        raise ValueError("interaction_plan_metadata_list_required")
+    result = []
+    for raw in items[:4]:
+        if not isinstance(raw, dict) or set(raw) - {
+            "kind", "scope_hint", "requires_consent", "start", "end",
+        }:
+            raise ValueError("interaction_plan_metadata_invalid")
+        span = {}
+        if "start" in raw or "end" in raw:
+            if type(raw.get("start")) is not int or type(raw.get("end")) is not int:
+                raise ValueError("source_span_invalid")
+            if raw["start"] < 0 or raw["end"] <= raw["start"] or raw["end"] > 6000:
+                raise ValueError("source_span_invalid")
+            span = {"start": raw["start"], "end": raw["end"]}
+        result.append({
+            "kind": _clip(raw.get("kind"), 40),
+            "scope_hint": _clip(raw.get("scope_hint"), 40),
+            "requires_consent": bool(raw.get("requires_consent", True)),
+            **span,
+        })
+    return result
+
+
 def normalize_interaction_plan(data: Mapping[str, object]) -> dict:
     try:
         source_version = int(data.get("schema_version") or 0)
     except (TypeError, ValueError):
         source_version = 0
     unknown = set(data) - PLAN_TOP_LEVEL_FIELDS
-    required = PLAN_TOP_LEVEL_FIELDS - ({"affect"} if source_version in {1, 2} else set())
+    legacy_optional = {"affect", "research", "delivery"} if source_version in {1, 2} else set()
+    required = PLAN_TOP_LEVEL_FIELDS - legacy_optional - {"meme_intent"}
     missing = required - set(data)
     if unknown or missing or source_version not in {1, 2, PLAN_SCHEMA_VERSION}:
         raise ValueError("interaction_plan_schema_invalid")
@@ -443,6 +598,9 @@ def normalize_interaction_plan(data: Mapping[str, object]) -> dict:
     primary = _clip(data.get("primary_intent"), 40).lower()
     if mode not in {"daily", "work", "mixed"} or primary not in INTENT_TYPES:
         raise ValueError("interaction_plan_summary_invalid")
+    meme_intent = _clip(data.get("meme_intent") or "none", 16).lower()
+    if meme_intent not in MEME_INTENTS:
+        raise ValueError("interaction_plan_meme_intent_invalid")
     intents = _normalize_intents(data.get("intents"))
     intent_ids = {item["id"] for item in intents}
     if primary not in {item["type"] for item in intents}:
@@ -456,13 +614,17 @@ def normalize_interaction_plan(data: Mapping[str, object]) -> dict:
             "confidence": 0.0,
             "intensity": "low",
         }
+    research = _normalize_research_goal(data.get("research"))
     return {
         "schema_version": PLAN_SCHEMA_VERSION,
         "summary_mode": mode,
         "primary_intent": primary,
+        "meme_intent": meme_intent,
         "confidence": _safe_confidence(data.get("confidence")),
         "reason": _clip(data.get("reason"), 500),
         "affect": _normalize_affect(affect),
+        "research": research,
+        "delivery": _normalize_delivery(data.get("delivery"), research),
         "intents": intents,
         "reply_parts": _normalize_reply_parts(data.get("reply_parts")),
         "actions": actions,
@@ -471,11 +633,7 @@ def normalize_interaction_plan(data: Mapping[str, object]) -> dict:
             {"risk_type", "reason", "requires_confirmation"},
             4,
         ),
-        "memory_candidates": _normalize_metadata_list(
-            data.get("memory_candidates"),
-            {"kind", "scope_hint", "requires_consent"},
-            4,
-        ),
+        "memory_candidates": _normalize_memory_candidates(data.get("memory_candidates")),
     }
 
 
@@ -484,7 +642,18 @@ def parse_interaction_plan(raw_text: str, fallback: dict) -> tuple[dict, str]:
     if data is None:
         return dict(fallback), "invalid_json"
     try:
-        return normalize_interaction_plan(data), ""
+        normalized = normalize_interaction_plan(data)
+        fallback_goal = _normalize_research_goal(fallback.get("research"))
+        if not normalized["research"]["subject"] and fallback_goal["subject"]:
+            normalized["research"] = fallback_goal
+        fallback_delivery = _normalize_delivery(fallback.get("delivery"), fallback_goal)
+        # Non-inline fallback modes are produced only by an explicit file/report
+        # request. Preserve that deterministic user override if the model
+        # contradicts it; ordinary INLINE fallback still leaves the structured
+        # planner free to recognize less literal artifact wording.
+        if fallback_delivery["mode"] in {"ARTIFACT", "BOTH"}:
+            normalized["delivery"] = fallback_delivery
+        return normalized, ""
     except (TypeError, ValueError) as exc:
         return dict(fallback), str(exc)
 
@@ -504,12 +673,16 @@ def mode_decision_from_interaction_plan(plan: Mapping[str, object], fallback: Ma
         {
             "mode": mode,
             "intent": primary,
+            "meme_intent": "strong" if str(fallback.get("meme_intent") or "") == "strong"
+            else str(plan.get("meme_intent") or "none"),
             "confidence": _safe_confidence(plan.get("confidence"), _safe_confidence(result.get("confidence"))),
             "reason": _clip(plan.get("reason") or result.get("reason"), 500),
             "need_tools": any(bool(item.get("requires_tools")) for item in actions),
             "end_work": any(item.get("type") == "finish_work" for item in actions),
             "source": "interaction_plan",
             "interaction_plan": dict(plan),
+            "research_goal": dict(plan.get("research") or {}),
+            "delivery_mode": str((plan.get("delivery") or {}).get("mode") or "INLINE"),
             "emotion": str(affect.get("kind") or result.get("emotion") or "neutral"),
             "emotion_confidence": _safe_confidence(affect.get("confidence"), 0.0),
             "emotion_expression_present": bool(affect.get("expression_present")),
@@ -566,6 +739,27 @@ def reconcile_plan_with_mode(plan: Mapping[str, object], decision: Mapping[str, 
     return normalize_interaction_plan(result)
 
 
+def interaction_plan_persona_blocks(plan: Mapping[str, object]) -> list[dict]:
+    """Return only mutable opening blocks supplied by the Interaction Plan."""
+
+    blocks: list[dict] = []
+    for part in plan.get("reply_parts") or []:
+        if str(part.get("type") or "") not in {"social_ack", "transition"}:
+            continue
+        content = str(part.get("text") or "").strip()
+        if content:
+            blocks.append(
+                {
+                    "id": "block-" + uuid.uuid4().hex,
+                    "type": "persona_text",
+                    "content": content,
+                    "mutable": True,
+                    "source": "interaction_plan",
+                },
+            )
+    return blocks
+
+
 def response_blocks(
     plan: Mapping[str, object],
     factual_text: str,
@@ -577,22 +771,7 @@ def response_blocks(
 
     if factual_type not in FACT_BLOCK_TYPES:
         raise ValueError("invalid_fact_block_type")
-    blocks: list[dict] = []
-    if include_styleable_parts:
-        for part in plan.get("reply_parts") or []:
-            if str(part.get("type") or "") not in {"social_ack", "transition"}:
-                continue
-            text = str(part.get("text") or "")
-            if text:
-                blocks.append(
-                    {
-                        "id": "block-" + uuid.uuid4().hex,
-                        "type": "persona_text",
-                        "content": text,
-                        "mutable": True,
-                        "source": "interaction_plan",
-                    },
-                )
+    blocks = interaction_plan_persona_blocks(plan) if include_styleable_parts else []
     blocks.append(
         {
             "id": "block-" + uuid.uuid4().hex,
@@ -636,12 +815,16 @@ def render_response_blocks(blocks: list[Mapping[str, object]]) -> str:
 
 __all__ = [
     "FACT_BLOCK_TYPES",
+    "DELIVERY_MODES",
     "build_interaction_plan_messages",
     "build_interaction_plan_prompt",
     "fallback_interaction_plan",
+    "delivery_mode_from_message",
     "interaction_plan_hash",
+    "interaction_plan_persona_blocks",
     "mode_decision_from_interaction_plan",
     "normalize_interaction_plan",
+    "research_goal_from_message",
     "parse_interaction_plan",
     "persona_response_blocks",
     "reconcile_plan_with_mode",

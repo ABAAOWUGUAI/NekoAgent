@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from bridge_automation_schema import ensure_automation_tables
+
+
+def _interaction_plan_id(event: dict) -> str:
+    try:
+        evidence = json.loads(str(event.get("evidence_snapshot_json") or "{}"))
+    except json.JSONDecodeError:
+        return ""
+    return str(evidence.get("interaction_plan_id") or "").strip()[:80] if isinstance(evidence, dict) else ""
 
 
 def record_proactive_failure(
@@ -11,23 +20,77 @@ def record_proactive_failure(
     policy: dict,
     error: str,
     *,
+    event_id: str = "",
     now: datetime | None = None,
 ) -> None:
-    from bridge_automation import _clip, _defer_policy, timestamp, utc_now
+    from bridge_automation import (
+        _clip,
+        _proactive_claim_where,
+        timestamp,
+        utc_now,
+    )
 
     current = (now or utc_now()).astimezone(timezone.utc)
-    _defer_policy(conn, policy["user_id"], "retry_wait", _clip(error, 300), current + timedelta(minutes=15), current)
-    conn.execute(
-        """UPDATE proactive_events SET error=? WHERE id=(
-               SELECT id FROM proactive_events WHERE user_id=? AND action='send'
-                 AND delivery_id='' AND error='' ORDER BY decision_at DESC LIMIT 1
-           )""",
-        (_clip(error, 1000), policy["user_id"]),
-    )
-    conn.execute(
-        "UPDATE proactive_policies SET failed_count=failed_count+1 WHERE user_id=?",
-        (policy["user_id"],),
-    )
+    if _clip(event_id, 80):
+        event = conn.execute(
+            "SELECT * FROM proactive_events WHERE id=? AND user_id=?",
+            (_clip(event_id, 80), policy["user_id"]),
+        ).fetchone()
+    else:
+        # Failure happened before this iteration produced an event.  Guessing
+        # the latest pending row can corrupt an older delivery and its Plan.
+        event = None
+    event_item = dict(event) if event else {}
+    policy_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(proactive_policies)")
+    }
+    update_where = ""
+    update_params: list[object] = []
+    if event_item:
+        clauses = ["user_id=?"]
+        update_params = [_clip(event_item.get("user_id"), 80)]
+        for field, expected in (
+            ("assistant_id", _clip(event_item.get("assistant_id"), 80)),
+            ("policy_kind", _clip(event_item.get("policy_kind"), 40)),
+            ("policy_version", int(event_item.get("policy_version") or 0)),
+        ):
+            if field in policy_columns and expected:
+                clauses.append(f"{field}=?")
+                update_params.append(expected)
+        update_where = " AND ".join(clauses)
+    elif _clip(policy.get("claim_token"), 80):
+        update_where, update_params = _proactive_claim_where(policy, policy_columns)
+    if update_where:
+        # One compare-and-swap performs the defer and counter update.  A prior
+        # SELECT followed by a user-only UPDATE allowed a concurrent Assistant
+        # or policy-version switch to receive an old generation's failure.
+        conn.execute(
+            f"""UPDATE proactive_policies
+                   SET state='retry_wait',state_reason=?,next_check_at=?,lease_until='',
+                       last_evaluated_at=?,updated_at=?,failed_count=failed_count+1
+                 WHERE {update_where}""",
+            (
+                _clip(error, 300),
+                timestamp(current + timedelta(minutes=15)),
+                timestamp(current),
+                timestamp(current),
+                *update_params,
+            ),
+        )
+    if event_item:
+        conn.execute(
+            "UPDATE proactive_events SET error=? WHERE id=?",
+            (_clip(error, 1000), event_item["id"]),
+        )
+        plan_id = _interaction_plan_id(event_item)
+        if plan_id and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='interaction_plans'",
+        ).fetchone():
+            conn.execute(
+                """UPDATE interaction_plans SET status='failed',updated_at=?
+                   WHERE id=? AND status IN ('planned','dispatched')""",
+                (current.isoformat(), plan_id),
+            )
 
 
 def attach_proactive_delivery(conn: sqlite3.Connection, event_id: str, delivery_id: str) -> dict | None:
@@ -38,7 +101,18 @@ def attach_proactive_delivery(conn: sqlite3.Connection, event_id: str, delivery_
         "UPDATE proactive_events SET delivery_id=? WHERE id=?",
         (_clip(delivery_id, 80), _clip(event_id, 80)),
     )
-    return _row(conn.execute("SELECT * FROM proactive_events WHERE id=?", (_clip(event_id, 80),)).fetchone())
+    event = _row(conn.execute("SELECT * FROM proactive_events WHERE id=?", (_clip(event_id, 80),)).fetchone())
+    plan_id = _interaction_plan_id(event or {})
+    plan_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='interaction_plans'",
+    ).fetchone()
+    if plan_id and plan_table:
+        conn.execute(
+            """UPDATE interaction_plans SET status='dispatched',updated_at=?
+               WHERE id=? AND status='planned'""",
+            (datetime.now(timezone.utc).isoformat(), plan_id),
+        )
+    return event
 
 
 def mark_proactive_delivery(
@@ -77,6 +151,15 @@ def seconds_until_next_event(
            SELECT next_check_at AS due FROM proactive_policies
            WHERE enabled=1 AND authorized=1 AND next_check_at<>''"""
     ).fetchall()
+    tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "group_participation_queue" in tables:
+        rows.extend(conn.execute(
+            """SELECT due_at AS due FROM group_participation_queue
+               WHERE state='pending' AND due_at<>''
+               UNION ALL
+               SELECT lease_expires_at AS due FROM group_participation_queue
+               WHERE state='claimed' AND lease_expires_at<>''"""
+        ).fetchall())
     delays = []
     for row in rows:
         due = parse_datetime(row["due"])

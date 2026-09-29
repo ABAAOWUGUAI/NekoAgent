@@ -31,6 +31,7 @@ CAPABILITY_KEYS = frozenset(
         "voice_transport_probe",
         "voice_input_fetch",
         "voice_input",
+        "group_observation",
     },
 )
 
@@ -161,6 +162,7 @@ def get_runtime_settings(conn: sqlite3.Connection) -> dict:
         (VOICE_INPUT_FEATURE_FLAG,),
     ).fetchone()
     settings["voice_input_enabled"] = bool(input_flag and input_flag[0])
+    settings["group_observation_enabled"] = bool(conn.execute("SELECT 1 FROM sqlite_master WHERE name='qq_group_bindings'").fetchone())
     etag_payload = {key: value for key, value in settings.items() if key != "updated_at"}
     settings["etag"] = hashlib.sha256(
         _canonical_json(etag_payload).encode("utf-8"),
@@ -184,6 +186,7 @@ def channel_runtime_config(conn: sqlite3.Connection) -> dict:
         "voice_transport_probe_enabled": settings["voice_transport_probe_enabled"],
         "voice_input_fetch_enabled": settings["voice_input_fetch_enabled"],
         "voice_input_enabled": settings["voice_input_enabled"],
+        "group_observation_enabled": settings["group_observation_enabled"],
     }
 
 
@@ -242,7 +245,17 @@ def record_channel_heartbeat(conn: sqlite3.Connection, payload: dict) -> dict:
             applied_version, _canonical_json(capabilities), now, sync_error, now, now,
         ),
     )
+    observation_binding = ""
+    if get_runtime_settings(conn).get("group_observation_enabled") and actual_bot_id and capabilities.get("group_observation"):
+        from bridge_group_state import group_binding
+        try:
+            observation_binding = group_binding(conn, instance_id)
+        except ValueError:
+            # Identity/config mismatch remains visible in runtime diagnostics;
+            # never mint a group generation from an unverified self report.
+            pass
     return {
+        "observation_binding": observation_binding,
         "accepted": True,
         "server_version": get_runtime_settings(conn)["version"],
         "heartbeat_at": now,

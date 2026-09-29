@@ -74,7 +74,10 @@ class ReliabilityHttpApi:
     def handle_get(self, request, path: str, principal) -> bool:
         if path not in {self.PATH, "/reliability/dead-letters"}:
             return False
-        if not self._admin(principal):
+        gateway_dead_letter_read = (
+            path == "/reliability/dead-letters" and principal is PrincipalKind.ADMIN_GATEWAY
+        )
+        if not self._admin(principal) and not gateway_dead_letter_read:
             self.json_response(request, 403, {"ok": False, "error": "forbidden"})
             return True
         if path == "/reliability/dead-letters":

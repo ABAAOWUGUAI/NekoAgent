@@ -104,6 +104,11 @@ class _ThreadingUnixServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
                         str(payload.get("challenge") or ""),
                     ),
                 }
+            if operation == "redeem":
+                return {
+                    "ok": True,
+                    **repo.redeem_delivery_grant(str(payload.get("token") or "")),
+                }
             if operation == "authorize":
                 publication_id = str(payload.get("publication_id") or "")
                 authorization = repo.authorize(str(payload.get("session") or ""), publication_id)

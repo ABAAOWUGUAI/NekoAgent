@@ -6,7 +6,8 @@ from __future__ import annotations
 
 def retry_task(
     task_id: str, *, lock, hot_tasks, db_connect, row_to_task, retryable_statuses,
-    default_cwd, safe_cwd, create_task,
+    default_cwd, safe_cwd, create_task, request_idempotency_key: str = "",
+    trace_id: str = "", prepare_prompt=None,
 ) -> tuple[dict | None, str]:
     with lock:
         original = hot_tasks.get(task_id)
@@ -25,7 +26,7 @@ def retry_task(
             "timeout": int(original.get("timeout") or (600 if sandbox == "workspace-write" else 180)),
             "source": str(original.get("source") or "admin"),
             "user_id": str(original.get("user_id") or ""),
-            "trace_id": str(original.get("trace_id") or ""),
+            "trace_id": str(trace_id or original.get("trace_id") or ""),
             "origin_message": str(original.get("origin_message") or ""),
             "intent": str(original.get("intent") or ""),
             "mode": str(original.get("mode") or ""),
@@ -34,10 +35,15 @@ def retry_task(
             "network_mode": "controlled",
             "delivery_recipient_id": str(original.get("delivery_recipient_id") or ""),
             "delivery_session": str(original.get("delivery_session") or ""),
+            "request_idempotency_key": str(request_idempotency_key or ""),
         }
         cwd_raw = str(original.get("cwd") or str(default_cwd))
     if not prompt:
         return None, "task_prompt_unavailable"
+    if callable(prepare_prompt):
+        prompt = str(prepare_prompt(prompt) or "").strip()
+        if not prompt:
+            return None, "task_prompt_unavailable"
     if sandbox not in {"read-only", "workspace-write"}:
         return None, "invalid_sandbox"
     try:
