@@ -13,6 +13,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 
@@ -120,6 +121,7 @@ def main() -> int:
         print(json.dumps({"ok": True, "compiled_python_files": _compile_public_python(), "tests": tests}))
         return 0
     except Exception as exc:  # The runner must surface the exact Gate failure.
+        traceback.print_exc(file=sys.stderr)
         print(json.dumps({"ok": False, "error": f"{type(exc).__name__}:{exc}"}))
         return 1
 
