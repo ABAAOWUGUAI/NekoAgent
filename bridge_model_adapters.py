@@ -8,10 +8,51 @@ credential storage, and usage persistence stay in the bridge runtime.
 from __future__ import annotations
 
 import hashlib
+import json
+import math
+import secrets
 from urllib.parse import quote, urlparse
 
 
 MODEL_CLIENT_USER_AGENT = "PrivateAIAssistant/1.0"
+GROUP_SINGLE_PLAN_TRANSPORT = "openai_chat_completions_group_single_plan_v1"
+GROUP_SINGLE_PLAN_TOOL_NAME = "submit_group_reply"
+_GROUP_SINGLE_PLAN_FIELDS = (
+    "should_reply", "confidence", "reason", "social_action",
+    "anchor_message_id", "silent_reason", "emotion", "reply_length",
+    "meme_intent", "mode", "intent", "why_now", "topic_candidate_id", "reply",
+)
+_GROUP_SOCIAL_ACTIONS = {
+    "silent", "ack", "echo_reaction", "meme_reaction", "ack_add",
+    "follow_up", "reply", "bridge_topic", "topic_start", "repair",
+}
+_GROUP_EMOTIONS = {
+    "neutral", "happy", "sad", "tired", "annoyed", "playful", "curious", "comfort",
+}
+
+
+def _is_official_opencode_go(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    return bool(
+        parsed.scheme.lower() == "https"
+        and (parsed.hostname or "").lower() == "opencode.ai"
+        and parsed.port in {None, 443}
+        and parsed.path.rstrip("/") in {"/zen/go/v1", "/zen/go/v1/chat/completions"}
+    )
+
+
+def _opencode_go_session(settings: dict, base_url: str) -> str:
+    """Return the required opaque session only for the official Go endpoint."""
+
+    if not _is_official_opencode_go(base_url):
+        return ""
+    assistant_id = str(settings.get("assistant_id") or "").strip()
+    logical_scope = str(settings.get("model_session_scope") or "").strip()
+    if assistant_id and logical_scope:
+        return "pai-" + hashlib.sha256(
+            f"opencode-go-session:{assistant_id}:{logical_scope}".encode("utf-8"),
+        ).hexdigest()[:48]
+    return "pai-" + secrets.token_urlsafe(24)
 
 
 def _deepseek_cache_scope(settings: dict) -> str:
@@ -88,6 +129,105 @@ def _message_text(message: dict) -> str:
             for item in content
         ).strip()
     return str(content or "")
+
+
+def _group_single_plan_tool() -> dict:
+    string_fields = (
+        "reason", "silent_reason", "why_now", "reply",
+    )
+    properties = {key: {"type": "string"} for key in string_fields}
+    properties.update({
+        "should_reply": {"type": "boolean"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "social_action": {"type": "string", "enum": sorted(_GROUP_SOCIAL_ACTIONS)},
+        "anchor_message_id": {"type": "integer"},
+        "emotion": {"type": "string", "enum": sorted(_GROUP_EMOTIONS)},
+        "reply_length": {"type": "string", "enum": ["short", "medium", "long"]},
+        "meme_intent": {"type": "string", "enum": ["none", "optional", "strong"]},
+        "mode": {"type": "string", "enum": ["daily", "work", "mixed"]},
+        "intent": {"type": "string", "enum": ["chat", "analysis", "research", "code", "ops"]},
+        "topic_candidate_id": {"type": ["integer", "string", "null"]},
+    })
+    return {
+        "type": "function",
+        "function": {
+            "name": GROUP_SINGLE_PLAN_TOOL_NAME,
+            "description": (
+                "Submit the proposed group reply and decision data for server validation; "
+                "performs no external action."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": list(_GROUP_SINGLE_PLAN_FIELDS),
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _group_single_plan_tool_enabled(settings: dict, base_url: str, transport: str) -> bool:
+    return bool(
+        settings.get("group_single_plan_v1") is True
+        and transport == "openai_chat_completions"
+        and str(settings.get("chat_model") or "").strip().lower() == "deepseek-v4-flash"
+        and _is_official_opencode_go(base_url)
+    )
+
+
+def _group_single_plan_tool_arguments(data: dict) -> str:
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+        return ""
+    choice = choices[0]
+    if choice.get("finish_reason") != "tool_calls":
+        return ""
+    message = choice.get("message")
+    calls = message.get("tool_calls") if isinstance(message, dict) else None
+    if not isinstance(calls, list) or len(calls) != 1 or not isinstance(calls[0], dict):
+        return ""
+    call = calls[0]
+    function = call.get("function") if call.get("type") == "function" else None
+    if not isinstance(function, dict) or function.get("name") != GROUP_SINGLE_PLAN_TOOL_NAME:
+        return ""
+    arguments = function.get("arguments")
+    if type(arguments) is not str:
+        return ""
+    try:
+        value = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return ""
+    if not isinstance(value, dict) or set(value) != set(_GROUP_SINGLE_PLAN_FIELDS):
+        return ""
+    string_fields = {
+        "reason", "social_action", "silent_reason", "emotion", "reply_length",
+        "meme_intent", "mode", "intent", "why_now", "reply",
+    }
+    if any(type(value.get(key)) is not str for key in string_fields):
+        return ""
+    if type(value.get("should_reply")) is not bool:
+        return ""
+    confidence = value.get("confidence")
+    if (
+        type(confidence) not in {int, float}
+        or not 0 <= confidence <= 1
+        or (type(confidence) is float and not math.isfinite(confidence))
+        or type(value.get("anchor_message_id")) is not int
+    ):
+        return ""
+    topic_id = value.get("topic_candidate_id")
+    if topic_id is not None and type(topic_id) not in {int, str}:
+        return ""
+    if (
+        value["social_action"] not in _GROUP_SOCIAL_ACTIONS
+        or value["emotion"] not in _GROUP_EMOTIONS
+        or value["reply_length"] not in {"short", "medium", "long"}
+        or value["meme_intent"] not in {"none", "optional", "strong"}
+        or value["mode"] not in {"daily", "work", "mixed"}
+        or value["intent"] not in {"chat", "analysis", "research", "code", "ops"}
+    ):
+        return ""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def prepare_model_request(settings: dict, messages: list[dict]) -> dict:
@@ -186,8 +326,34 @@ def prepare_model_request(settings: dict, messages: list[dict]) -> dict:
         payload["user_id"] = cache_scope
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    opencode_session = _opencode_go_session(settings, base_url)
+    if opencode_session:
+        headers["x-opencode-session"] = opencode_session
+    response_transport = "openai_chat_completions"
+    if _group_single_plan_tool_enabled(settings, base_url, transport):
+        tool_messages = [dict(item) for item in messages]
+        instruction = (
+            "本轮通过 submit_group_reply 工具参数交回上述 JSON。"
+            "这只是回复数据提交，不会执行任何外部动作。"
+        )
+        if tool_messages and str(tool_messages[0].get("role") or "") == "system":
+            tool_messages[0]["content"] = (
+                f"{str(tool_messages[0].get('content') or '').rstrip()}\n{instruction}"
+            )
+        else:
+            tool_messages.insert(0, {"role": "system", "content": instruction})
+        payload.update({
+            "messages": tool_messages,
+            "tools": [_group_single_plan_tool()],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": GROUP_SINGLE_PLAN_TOOL_NAME},
+            },
+            "parallel_tool_calls": False,
+        })
+        response_transport = GROUP_SINGLE_PLAN_TRANSPORT
     return {
-        "transport": "openai_chat_completions",
+        "transport": response_transport,
         "provider": "openai-compatible",
         "url": _chat_completion_url(base_url),
         "headers": headers,
@@ -227,6 +393,9 @@ def parse_model_response(transport: str, data: dict) -> tuple[str, dict]:
             "completion_tokens": completion,
             "total_tokens": int(raw.get("totalTokenCount") or prompt + completion),
         }
+
+    if transport == GROUP_SINGLE_PLAN_TRANSPORT:
+        return _group_single_plan_tool_arguments(data), data.get("usage") or {}
 
     choices = data.get("choices") or []
     message = (choices[0].get("message") or {}) if choices else {}

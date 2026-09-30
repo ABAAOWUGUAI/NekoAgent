@@ -580,7 +580,8 @@ def record_participation_decision(
 
 _PARTICIPATION_LIFECYCLE_STAGES = {
     "deferred", "superseded", "preflight_blocked", "model_declined",
-    "delivery_queued", "delivery_failed", "ack_confirmed",
+    "truth_blocked", "delivery_queued", "delivery_failed", "ack_confirmed",
+    "window_preflight_blocked", "window_final_blocked", "research_blocked",
 }
 
 

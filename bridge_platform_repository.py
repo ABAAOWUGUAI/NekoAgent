@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -22,6 +23,7 @@ from bridge_goal_run import (
     project_legacy_task,
     utc_now,
 )
+from bridge_task_expression import meaningful_evidence_content
 from bridge_migrations import Migration, MigrationDriftError, apply_migrations, applied_migrations
 
 
@@ -366,9 +368,32 @@ class PlatformRepository:
         for raw in items:
             if not isinstance(raw, Mapping):
                 continue
-            source_uri = str(raw.get("source_uri") or raw.get("url") or "").strip()
+            source_uri = str(
+                raw.get("source_uri")
+                or raw.get("url")
+                or raw.get("source_url")
+                or ""
+            ).strip()
             excerpt = str(raw.get("excerpt") or raw.get("content") or "")[:50000]
-            content_hash = str(raw.get("content_hash") or "").strip()
+            facts = raw.get("facts")
+            if not meaningful_evidence_content({"excerpt": excerpt, "facts": facts}):
+                continue
+            if not excerpt and isinstance(facts, list):
+                excerpt = json.dumps(
+                    facts,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )[:50000]
+            content_hash = str(
+                raw.get("content_hash")
+                or raw.get("content_sha256")
+                or ""
+            ).strip()
+            if content_hash and re.fullmatch(r"[a-fA-F0-9]{64}", content_hash) is None:
+                continue
+            if not source_uri:
+                continue
             if not content_hash:
                 content_hash = hashlib.sha256(f"{source_uri}\n{excerpt}".encode("utf-8")).hexdigest()
             external_id = str(raw.get("id") or content_hash)
@@ -376,7 +401,21 @@ class PlatformRepository:
                 f"{projection.run_id}:{external_id}".encode("utf-8"),
             ).hexdigest()[:24]
             evidence_id = f"ev_{evidence_key}"
-            now = str(raw.get("retrieved_at") or projection.updated_at or utc_now())
+            now = str(
+                raw.get("retrieved_at")
+                or raw.get("fetched_at")
+                or raw.get("data_time")
+                or projection.updated_at
+                or utc_now()
+            )
+            metadata = (
+                dict(raw.get("metadata") or {})
+                if isinstance(raw.get("metadata"), Mapping)
+                else {}
+            )
+            for key in ("source_id", "confidence", "facts"):
+                if key in raw:
+                    metadata[key] = raw[key]
             self.conn.execute(
                 """
                 INSERT INTO evidence(
@@ -401,10 +440,10 @@ class PlatformRepository:
                     source_uri[:4000],
                     str(raw.get("published_at") or "")[:80],
                     now,
-                    str(raw.get("expires_at") or "")[:80],
+                    str(raw.get("expires_at") or raw.get("valid_until") or "")[:80],
                     content_hash,
                     excerpt,
-                    _json(dict(raw.get("metadata") or {})) if isinstance(raw.get("metadata"), Mapping) else "{}",
+                    _json(metadata),
                     now,
                     now,
                 ),

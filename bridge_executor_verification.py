@@ -37,11 +37,13 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bridge_executor_apply import apply_executor_profile
+from bridge_executor_apply import staged_executor_profile
 from bridge_executor_profiles import (
+    executor_candidate_runtime_status,
     executor_runtime_status,
     get_executor_profile,
 )
@@ -168,9 +170,11 @@ def verification_hash_inputs(conn: sqlite3.Connection, provider_id: str) -> dict
     item["executor_credential_source"] = profile.get("credential_source") or ""
     item["executor_upstream_provider_id"] = profile.get("upstream_provider_id") or ""
     item["executor_upstream_model_id"] = profile.get("upstream_model_id") or ""
+    # Verification proves a candidate *configuration*.  Whether that
+    # configuration is currently active is a separate runtime lifecycle fact:
+    # an explicit activation must not invalidate a successful candidate check
+    # merely by changing applied_version / apply status.
     item["executor_config_version"] = profile.get("config_version") or 0
-    item["executor_applied_version"] = profile.get("applied_version") or 0
-    item["executor_last_apply_status"] = profile.get("last_apply_status") or ""
     # The upstream model + provider identity (and its secret version) is what a
     # real verification exercises; rotation of the upstream credential must
     # invalidate the hash even though the secret value is never included.
@@ -279,6 +283,7 @@ def executor_eligibility_state(conn: sqlite3.Connection, model_id: str) -> dict:
     has_tools = "tools" in caps
     profile = get_executor_profile(conn, provider_id)
     runtime = executor_runtime_status(profile)
+    candidate_runtime = executor_candidate_runtime_status(profile)
     current_hash = compute_verification_hash(conn, provider_id) if profile else ""
     verification = _verification_row(conn, provider_id)
     verification_public = _public_verification(verification)
@@ -290,15 +295,20 @@ def executor_eligibility_state(conn: sqlite3.Connection, model_id: str) -> dict:
         "provider_enabled": provider_enabled,
         "capabilities": sorted(caps),
         "can_bind": False,
+        # ``can_activate`` means the Draft has passed all non-live gates and
+        # may be submitted to the explicit, locked switch endpoint.  It never
+        # means the Draft is already the singleton proxy runtime.
+        "can_activate": False,
         "reason_code": "",
         "reason_zh": "",
         "adapter": "codex_cli_profile" if profile else "",
-        "can_configure": bool(profile is None or not runtime.get("ready") or verification_public.get("status") in {VERIFICATION_STATUS_STALE, VERIFICATION_STATUS_FAILED}),
+        "can_configure": bool(profile is None or not candidate_runtime.get("ready") or verification_public.get("status") in {VERIFICATION_STATUS_STALE, VERIFICATION_STATUS_FAILED}),
         "verified_at": verification_public.get("verified_at") or "",
         "verification_hash": verification_public.get("verification_hash") or "",
         "verification_status": verification_public.get("status") or "",
         "executor_profile": public_profile_summary(profile),
         "runtime": runtime,
+        "candidate_runtime": candidate_runtime,
     }
 
     def reject(code: str) -> dict:
@@ -327,9 +337,9 @@ def executor_eligibility_state(conn: sqlite3.Connection, model_id: str) -> dict:
         return reject(REASON_TOOLS_CAPABILITY_MISSING)
     if not profile:
         return reject(REASON_EXECUTOR_PROFILE_MISSING)
-    if not runtime.get("ready"):
+    if not candidate_runtime.get("ready"):
         # Surface the first runtime error for a precise Chinese reason.
-        code = runtime.get("error") or REASON_EXECUTOR_RUNTIME_UNAVAILABLE
+        code = candidate_runtime.get("error") or REASON_EXECUTOR_RUNTIME_UNAVAILABLE
         mapped = {
             "executor_profile_disabled": REASON_EXECUTOR_PROFILE_MISSING,
             "executor_profile_missing": REASON_EXECUTOR_PROFILE_MISSING,
@@ -340,11 +350,6 @@ def executor_eligibility_state(conn: sqlite3.Connection, model_id: str) -> dict:
             "executor_runtime_not_applied": REASON_EXECUTOR_PROFILE_NOT_APPLIED,
         }
         return reject(mapped.get(code, REASON_EXECUTOR_RUNTIME_UNAVAILABLE))
-    if int(profile.get("config_version") or 0) != int(profile.get("applied_version") or 0):
-        return reject(REASON_EXECUTOR_PROFILE_NOT_APPLIED)
-    if str(profile.get("last_apply_status") or "") != "applied":
-        return reject(REASON_EXECUTOR_PROFILE_NOT_APPLIED)
-
     if not verification:
         return reject(REASON_EXECUTOR_VERIFICATION_REQUIRED)
 
@@ -361,7 +366,13 @@ def executor_eligibility_state(conn: sqlite3.Connection, model_id: str) -> dict:
         _mark_stale_on_config_change(conn, provider_id, current_hash)
         return reject(REASON_EXECUTOR_VERIFICATION_STALE)
 
-    state["can_bind"] = True
+    active_runtime_ready = bool(
+        runtime.get("ready")
+        and int(profile.get("config_version") or 0) == int(profile.get("applied_version") or 0)
+        and str(profile.get("last_apply_status") or "") == "applied"
+    )
+    state["can_activate"] = True
+    state["can_bind"] = active_runtime_ready
     state["reason_code"] = REASON_VERIFIED
     state["reason_zh"] = REASON_ZH[REASON_VERIFIED]
     return state
@@ -413,7 +424,7 @@ def _codex_work_verify_args(
     """
 
     args = [
-        "/usr/local/bin/codex",
+        "codex",
         "exec",
         "--skip-git-repo-check",
         "--profile",
@@ -619,7 +630,14 @@ def _looks_like_startup_log(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, timeout: int = 120, runner=None) -> dict:
+def verify_executor_work_mode(
+    conn: sqlite3.Connection,
+    provider_id: str,
+    *,
+    timeout: int = 120,
+    runner=None,
+    runtime_stage=None,
+) -> dict:
     """Verify a third-party model through its executor profile using an
     isolated real workspace run, then persist the verification state bound to
     the current config hash.
@@ -636,13 +654,14 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
     ).fetchone()
     if not table:
         raise ValueError("executor_verification_schema_missing")
-    runtime = executor_runtime_status(profile)
+    runtime = executor_candidate_runtime_status(profile)
     if not runtime.get("ready"):
         raise ValueError(runtime.get("error") or "executor_runtime_unavailable")
     current_hash = compute_verification_hash(conn, provider_id)
     if not current_hash:
         raise ValueError("executor_verification_hash_unavailable")
 
+    use_real_runner = runner is None
     if runner is None:
         def runner(prompt, *, cwd, timeout, settings):
             # G1: dedicated workspace-write runner, never the fixed read-only
@@ -651,8 +670,16 @@ def verify_executor_work_mode(conn: sqlite3.Connection, provider_id: str, *, tim
             settings_override = _executor_verify_settings(conn, provider_id, profile)
             return _run_codex_work_verify(prompt, cwd=cwd, timeout=timeout, settings=settings_override)
 
+    # A real candidate check temporarily stages the singleton proxy and must
+    # restore the already-active runtime afterwards.  Unit runners deliberately
+    # use a no-op stage unless a test injects one, keeping all external service
+    # effects out of deterministic contract tests.
+    if runtime_stage is None:
+        runtime_stage = staged_executor_profile if use_real_runner else (lambda _conn, _provider_id: nullcontext())
+
     workspace_root = Path(os.environ.get("CODEX_EXECUTOR_WORKSPACE_ROOT", "/opt/agent-workspace"))
-    outcome = _run_work_verify(runner=runner, workspace_root=workspace_root, timeout=timeout)
+    with runtime_stage(conn, provider_id):
+        outcome = _run_work_verify(runner=runner, workspace_root=workspace_root, timeout=timeout)
 
     now = utc_now()
     if outcome["ok"]:
@@ -766,6 +793,56 @@ def work_executor_bind_guard(conn: sqlite3.Connection, model_id: str) -> tuple[b
     return True, "ok"
 
 
+def work_executor_activation_guard(conn: sqlite3.Connection, model_id: str) -> tuple[bool, str]:
+    """Validate a verified Draft before it is allowed to replace the proxy.
+
+    Unlike ``work_executor_bind_guard`` this deliberately does *not* require
+    ``applied_version == config_version``: applying is the privileged effect of
+    the activation transaction itself.  All other capability, profile,
+    sandbox/credential and verification-hash gates remain server-side.
+    """
+    model = _model_row_for(conn, model_id)
+    if not model:
+        return False, "model_not_found"
+    if not bool(int(model.get("enabled") or 0)):
+        return False, REASON_MODEL_DISABLED
+    if not bool(int(model.get("provider_enabled") or 0)):
+        return False, REASON_PROVIDER_DISABLED
+    if str(model.get("transport") or "") != "codex_cli_custom_provider":
+        return False, REASON_EXECUTOR_TRANSPORT_UNSUPPORTED
+    if not bool(int(model.get("trusted_for_executor") or 0)):
+        return False, REASON_PROVIDER_NOT_TRUSTED
+    if "tools" not in set(capabilities_from_row(model)):
+        return False, REASON_TOOLS_CAPABILITY_MISSING
+
+    provider_id = str(model.get("provider_id") or "")
+    profile = get_executor_profile(conn, provider_id)
+    if not profile:
+        return False, REASON_EXECUTOR_PROFILE_MISSING
+    runtime = executor_runtime_status(profile)
+    errors = set(runtime.get("errors") or ())
+    # A saved candidate is expected to be pending.  It must still have every
+    # other host prerequisite before staging can safely begin.
+    errors.discard("executor_runtime_not_applied")
+    if errors:
+        return False, REASON_EXECUTOR_RUNTIME_UNAVAILABLE
+
+    verification = _verification_row(conn, provider_id)
+    current_hash = compute_verification_hash(conn, provider_id)
+    if not verification:
+        return False, REASON_EXECUTOR_VERIFICATION_REQUIRED
+    status = str(verification["status"] or "")
+    stored_hash = str(verification["verification_hash"] or "")
+    if status == VERIFICATION_STATUS_FAILED:
+        return False, REASON_EXECUTOR_VERIFICATION_FAILED
+    if status == VERIFICATION_STATUS_STALE or not stored_hash or stored_hash != current_hash:
+        _mark_stale_on_config_change(conn, provider_id, current_hash)
+        return False, REASON_EXECUTOR_VERIFICATION_STALE
+    if status != VERIFICATION_STATUS_VERIFIED:
+        return False, REASON_EXECUTOR_VERIFICATION_REQUIRED
+    return True, "ok"
+
+
 __all__ = [
     "REASON_EXECUTOR_PROFILE_MISSING",
     "REASON_EXECUTOR_PROFILE_NOT_APPLIED",
@@ -790,4 +867,5 @@ __all__ = [
     "verification_hash_inputs",
     "verify_executor_work_mode",
     "work_executor_bind_guard",
+    "work_executor_activation_guard",
 ]

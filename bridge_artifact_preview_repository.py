@@ -61,7 +61,13 @@ def _public_publication(row: Mapping[str, object]) -> dict:
 class ArtifactPreviewRepositoryMixin:
     """Preview-only behavior kept out of the core Artifact repository."""
 
-    def create_publication(self, version_id: str, *, ttl_seconds: int = 86400) -> dict:
+    def create_publication(
+        self,
+        version_id: str,
+        *,
+        ttl_seconds: int = 86400,
+        allow_non_previewable: bool = False,
+    ) -> dict:
         now = utc_now()
         with self._write():
             version = self.conn.execute(
@@ -78,7 +84,7 @@ class ArtifactPreviewRepositoryMixin:
                 or str(version["state"]) != "available"
                 or str(version["deleted_at"])
                 or str(version["artifact_deleted_at"])
-                or not str(version["entrypoint_path"])
+                or (not allow_non_previewable and not str(version["entrypoint_path"]))
             ):
                 raise self.error_type("artifact_version_not_previewable")
             expires = _bounded_expiry(
@@ -187,6 +193,82 @@ class ArtifactPreviewRepositoryMixin:
             )
         return {"id": grant_id, "publication_id": str(publication_id), "token": token, "expires_at": expires}
 
+    def create_delivery_grant(
+        self,
+        version_id: str,
+        *,
+        created_by: str,
+        ttl_seconds: int = 86400,
+    ) -> dict:
+        """Issue a reusable download grant for one immutable, non-preview version.
+
+        Publications already provide the immutable-version, generation and
+        revocation fence.  An empty canonical entrypoint distinguishes this
+        delivery-only use from a V1 preview publication; it is never supplied
+        by the bearer and both public routes enforce the distinction.
+        """
+
+        publication = self.create_publication(
+            version_id,
+            ttl_seconds=max(300, min(int(ttl_seconds), 30 * 86400)),
+            allow_non_previewable=True,
+        )
+        token = secrets.token_urlsafe(32)
+        now = utc_now()
+        grant_id = "grant-" + uuid.uuid4().hex
+        with self._write():
+            row = self.conn.execute(
+                """
+                SELECT p.*,v.id AS version_id,v.artifact_id,v.entrypoint_path,
+                       v.state AS version_state,v.deleted_at AS version_deleted_at,
+                       v.retention_expires_at,a.owner_id,a.deleted_at AS artifact_deleted_at
+                FROM preview_publications p
+                JOIN artifact_versions v ON v.id=p.version_id
+                JOIN artifacts a ON a.id=v.artifact_id
+                WHERE p.id=?
+                """,
+                (str(publication["id"]),),
+            ).fetchone()
+            if (
+                not row
+                or str(row["entrypoint_path"])
+                or str(row["status"]) != "active"
+                or _time(str(row["preview_expires_at"])) <= datetime.now(timezone.utc)
+                or str(row["owner_id"]) != str(created_by)
+                or str(row["version_state"]) != "available"
+                or row["version_deleted_at"]
+                or row["artifact_deleted_at"]
+            ):
+                raise self.error_type("artifact_delivery_grant_not_available")
+            expires = _bounded_expiry(
+                max(300, min(int(ttl_seconds), 30 * 86400)),
+                min(
+                    (value for value in (str(row["preview_expires_at"]), str(row["retention_expires_at"] or "")) if value),
+                    key=_time,
+                ),
+                self.error_type,
+            )
+            self.conn.execute(
+                """
+                INSERT INTO preview_access_grants(
+                  id,publication_id,generation,token_hash,status,created_by,created_at,expires_at
+                ) VALUES(?,?,?,?,'issued',?,?,?)
+                """,
+                (grant_id, str(publication["id"]), int(row["generation"]), _hash(token), str(created_by), now, expires),
+            )
+            self._event(
+                str(row["artifact_id"]), "artifact.delivery_grant_created",
+                version_id=str(row["version_id"]), publication_id=str(publication["id"]),
+                detail={"grant_id": grant_id},
+            )
+        return {
+            "id": grant_id,
+            "publication_id": str(publication["id"]),
+            "artifact_version_id": str(version_id),
+            "token": token,
+            "expires_at": expires,
+        }
+
     def issue_challenge(self, raw_token: str, *, ttl_seconds: int = 120) -> dict:
         challenge = secrets.token_urlsafe(24)
         now = utc_now()
@@ -195,7 +277,9 @@ class ArtifactPreviewRepositoryMixin:
             row = self.conn.execute(
                 "SELECT * FROM preview_access_grants WHERE token_hash=?", (_hash(str(raw_token or "")),),
             ).fetchone()
-            self._validate_grant(row)
+            publication = self._validate_grant(row)
+            if not str(publication["entrypoint_path"]):
+                raise self.error_type("preview_grant_not_found")
             self.conn.execute(
                 "UPDATE preview_access_grants SET challenge_hash=?,challenge_expires_at=? WHERE id=? AND status='issued'",
                 (_hash(challenge), expires, str(row["id"])),
@@ -204,7 +288,7 @@ class ArtifactPreviewRepositoryMixin:
                 raise self.error_type("preview_grant_conflict")
         return {"challenge": challenge, "challenge_expires_at": expires, "grant_id": str(row["id"]), "issued_at": now}
 
-    def _validate_grant(self, row) -> None:
+    def _validate_grant(self, row):
         if not row:
             raise self.error_type("preview_grant_not_found")
         if str(row["status"]) != "issued":
@@ -214,7 +298,8 @@ class ArtifactPreviewRepositoryMixin:
         publication = self.conn.execute(
             """
             SELECT p.*,v.state AS version_state,v.deleted_at AS version_deleted_at,
-                   v.retention_expires_at,a.deleted_at AS artifact_deleted_at
+                    v.retention_expires_at,v.entrypoint_path,v.storage_key,v.manifest_sha256,
+                    v.artifact_id,v.id AS version_id,a.deleted_at AS artifact_deleted_at
             FROM preview_publications p
             JOIN artifact_versions v ON v.id=p.version_id
             JOIN artifacts a ON a.id=v.artifact_id
@@ -237,6 +322,7 @@ class ArtifactPreviewRepositoryMixin:
         retention = str(publication["retention_expires_at"] or "")
         if retention and _time(retention) <= datetime.now(timezone.utc):
             raise self.error_type("artifact_version_expired")
+        return publication
 
     def activate(self, raw_token: str, challenge: str, *, session_ttl_seconds: int = 1800) -> dict:
         now = utc_now()
@@ -246,7 +332,9 @@ class ArtifactPreviewRepositoryMixin:
             row = self.conn.execute(
                 "SELECT * FROM preview_access_grants WHERE token_hash=?", (_hash(str(raw_token or "")),),
             ).fetchone()
-            self._validate_grant(row)
+            preview = self._validate_grant(row)
+            if not str(preview["entrypoint_path"]):
+                raise self.error_type("preview_grant_not_found")
             expected = str(row["challenge_hash"] or "")
             if not expected or not hmac.compare_digest(expected, _hash(str(challenge or ""))):
                 raise self.error_type("preview_challenge_invalid")
@@ -300,6 +388,32 @@ class ArtifactPreviewRepositoryMixin:
             "publication_id": str(publication["id"]),
             "generation": int(publication["generation"]),
             "expires_at": session_expiry,
+        }
+
+    def redeem_delivery_grant(self, raw_token: str) -> dict:
+        """Authorize reusable attachment redemption without making a session."""
+
+        with self._write():
+            row = self.conn.execute(
+                "SELECT * FROM preview_access_grants WHERE token_hash=?", (_hash(str(raw_token or "")),),
+            ).fetchone()
+            try:
+                publication = self._validate_grant(row)
+            except Exception as exc:
+                raise self.error_type("artifact_delivery_grant_not_available") from exc
+            if str(publication["entrypoint_path"]):
+                raise self.error_type("artifact_delivery_grant_not_available")
+            self._event(
+                str(publication["artifact_id"]), "artifact.delivery_redeemed",
+                version_id=str(publication["version_id"]), publication_id=str(publication["id"]),
+                detail={"grant_id": str(row["id"])},
+            )
+        return {
+            "grant_id": str(row["id"]),
+            "publication_id": str(publication["id"]),
+            "version_id": str(publication["version_id"]),
+            "storage_key": str(publication["storage_key"]),
+            "manifest_sha256": str(publication["manifest_sha256"]),
         }
 
     def authorize(self, raw_session: str, publication_id: str) -> dict:

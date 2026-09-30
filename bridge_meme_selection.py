@@ -146,6 +146,8 @@ def candidate_pool(
     emotion_hint: str,
     user_id: str,
     allow_recent_reuse: bool,
+    exact_match_only: bool = False,
+    include_all_candidates: bool = False,
 ) -> tuple[list[dict], dict]:
     now = datetime.now(timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -160,9 +162,15 @@ def candidate_pool(
     ).fetchall()
     matching: list[dict] = []
     broad: list[dict] = []
+    exact_seen = 0
     excluded = {"recent": 0, "cooldown": 0, "daily_limit": 0, "invalid": 0}
     for row in rows:
         item = dict(row)
+        emotion = _canonical_emotion(item.get("emotion"))
+        tags = str(item.get("tags") or "").lower()
+        exact = emotion == target or bool(target and target in tags)
+        if exact:
+            exact_seen += 1
         path = str(item.get("file_path") or "").strip()
         if not path or not Path(path).is_file():
             excluded["invalid"] += 1
@@ -177,17 +185,19 @@ def candidate_pool(
         if last_used and now - last_used < timedelta(minutes=max(0, int(item.get("cooldown_minutes") or 60))):
             excluded["cooldown"] += 1
             continue
-        emotion = _canonical_emotion(item.get("emotion"))
-        tags = str(item.get("tags") or "").lower()
-        exact = emotion == target or bool(target and target in tags)
         score = 40 if emotion == target else 30 if emotion == "daily" else 20 if exact else 0
         ranked = {**item, "_score": score}
         broad.append(ranked)
         if exact:
             matching.append(ranked)
-    pool = matching or broad
+    pool = broad if include_all_candidates else (matching if exact_match_only else (matching or broad))
     pool.sort(key=lambda item: (-int(item["_score"]), int(item.get("usage_count") or 0), -int(item.get("weight") or 1)))
-    reason = "matched_emotion" if matching else ("fallback_any_approved" if broad else "pool_exhausted")
+    reason = (
+        "matched_emotion" if matching else
+        "matching_asset_unavailable" if exact_match_only and exact_seen else
+        "no_matching_emotion" if exact_match_only and broad else
+        "fallback_any_approved" if broad else "pool_exhausted"
+    )
     return pool, {
         "requested_emotion": target,
         "candidate_count": len(pool),
@@ -280,6 +290,8 @@ def select_and_reserve_meme(
     user_id: str,
     session: str,
     allow_recent_reuse: bool,
+    exact_match_only: bool = False,
+    preferred_meme_id: str = "",
     vision_settings: dict | None = None,
     call_model: Callable | None = None,
     record_model: Callable | None = None,
@@ -293,21 +305,33 @@ def select_and_reserve_meme(
         emotion_hint=emotion_hint,
         user_id=user_id,
         allow_recent_reuse=allow_recent_reuse,
+        exact_match_only=exact_match_only or (not allow_recent_reuse and not preferred_meme_id),
+        include_all_candidates=bool(preferred_meme_id),
     )
     if not candidates:
         return None, diagnostics
-    index, method, reason = _vision_select(
-        candidates[: min(len(candidates), 12)],
-        selection_context=(
-            f"情绪={diagnostics['requested_emotion']};"
-            f"模式={str(mode or 'daily')[:20]};意图={str(intent or 'chat')[:40]}"
-        ),
-        settings=vision_settings,
-        call_model=call_model,
-        record_model=record_model,
-        user_id=user_id,
-    )
+    if preferred_meme_id:
+        index = next((i for i, item in enumerate(candidates, 1) if item["id"] == preferred_meme_id), 0)
+        if not index:
+            return None, {**diagnostics, "reason_code": "selected_asset_unavailable"}
+        method, reason = "expression_model", "reviewed_asset_id"
+    else:
+        index, method, reason = _vision_select(
+            candidates[: min(len(candidates), 12)],
+            selection_context=(
+                f"情绪={diagnostics['requested_emotion']};"
+                f"模式={str(mode or 'daily')[:20]};意图={str(intent or 'chat')[:40]}"
+            ),
+            settings=vision_settings,
+            call_model=call_model,
+            record_model=record_model,
+            user_id=user_id,
+        )
     if not index:
+        if not allow_recent_reuse:
+            # Automatic social expression needs a positive semantic choice.
+            # A missing/failed selector is not authority to send candidate #1.
+            return None, {**diagnostics, "reason_code": method}
         index = 1
     chosen = dict(candidates[index - 1])
     selection_id = uuid.uuid4().hex[:16]
@@ -329,7 +353,7 @@ def select_and_reserve_meme(
         (
             uuid.uuid4().hex[:16],
             selection_id,
-            method if index > 1 or method == "vision_selected" else "deterministic",
+            method if preferred_meme_id or index > 1 or method == "vision_selected" else "deterministic",
             method if method != "vision_selected" else "vision_selected",
             len(candidates),
             index,
@@ -340,7 +364,7 @@ def select_and_reserve_meme(
     chosen.update({
         "selection_id": selection_id,
         "selected_emotion": diagnostics["requested_emotion"],
-        "selection_method": method if index > 1 or method == "vision_selected" else "deterministic",
+        "selection_method": method if preferred_meme_id or index > 1 or method == "vision_selected" else "deterministic",
         "selection_reason": reason,
         "selection_diagnostics": diagnostics,
     })

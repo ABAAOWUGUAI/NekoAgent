@@ -9,8 +9,10 @@ from urllib.parse import unquote
 from bridge_conversation_memory import (
     conversation_memory_cutover_plan,
     list_threads,
+    list_threads_page,
     memory_scope_catalog,
     thread_messages,
+    thread_messages_page,
     update_memory,
 )
 
@@ -43,12 +45,29 @@ class ConversationMemoryHttpApi:
         try:
             with self._db_connect() as conn:
                 if path == "/assistant/conversations":
-                    limit = int(query.get("limit", ["50"])[0])
-                    result = list_threads(conn, limit=limit)
+                    channel_type = str(query.get("channel_type", [""])[0]).strip()
+                    if channel_type != "web":
+                        raise ValueError("conversation_channel_type_required")
+                    limit = int(query.get("limit", ["20"])[0])
+                    result = list_threads_page(
+                        conn,
+                        channel_type="web",
+                        limit=limit,
+                        cursor=str(query.get("cursor", [""])[0]),
+                    )
                 elif path.startswith("/assistant/conversations/") and path.endswith("/messages"):
                     thread_id = unquote(path.split("/")[3]).strip()
-                    limit = int(query.get("limit", ["50"])[0])
-                    result = thread_messages(conn, thread_id, limit=limit)
+                    channel_type = str(query.get("channel_type", [""])[0]).strip()
+                    if channel_type != "web":
+                        raise ValueError("conversation_channel_type_required")
+                    limit = int(query.get("limit", ["40"])[0])
+                    result = thread_messages_page(
+                        conn,
+                        thread_id,
+                        required_channel_type="web",
+                        limit=limit,
+                        cursor=str(query.get("cursor", [""])[0]),
+                    )
                 elif path == "/assistant/memories/scopes":
                     result = memory_scope_catalog()
                 elif path == "/assistant/memory-scope/cutover-plan":

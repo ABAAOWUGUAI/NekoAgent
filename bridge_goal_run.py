@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Mapping
 
+from bridge_task_expression import task_failure_projection
+
 
 GOAL_STATUSES = {
     "draft",
@@ -214,6 +216,14 @@ def project_legacy_task(
         "kind": _clip(task.get("error_kind"), 120),
         "message": str(task.get("error") or task.get("stderr") or "")[:50000],
     }
+    if run_status == "failed":
+        error_data["public_projection"] = task_failure_projection(
+            {
+                **task,
+                "goal_id": goal_id or legacy_goal_id(root_task_id),
+                "run_id": legacy_run_id(task_id),
+            },
+        )
     metadata = {
         "projection": "legacy_task_v1",
         "legacy_status": _clip(task.get("status"), 40),

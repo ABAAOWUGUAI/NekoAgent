@@ -6,7 +6,11 @@ from __future__ import annotations
 import sqlite3
 
 from bridge_migrations import MigrationError
-from bridge_qq_access_service import check_qq_access, get_qq_access_settings
+from bridge_qq_access_service import (
+    check_private_owner_access,
+    check_qq_access,
+    get_qq_access_settings,
+)
 
 
 def diagnostic_access_snapshot(connect) -> tuple[dict, list[str]]:
@@ -71,6 +75,11 @@ def private_access_http_error(connect, sender_id: str, action: str):
     }
 
 
+def private_owner_access(connect, sender_id: str) -> dict:
+    with connect() as conn:
+        return check_private_owner_access(conn, sender_id)
+
+
 def group_access(connect, sender_id: str, group_id: str) -> dict:
     with connect() as conn:
         return check_qq_access(
@@ -90,5 +99,6 @@ __all__ = [
     "group_access",
     "private_access",
     "private_access_http_error",
+    "private_owner_access",
     "super_admin_ids",
 ]

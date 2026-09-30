@@ -190,6 +190,7 @@ def ensure_social_tables(conn: sqlite3.Connection) -> None:
     for column, definition in meme_migrations.items():
         if column not in meme_existing:
             conn.execute(f"ALTER TABLE meme_assets ADD COLUMN {column} {definition}")
+    # Reference only.
     conn.execute(
         """
         UPDATE meme_assets SET enabled = 0, review_status = 'pending'
@@ -225,12 +226,7 @@ def seed_default_memes(conn: sqlite3.Connection) -> None:
                    cooldown_minutes, max_daily, created_at, updated_at
                ) VALUES (?, 'sample-official', ?, ?, ?, ?, ?, ?, ?, 1, 5, 0,
                          '', ?, 'image/webp', ?, 'approved', 90, 3, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                   pack=excluded.pack, name=excluded.name, emotion=excluded.emotion,
-                   tags=excluded.tags, source=excluded.source, license_note=excluded.license_note,
-                   file_path=excluded.file_path, public_url=excluded.public_url,
-                   enabled=1, file_hash=excluded.file_hash, mime_type=excluded.mime_type,
-                   file_size=excluded.file_size, review_status='approved', updated_at=excluded.updated_at""",
+               ON CONFLICT(id) DO NOTHING""",
             (
                 digest[:12],
                 name,
@@ -272,6 +268,7 @@ def seed_default_memes(conn: sqlite3.Connection) -> None:
                 now,
             ),
         )
+    # Review required.
     now = utc_now()
     for title, url in (
         ("永雏示例表情包候选搜索", "https://www.bing.com/images/search?q=%E6%B0%B8%E9%9B%8F%E5%A1%94%E8%8F%B2%20%E8%A1%A8%E6%83%85%E5%8C%85"),
@@ -358,6 +355,13 @@ def upsert_meme_asset(conn: sqlite3.Connection, payload: dict) -> dict:
         raise ValueError("invalid_review_status")
     if review_status != "approved":
         enabled = 0
+    semantics = {}
+    for field, limit in (("category", 64), ("intent", 32)):
+        if field in payload:
+            value = payload[field]
+            if type(value) is not str or not value.strip() or len(value.strip()) > limit:
+                raise ValueError(f"invalid_meme_{field}")
+            semantics[field] = value.strip()
     conn.execute(
         """
         INSERT INTO meme_assets(
@@ -408,6 +412,10 @@ def upsert_meme_asset(conn: sqlite3.Connection, payload: dict) -> dict:
             now,
         ),
     )
+    for field, value in semantics.items():
+        # Field names come only from the fixed allowlist above. Omitted values
+        # preserve prior semantic labels for older Admin clients.
+        conn.execute(f"UPDATE meme_assets SET {field} = ? WHERE id = ?", (value, asset_id))
     row = conn.execute("SELECT * FROM meme_assets WHERE id = ?", (asset_id,)).fetchone()
     return dict(row)
 
@@ -467,6 +475,7 @@ def save_uploaded_meme(conn: sqlite3.Connection, payload: dict) -> dict:
     )
     return dict(conn.execute("SELECT * FROM meme_assets WHERE id = ?", (item["id"],)).fetchone())
 
+
 def choose_emotion(text: str, mode: str = "daily", intent: str = "chat") -> str:
     joined = f"{text or ''} {mode or ''} {intent or ''}".lower()
     if intent in {"ops", "code", "research", "analysis"} or mode == "work":
@@ -477,6 +486,7 @@ def choose_emotion(text: str, mode: str = "daily", intent: str = "chat") -> str:
     best = max(scores, key=scores.get)
     return best if scores[best] else "daily"
 
+
 def choose_meme(
     conn: sqlite3.Connection,
     *,
@@ -486,7 +496,7 @@ def choose_meme(
     increment_usage: bool = True,
     user_id: str = "",
     session: str = "",
-    emotion_hint: str = "", allow_recent_reuse: bool = False,
+    emotion_hint: str = "",
 ) -> dict | None:
     emotion = str(emotion_hint or "").strip().lower() or choose_emotion(text, mode=mode, intent=intent)
     now = datetime.now(timezone.utc)
@@ -506,7 +516,7 @@ def choose_meme(
     ).fetchall()
     if not rows:
         return None
-    recent = set() if allow_recent_reuse else {
+    recent_ids = {
         str(row["meme_id"])
         for row in conn.execute(
             """
@@ -521,7 +531,7 @@ def choose_meme(
         item = dict(row)
         if int(item.get("sent_today") or 0) >= int(item.get("max_daily") or 3):
             continue
-        if item["id"] in recent:
+        if item["id"] in recent_ids:
             continue
         last_used = None
         try:
@@ -532,9 +542,9 @@ def choose_meme(
             last_used = None
         if last_used and now - last_used < timedelta(minutes=max(0, int(item.get("cooldown_minutes") or 60))):
             continue
-        bonus = 4 if item.get("emotion") == emotion else 1
+        exact_bonus = 4 if item.get("emotion") == emotion else 1
         inverse_usage = max(1, 8 - min(int(item.get("usage_count") or 0), 7))
-        count = max(1, min(int(item.get("weight") or 1) + bonus + inverse_usage, 30))
+        count = max(1, min(int(item.get("weight") or 1) + exact_bonus + inverse_usage, 30))
         weighted.extend([item] * count)
     if not weighted:
         return None

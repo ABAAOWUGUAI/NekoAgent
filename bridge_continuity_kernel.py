@@ -142,7 +142,10 @@ class ContinuityKernel:
             with self._connect() as conn:
                 if not self._enabled(conn):
                     return ""
-                assistant = current_assistant(conn)
+                assistant = current_assistant(
+                    conn,
+                    integrity_scope="identity" if kwargs.get("source") == "qq_group" else "database",
+                )
                 if not assistant:
                     return ""
                 actor, thread = self._thread(kwargs)
@@ -540,10 +543,23 @@ class ContinuityKernel:
 
         observe_task(self, task, projection=projection, delivery=delivery)
 
-    def settle_delivery(self, delivery_id: str, outcome: str, error_kind: str = "") -> None:
+    def settle_delivery(
+        self,
+        delivery_id: str,
+        outcome: str,
+        error_kind: str = "",
+        *,
+        experience_assimilated: bool = False,
+    ) -> None:
         from bridge_continuity_outcomes import settle_delivery
 
-        settle_delivery(self, delivery_id, outcome, error_kind)
+        settle_delivery(
+            self,
+            delivery_id,
+            outcome,
+            error_kind,
+            experience_assimilated=experience_assimilated,
+        )
 
     def recent_action_context(self, kwargs: Mapping[str, object], *, limit: int = 8) -> list[dict]:
         """Return bounded, receipt-backed action metadata for natural-language follow-ups."""
@@ -600,8 +616,15 @@ def settle_delivery_link(
     delivery_id: str,
     outcome: str,
     error_kind: str = "",
+    *,
+    experience_assimilated: bool = False,
 ) -> None:
-    ContinuityKernel(assistant_db_connect).settle_delivery(delivery_id, outcome, error_kind)
+    ContinuityKernel(assistant_db_connect).settle_delivery(
+        delivery_id,
+        outcome,
+        error_kind,
+        experience_assimilated=experience_assimilated,
+    )
 
 
 __all__ = [

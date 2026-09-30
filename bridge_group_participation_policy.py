@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import sqlite3
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from bridge_conversation_participation_contract import GroupParticipationMode, group_mode_from_legacy
 from bridge_conversation_participation_engine import deterministic_participation_enabled
@@ -20,14 +21,17 @@ from bridge_group_participation_schema import (
     require_group_participation_schema,
 )
 from bridge_delivery_continuity import unified_delivery_enabled
+from bridge_qq_quality_receipt_schema import quality_receipt_enabled
 from bridge_group_participation_floor import (
     NATURAL_PARTICIPATION_FLOOR_WINDOW_COUNT,
     apply_natural_participation_floor,
 )
+from bridge_group_topic_delivery import topic_fingerprint
 from bridge_migrations import utc_now
 
 
-POLICY_VERSION = "group-social-action-plan-v3"
+POLICY_VERSION = "group-social-action-plan-v4"
+GROUP_PARTICIPATION_TIMEZONE = "Asia/Shanghai"
 
 
 def bounded_media_observation_probability(value: object, *, default: float = MEDIA_OBSERVATION_POLICY_DEFAULT) -> float:
@@ -109,6 +113,7 @@ def natural_group_cutover_plan(conn: sqlite3.Connection) -> dict:
         "deterministic_enabled": deterministic_participation_enabled(conn),
         "unified_delivery_enabled": unified_delivery_enabled(conn),
         "shadow_enabled": participation_shadow_enabled(conn),
+        "quality_receipt_enabled": quality_receipt_enabled(conn),
         "policy_version": POLICY_VERSION,
         "reversible": True,
         "schema_ok": bool(schema["ok"]),
@@ -132,6 +137,8 @@ def set_natural_group_participation_feature(
         raise ValueError("unified_delivery_required")
     if enabled and not plan["shadow_enabled"]:
         raise ValueError("participation_shadow_required")
+    if enabled and not plan["quality_receipt_enabled"]:
+        raise ValueError("qq_quality_receipt_required")
     conn.execute(
         """
         INSERT INTO assistant_feature_flags(name,enabled,updated_at) VALUES(?,?,?)
@@ -153,7 +160,17 @@ def _parse_time(value: object) -> datetime | None:
 
 
 def _day_key(now: datetime) -> str:
-    return now.astimezone(timezone.utc).date().isoformat()
+    """Return group-policy day keys in Beijing time, not UTC.
+
+    Ambient windows and Owner-visible budgets use Asia/Shanghai.  UTC here
+    incorrectly carried a previous day's reply count through local midnight.
+    """
+
+    try:
+        local = now.astimezone(ZoneInfo(GROUP_PARTICIPATION_TIMEZONE))
+    except ZoneInfoNotFoundError:
+        local = now.astimezone(timezone(timedelta(hours=8), GROUP_PARTICIPATION_TIMEZONE))
+    return local.date().isoformat()
 
 
 def _recent_topic_model_decision(
@@ -162,6 +179,7 @@ def _recent_topic_model_decision(
     group_id: str,
     now: datetime,
     window_seconds: int,
+    current_topic_fingerprint: str,
 ) -> dict | None:
     """Return a recent ambient engagement decision without reading message text.
 
@@ -173,9 +191,14 @@ def _recent_topic_model_decision(
     """
 
     cutoff = now - timedelta(seconds=max(1, int(window_seconds)))
+    columns = {
+        str(item[1])
+        for item in conn.execute("PRAGMA table_info(engagement_decisions)").fetchall()
+    }
+    decision_json_column = "decision_json" if "decision_json" in columns else "'' AS decision_json"
     rows = conn.execute(
-        """
-        SELECT id,action,reason_code,created_at
+        f"""
+        SELECT id,action,reason_code,{decision_json_column},created_at
         FROM engagement_decisions
         WHERE thread_id=? AND model_role='conversation_engagement' AND created_at>=?
         ORDER BY created_at DESC LIMIT 1
@@ -185,6 +208,16 @@ def _recent_topic_model_decision(
     if not rows:
         return None
     row = rows[0]
+    try:
+        decision_payload = json.loads(str(row["decision_json"] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        decision_payload = {}
+    recorded_fingerprint = str(
+        (decision_payload.get("group_engagement") or {}).get("topic_fingerprint")
+        if isinstance(decision_payload, dict) else "",
+    )
+    if not current_topic_fingerprint or recorded_fingerprint != current_topic_fingerprint:
+        return None
     decided_at = _parse_time(row["created_at"])
     if decided_at is None or decided_at > now:
         return None
@@ -221,6 +254,20 @@ def observe_group_message(
         started = previous
         count = int(row["burst_message_count"] or 0) + 1
     day = _day_key(now)
+    last_reply = _parse_time(row["last_reply_at"] if row else "") if row else None
+    stored_day = str(row["day_key"] or "") if row else ""
+    # Day-key migrations and older writers can leave a current-looking key
+    # beside yesterday's reply time.  Never carry that stale ambient budget
+    # across the group-policy (Asia/Shanghai) midnight boundary.
+    same_policy_day = bool(
+        row and stored_day == day and (last_reply is None or _day_key(last_reply) == day)
+    )
+    daily_count = (
+        int(row["daily_reply_count"] or 0)
+        if same_policy_day
+        else 0
+    )
+    retained_last_reply_at = str(row["last_reply_at"] or "") if same_policy_day and row else ""
     conn.execute(
         f"""
         INSERT INTO {GROUP_PARTICIPATION_BUDGET_TABLE}(
@@ -229,14 +276,16 @@ def observe_group_message(
         ) VALUES(?,?,?,?,?,?,?,?)
         ON CONFLICT(group_id) DO UPDATE SET
             day_key=excluded.day_key,
+            daily_reply_count=excluded.daily_reply_count,
             burst_started_at=excluded.burst_started_at,
             burst_message_count=excluded.burst_message_count,
             last_message_at=excluded.last_message_at,
+            last_reply_at=excluded.last_reply_at,
             updated_at=excluded.updated_at
         """,
-        (str(group_id or "").strip(), day, int(row["daily_reply_count"] or 0) if row else 0,
+        (str(group_id or "").strip(), day, daily_count,
          started.isoformat(), count, now.isoformat(),
-         str(row["last_reply_at"] or "") if row else "", utc_now()),
+         retained_last_reply_at, utc_now()),
     )
     return {
         "day_key": day,
@@ -261,10 +310,17 @@ def record_group_reply(
     """
     now = _parse_time(replied_at) or datetime.now(timezone.utc)
     row = conn.execute(
-        f"SELECT daily_reply_count,day_key FROM {GROUP_PARTICIPATION_BUDGET_TABLE} WHERE group_id=?",
+        f"SELECT daily_reply_count,day_key,last_reply_at FROM {GROUP_PARTICIPATION_BUDGET_TABLE} WHERE group_id=?",
         (str(group_id or "").strip(),),
     ).fetchone()
-    count = int(row["daily_reply_count"] or 0) if row and str(row["day_key"] or "") == _day_key(now) else 0
+    stored_reply = _parse_time(row["last_reply_at"] if row else "") if row else None
+    count = (
+        int(row["daily_reply_count"] or 0)
+        if row
+        and str(row["day_key"] or "") == _day_key(now)
+        and (stored_reply is None or _day_key(stored_reply) == _day_key(now))
+        else 0
+    )
     if count_towards_budget:
         count += 1
     conn.execute(
@@ -276,6 +332,9 @@ def record_group_reply(
         ON CONFLICT(group_id) DO UPDATE SET
             day_key=excluded.day_key,
             daily_reply_count=excluded.daily_reply_count,
+            burst_started_at='',
+            burst_message_count=0,
+            last_message_at='',
             last_reply_at=excluded.last_reply_at,
             updated_at=excluded.updated_at
         """,
@@ -350,10 +409,18 @@ def group_final_action_gate(
     is_continuation = str(candidate_kind or "") == "continuation"
     frame = conversation_frame or {}
     if not is_continuation:
-        # Ambient acknowledgements and attachment-only turns cannot provide a
-        # reliable textual participation basis.  They remain available to
-        # explicit/direct routes, but must not spend a group engagement or
-        # vision-model request merely to return a deterministic silence.
+        # An autonomous group contribution must have a server-resolved target.
+        # The context frame intentionally marks short/deictic unthreaded turns
+        # (for example “还有长篇”) as ambiguous instead of inventing a target.
+        # Asking the model to decide anyway caused generic clarification prose
+        # to appear after unrelated rich-card content in the real QQ client.
+        if not str(current.get("content") or "").strip():
+            return {
+                "should_reply": False,
+                "reason": "ambient_empty_text",
+                "policy_version": POLICY_VERSION,
+                "candidate_kind": "ambient",
+            }
         if bool(frame.get("acknowledgement_only")):
             return {
                 "should_reply": False,
@@ -361,10 +428,30 @@ def group_final_action_gate(
                 "policy_version": POLICY_VERSION,
                 "candidate_kind": "ambient",
             }
-        if bool(frame.get("attachment_only")):
+        try:
+            attachment_participation = int(policy.get("attachment_participation") or 1) != 0
+        except (TypeError, ValueError):
+            attachment_participation = True
+        if bool(frame.get("attachment_only")) and (
+            not attachment_participation or not bool(frame.get("topic_active"))
+        ):
             return {
                 "should_reply": False,
                 "reason": "ambient_attachment_only",
+                "policy_version": POLICY_VERSION,
+                "candidate_kind": "ambient",
+            }
+        if bool(frame.get("ambiguous_target")):
+            return {
+                "should_reply": False,
+                "reason": "ambient_ambiguous_target",
+                "policy_version": POLICY_VERSION,
+                "candidate_kind": "ambient",
+            }
+        if not bool(frame.get("topic_evidence")) or not bool(frame.get("topic_active")):
+            return {
+                "should_reply": False,
+                "reason": "ambient_no_active_topic",
                 "policy_version": POLICY_VERSION,
                 "candidate_kind": "ambient",
             }
@@ -374,6 +461,7 @@ def group_final_action_gate(
             group_id=group_id,
             now=current_time,
             window_seconds=topic_window,
+            current_topic_fingerprint=topic_fingerprint(current.get("content")),
         )
         if recent_decision:
             return {

@@ -3,9 +3,31 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from bridge_social_start import reconcile_stale_start_opportunities
+
+
+def _trace_elapsed(phase: str, started: float, *, status: str = "ok") -> None:
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    if elapsed_ms >= 250 or status != "ok":
+        print(
+            f"proactive_stage phase={phase} elapsed_ms={elapsed_ms} status={status}",
+            flush=True,
+        )
+
+
+def _proactive_stage(phase: str, work):
+    started = time.monotonic()
+    status = "ok"
+    try:
+        return work()
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        _trace_elapsed(phase, started, status=status)
 
 
 def process_proactive_policies(services: dict[str, Any]) -> None:
@@ -14,13 +36,20 @@ def process_proactive_policies(services: dict[str, Any]) -> None:
         if not services["social_proactive_globally_enabled"](conn):
             return
         if hasattr(conn, "execute"):
-            reconcile_stale_start_opportunities(conn)
-        services["reconcile_owner_proactive_policy"](conn)
-        services["reconcile_group_proactive_policies"](conn)
-        policies = services["claim_due_proactive_policies"](conn, limit=3)
+            _proactive_stage("stale_reconcile", lambda: reconcile_stale_start_opportunities(conn))
+        _proactive_stage("owner_reconcile", lambda: services["reconcile_owner_proactive_policy"](conn))
+        _proactive_stage("group_reconcile", lambda: services["reconcile_group_proactive_policies"](conn))
+        policies = _proactive_stage(
+            "due_claim", lambda: services["claim_due_proactive_policies"](conn, limit=3),
+        )
+        commit_started = time.monotonic()
+    _trace_elapsed("policy_commit", commit_started)
     for policy in policies:
+        event = None
         try:
-            decision = services["_generate_proactive_decision"](policy)
+            decision = _proactive_stage(
+                "model_decision", lambda: services["_generate_proactive_decision"](policy),
+            )
             with connect() as conn:
                 event = services["record_proactive_decision"](
                     conn,
@@ -60,7 +89,12 @@ def process_proactive_policies(services: dict[str, Any]) -> None:
                 )
         except Exception as exc:
             with connect() as conn:
-                services["record_proactive_failure"](conn, policy, str(exc))
+                services["record_proactive_failure"](
+                    conn,
+                    policy,
+                    str(exc),
+                    event_id=str((event or {}).get("id") or ""),
+                )
 
 
 __all__ = ["process_proactive_policies"]

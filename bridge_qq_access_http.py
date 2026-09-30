@@ -5,9 +5,11 @@ from __future__ import annotations
 
 from bridge_qq_access_service import (
     check_qq_access,
+    get_group_participation_windows,
     get_qq_access_settings,
     qq_access_cutover_plan,
     set_qq_access_feature,
+    update_group_participation_windows,
     update_qq_access_settings,
 )
 
@@ -16,7 +18,10 @@ POST_PATHS = {
     "/qq/settings",
     "/qq/access/cutover",
     "/qq/access/check",
+    "/qq/group-participation/windows",
 }
+
+GROUP_PARTICIPATION_WINDOWS_PATH = "/qq/group-participation/windows"
 
 
 def _truthy(value: object) -> bool:
@@ -56,15 +61,16 @@ class QqAccessHttpApi:
         self._json_response(request, status, {"ok": False, "error": message})
 
     def handle_get(self, request, path: str, query: dict) -> bool:
-        if path not in {"/qq/settings", "/qq/access/cutover"}:
+        if path not in {"/qq/settings", "/qq/access/cutover", GROUP_PARTICIPATION_WINDOWS_PATH}:
             return False
         try:
             with self._assistant_connect() as conn:
-                result = (
-                    get_qq_access_settings(conn)
-                    if path == "/qq/settings"
-                    else qq_access_cutover_plan(conn)
-                )
+                if path == "/qq/settings":
+                    result = get_qq_access_settings(conn)
+                elif path == "/qq/access/cutover":
+                    result = qq_access_cutover_plan(conn)
+                else:
+                    result = get_group_participation_windows(conn)
         except Exception as exc:
             self._error(request, exc)
             return True
@@ -92,6 +98,17 @@ class QqAccessHttpApi:
                         expect_plan_checksum=str(payload.get("plan_checksum") or ""),
                         changed_by="web_admin",
                     )
+                elif path == GROUP_PARTICIPATION_WINDOWS_PATH:
+                    result = update_group_participation_windows(
+                        conn,
+                        scope=payload.get("scope"),
+                        group_id=payload.get("group_id"),
+                        operation=payload.get("operation"),
+                        expected_version=payload.get("expected_version"),
+                        policy=payload.get("policy"),
+                        idempotency_key=str(request.headers.get("Idempotency-Key") or "").strip(),
+                        changed_by="web_admin",
+                    )
                 else:
                     result = check_qq_access(conn, payload)
         except Exception as exc:
@@ -101,4 +118,4 @@ class QqAccessHttpApi:
         return True
 
 
-__all__ = ["POST_PATHS", "QqAccessHttpApi"]
+__all__ = ["GROUP_PARTICIPATION_WINDOWS_PATH", "POST_PATHS", "QqAccessHttpApi"]

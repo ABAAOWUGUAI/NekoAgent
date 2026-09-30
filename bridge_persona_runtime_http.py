@@ -12,6 +12,13 @@ from bridge_persona_runtime import (
     runtime_persona_metadata,
     save_persona_workspace,
 )
+from bridge_persona_presets import (
+    apply_persona_preset,
+    archive_persona_preset,
+    create_persona_preset,
+    list_persona_presets,
+    update_persona_preset,
+)
 
 
 def _error_status(message: str) -> int:
@@ -30,13 +37,24 @@ class PersonaRuntimeHttpApi:
     WORKSPACE_PATH = "/assistant/persona-workspace"
     RUNTIME_PATH = "/assistant/persona-workspace/runtime"
     PREVIEW_PATH = "/assistant/persona-workspace/preview"
+    PRESETS_PATH = "/assistant/persona-presets"
+    PRESET_UPDATE_PATH = "/assistant/persona-presets/update"
+    PRESET_ARCHIVE_PATH = "/assistant/persona-presets/archive"
+    PRESET_APPLY_PATH = "/assistant/persona-presets/apply"
 
     def __init__(self, db_connect: Callable, json_response: Callable) -> None:
         self._db_connect = db_connect
         self._json_response = json_response
 
     def matches_post(self, path: str) -> bool:
-        return path in {self.WORKSPACE_PATH, self.PREVIEW_PATH}
+        return path in {
+            self.WORKSPACE_PATH,
+            self.PREVIEW_PATH,
+            self.PRESETS_PATH,
+            self.PRESET_UPDATE_PATH,
+            self.PRESET_ARCHIVE_PATH,
+            self.PRESET_APPLY_PATH,
+        }
 
     def _failure(self, request, exc: Exception) -> bool:
         if isinstance(exc, sqlite3.Error):
@@ -55,15 +73,16 @@ class PersonaRuntimeHttpApi:
         return True
 
     def handle_get(self, request, path: str) -> bool:
-        if path not in {self.WORKSPACE_PATH, self.RUNTIME_PATH}:
+        if path not in {self.WORKSPACE_PATH, self.RUNTIME_PATH, self.PRESETS_PATH}:
             return False
         try:
             with self._db_connect() as conn:
-                result = (
-                    runtime_persona_metadata(conn)
-                    if path == self.RUNTIME_PATH
-                    else persona_workspace(conn)
-                )
+                if path == self.RUNTIME_PATH:
+                    result = runtime_persona_metadata(conn)
+                elif path == self.PRESETS_PATH:
+                    result = list_persona_presets(conn)
+                else:
+                    result = persona_workspace(conn)
         except Exception as exc:
             return self._failure(request, exc)
         self._json_response(request, 200, {"ok": True, "result": result})
@@ -74,11 +93,18 @@ class PersonaRuntimeHttpApi:
             return False
         try:
             with self._db_connect() as conn:
-                result = (
-                    preview_persona_workspace(conn, payload)
-                    if path == self.PREVIEW_PATH
-                    else save_persona_workspace(conn, payload)
-                )
+                if path == self.PREVIEW_PATH:
+                    result = preview_persona_workspace(conn, payload)
+                elif path == self.PRESETS_PATH:
+                    result = create_persona_preset(conn, payload)
+                elif path == self.PRESET_UPDATE_PATH:
+                    result = update_persona_preset(conn, payload)
+                elif path == self.PRESET_ARCHIVE_PATH:
+                    result = archive_persona_preset(conn, payload)
+                elif path == self.PRESET_APPLY_PATH:
+                    result = apply_persona_preset(conn, payload.get("id"))
+                else:
+                    result = save_persona_workspace(conn, payload)
         except Exception as exc:
             return self._failure(request, exc)
         self._json_response(request, 200, {"ok": True, "result": result})

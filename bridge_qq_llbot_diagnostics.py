@@ -56,6 +56,8 @@ def collect_llbot_diagnostics(
     container_file_exists: Callable[[str, str], bool],
     list_events: Callable,
     astrbot_container: str,
+    qrcode_info: Callable[[], dict] | None = None,
+    qrcode_max_age_seconds: int = 180,
 ) -> dict:
     started = time.monotonic()
     access_control, allowed_ids = diagnostic_access_snapshot(assistant_connect)
@@ -72,6 +74,16 @@ def collect_llbot_diagnostics(
     service_active = bool(service.get("ok") and service.get("status") == "active")
     qq_online = service_active and runtime_applied
     needs_login = service_active and runtime.get("state") in {"offline", "pending"}
+    qrcode = qrcode_info() if qrcode_info is not None else {"available": False}
+    qrcode_mtime = int(qrcode.get("mtime") or 0)
+    qrcode_age_seconds = max(0, int(time.time()) - qrcode_mtime) if qrcode_mtime else None
+    qrcode_stale = bool(
+        qrcode.get("available")
+        and (qrcode_age_seconds is None or qrcode_age_seconds > max(30, int(qrcode_max_age_seconds)))
+    )
+    qrcode_available = bool(
+        service_active and needs_login and qrcode.get("available") and not qrcode_stale
+    )
     onebot_connected = qq_online
     plugin_loaded = runtime_applied or container_file_exists(
         astrbot_container, "/AstrBot/data/plugins/astrbot_plugin_codex_agent/main.py",
@@ -94,8 +106,9 @@ def collect_llbot_diagnostics(
     elif needs_login:
         qq_status = "login_required"
         recommendation = (
-            "LLBot 已运行但尚未确认 QQ 登录。请通过服务器本地 3080 端口的安全 SSH 隧道进入 LLBot WebUI 扫码；"
-            "控制台不会保存或代填 WebUI 密码。"
+            "LLBot 已运行但尚未确认 QQ 登录。请在本页刷新登录二维码并使用手机 QQ 扫码。"
+            if qrcode_available else
+            "LLBot 已运行但尚未确认 QQ 登录；请刷新登录二维码。"
         )
     elif not runtime_applied:
         qq_status = "unknown"
@@ -136,18 +149,18 @@ def collect_llbot_diagnostics(
         "runtime_heartbeat_age_seconds": runtime.get("heartbeat_age_seconds"),
         "live_login_checked": runtime_applied,
         "live_login_error_kind": "none" if qq_online else "runtime_not_applied",
-        "qrcode_supported": False,
-        "qrcode_available": False,
-        "qrcode_upstream_available": False,
-        "qrcode_stale": False,
-        "qrcode_url": "",
-        "qrcode_path": "",
-        "qrcode_size": 0,
-        "qrcode_mtime": 0,
-        "qrcode_age_seconds": None,
+        "qrcode_supported": True,
+        "qrcode_available": qrcode_available,
+        "qrcode_upstream_available": bool(qrcode.get("available")),
+        "qrcode_stale": qrcode_stale,
+        "qrcode_url": "/qq/qrcode" if qrcode_available else "",
+        "qrcode_path": str(qrcode.get("path") or ""),
+        "qrcode_size": int(qrcode.get("size") or 0),
+        "qrcode_mtime": qrcode_mtime,
+        "qrcode_age_seconds": qrcode_age_seconds,
         "qrcode_decode_url": "",
-        "login_management": "ssh_tunnel_webui",
-        "login_management_hint": "SSH 隧道访问服务器 127.0.0.1:3080，再在 LLBot WebUI 中扫码。",
+        "login_management": "admin_qrcode",
+        "login_management_hint": "登录二维码只通过当前管理会话临时显示，不保存 QQ 凭据。",
         "onebot_connected": onebot_connected,
         "plugin_loaded": plugin_loaded,
         "bridge_reachable_from_astrbot": bool(bridge.get("ok")),

@@ -17,7 +17,12 @@ from pathlib import Path, PurePosixPath
 
 from bridge_artifact_broker import ArtifactBrokerClient
 from bridge_artifact_repository import ArtifactError
-from bridge_artifact_service import normalize_relative_path
+from bridge_artifact_service import (
+    INTERNAL_MANIFEST,
+    attachment_response_headers,
+    build_download_payload,
+    normalize_relative_path,
+)
 
 
 SESSION_COOKIE = "artifact_preview_session"
@@ -82,11 +87,20 @@ class ArtifactPreviewApplication:
         return secrets.compare_digest(_host_name(value), self.expected_host)
 
     def read_authorized_file(self, authorization: dict) -> bytes:
-        storage_key = str(authorization.get("storage_key") or "")
+        return self._read_verified_file(
+            str(authorization.get("storage_key") or ""),
+            authorization,
+        )
+
+    def _read_verified_file(self, storage_key: str, record: dict) -> bytes:
+        storage_key = str(storage_key or "")
         if not re.fullmatch(r"[a-z2-7]{20,80}", storage_key):
             raise ArtifactError("artifact_storage_key_invalid")
-        storage_name = normalize_relative_path(authorization.get("storage_name"))
-        root = (self.published_root / storage_key).resolve()
+        storage_name = normalize_relative_path(record.get("storage_name"))
+        storage_root = self.published_root / storage_key
+        if storage_root.is_symlink() or not storage_root.is_dir():
+            raise ArtifactError("artifact_storage_invalid")
+        root = storage_root.resolve()
         path = (root / Path(*PurePosixPath(storage_name).parts)).resolve(strict=True)
         try:
             path.relative_to(root)
@@ -95,13 +109,64 @@ class ArtifactPreviewApplication:
         if path.is_symlink() or not path.is_file():
             raise ArtifactError("artifact_file_not_found")
         payload = path.read_bytes()
-        expected_size = int(authorization.get("size_bytes") or -1)
-        expected_hash = str(authorization.get("sha256") or "")
+        expected_size = int(record.get("size_bytes") or -1)
+        expected_hash = str(record.get("sha256") or "")
         if len(payload) != expected_size or not secrets.compare_digest(
             hashlib.sha256(payload).hexdigest(), expected_hash,
         ):
             raise ArtifactError("artifact_file_integrity_failed")
         return payload
+
+    def download_payload(self, authorization: dict) -> tuple[bytes, str, str]:
+        storage_key = str(authorization.get("storage_key") or "")
+        version_id = str(authorization.get("version_id") or "")
+        manifest_hash = str(authorization.get("manifest_sha256") or "")
+        if (
+            not re.fullmatch(r"[a-z2-7]{20,80}", storage_key)
+            or not re.fullmatch(r"[a-zA-Z0-9-]{8,120}", version_id)
+            or not re.fullmatch(r"[a-f0-9]{64}", manifest_hash)
+        ):
+            raise ArtifactError("artifact_delivery_not_available")
+        storage_root = self.published_root / storage_key
+        if storage_root.is_symlink() or not storage_root.is_dir():
+            raise ArtifactError("artifact_delivery_not_available")
+        root = storage_root.resolve()
+        manifest_path = root / INTERNAL_MANIFEST
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            raise ArtifactError("artifact_delivery_not_available")
+        manifest_bytes = manifest_path.read_bytes()
+        if not secrets.compare_digest(hashlib.sha256(manifest_bytes).hexdigest(), manifest_hash):
+            raise ArtifactError("artifact_delivery_not_available")
+        try:
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ArtifactError("artifact_delivery_not_available") from exc
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("version_id") != version_id
+            or manifest.get("storage_key") != storage_key
+            or manifest.get("entrypoint_path") not in {"", None}
+            or not isinstance(manifest.get("files"), list)
+        ):
+            raise ArtifactError("artifact_delivery_not_available")
+        files: list[dict] = []
+        relative_names: set[str] = set()
+        storage_names: set[str] = set()
+        for raw in manifest["files"]:
+            if not isinstance(raw, dict):
+                raise ArtifactError("artifact_delivery_not_available")
+            relative = normalize_relative_path(raw.get("relative_path"))
+            storage_name = normalize_relative_path(raw.get("storage_name"))
+            if relative in relative_names or storage_name in storage_names:
+                raise ArtifactError("artifact_delivery_not_available")
+            relative_names.add(relative)
+            storage_names.add(storage_name)
+            files.append({**raw, "relative_path": relative, "storage_name": storage_name})
+        return build_download_payload(
+            version_id,
+            files,
+            lambda item: self._read_verified_file(storage_key, dict(item)),
+        )
 
 
 class ArtifactPreviewHandler(BaseHTTPRequestHandler):
@@ -136,6 +201,14 @@ class ArtifactPreviewHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head_only and body:
             self.wfile.write(body)
+
+    def _attachment(self, payload: bytes, media_type: str, filename: str, *, head_only: bool) -> None:
+        self.send_response(200)
+        for key, value in attachment_response_headers(payload, media_type, filename).items():
+            self.send_header(key, value)
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(payload)
 
     def _html(self, status: int, title: str, content: str, *, csp: str, head_only: bool = False) -> None:
         page = (
@@ -181,6 +254,9 @@ class ArtifactPreviewHandler(BaseHTTPRequestHandler):
             return
         try:
             path = self._path()
+            if path.startswith("/r/"):
+                self._send(404, head_only=True)
+                return
             if path.startswith("/activate/"):
                 self._send(204, head_only=True)
                 return
@@ -197,6 +273,19 @@ class ArtifactPreviewHandler(BaseHTTPRequestHandler):
             self._error(exc)
 
     def _serve_get(self, path: str, *, head_only: bool) -> None:
+        match = re.fullmatch(r"/r/([a-zA-Z0-9_-]{32,200})", path)
+        if match:
+            try:
+                authorization = self.app.broker.request("redeem", token=match.group(1))
+                payload, media_type, filename = self.app.download_payload(authorization)
+            except (ArtifactError, FileNotFoundError, OSError, ValueError):
+                self._delivery_error(head_only=head_only)
+                return
+            self._attachment(payload, media_type, filename, head_only=head_only)
+            return
+        if path.startswith("/r/"):
+            self._delivery_error(head_only=head_only)
+            return
         if path == "/health":
             try:
                 health = self.app.broker.request("health")
@@ -314,6 +403,14 @@ class ArtifactPreviewHandler(BaseHTTPRequestHandler):
             status, "无法打开成品",
             "<main><h1>无法打开这个成品</h1><p>链接可能已过期、被撤销，或文件不再可用。</p></main>",
             csp=ACTIVATION_CSP,
+        )
+
+    def _delivery_error(self, *, head_only: bool) -> None:
+        self._html(
+            404, "无法下载成品",
+            "<main><h1>无法下载这个成品</h1><p>链接可能已过期、被撤销，或文件不再可用。</p></main>",
+            csp=ACTIVATION_CSP,
+            head_only=head_only,
         )
 
 

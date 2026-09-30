@@ -63,6 +63,7 @@ def ensure_model_usage_tables(conn: sqlite3.Connection) -> None:
             provider_kind TEXT NOT NULL DEFAULT '',
             model_id TEXT NOT NULL DEFAULT '',
             model_name TEXT NOT NULL DEFAULT '',
+            reported_model TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL,
             error_kind TEXT NOT NULL DEFAULT '',
             input_tokens INTEGER,
@@ -100,9 +101,42 @@ def ensure_model_usage_tables(conn: sqlite3.Connection) -> None:
         ("cache_usage_reported", "INTEGER NOT NULL DEFAULT 0"),
         ("cache_contract_version", "TEXT NOT NULL DEFAULT ''"),
         ("cache_variant", "TEXT NOT NULL DEFAULT ''"),
+        ("reported_model", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in columns:
             conn.execute(f"ALTER TABLE model_usage_events ADD COLUMN {name} {definition}")
+
+
+def provider_reported_model(transport: str, data: object) -> str:
+    """Return only a bounded model ID explicitly self-reported in a response."""
+
+    if not isinstance(data, dict):
+        return ""
+    key = "modelVersion" if transport == "google_gemini_generate_content" else "model"
+    raw = data.get(key)
+    if not isinstance(raw, str):
+        return ""
+    value = raw.strip()
+    if not value or len(value) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return ""
+    return value
+
+
+def recent_model_observations(
+    conn: sqlite3.Connection, provider_id: str, *, limit: int = 10,
+) -> list[dict]:
+    """Expose content-free, provider-scoped model evidence to the Admin UI."""
+
+    ensure_model_usage_tables(conn)
+    bounded = max(1, min(int(limit), 20))
+    rows = conn.execute(
+        """SELECT id, created_at, role, model_name AS requested_model,
+                  reported_model, status, error_kind
+           FROM model_usage_events WHERE provider_id=?
+           ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+        (provider_id, bounded),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def _int_or_none(value: object) -> int | None:
@@ -223,11 +257,11 @@ def record_model_usage(
     conn.execute(
         """INSERT INTO model_usage_events(
                id, source, user_id, trace_id, role, provider_id, provider_kind,
-               model_id, model_name, status, error_kind, input_tokens, output_tokens,
+               model_id, model_name, reported_model, status, error_kind, input_tokens, output_tokens,
                total_tokens, usage_reported, prompt_cache_hit_tokens, prompt_cache_miss_tokens,
                cache_usage_reported, cache_contract_version, cache_variant,
                duration_seconds, estimated_cost, currency, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             event_id,
             str(source or "")[:80],
@@ -238,6 +272,7 @@ def record_model_usage(
             str(result.get("provider") or settings.get("chat_provider") or "")[:80],
             str(settings.get("model_registry_id") or "")[:80],
             str(result.get("model") or settings.get("chat_model") or settings.get("codex_model") or "")[:200],
+            provider_reported_model("openai_chat_completions", {"model": result.get("reported_model")}),
             "success" if result.get("ok") else "failed",
             str(result.get("error_kind") or "")[:80],
             input_tokens,

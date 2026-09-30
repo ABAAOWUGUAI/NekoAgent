@@ -542,9 +542,13 @@
       if (!item) {
         return;
       }
+      const revision = Number(item.revision);
+      if (!Number.isSafeInteger(revision) || revision < 1) {
+        throw new Error('计划版本不可用；请刷新后再操作。');
+      }
       await bridge('/automations/jobs', {
         method: 'POST',
-        body: JSON.stringify(Object.assign({}, item, { enabled: Number(item.enabled) ? '0' : '1', next_due_at: '' })),
+        body: JSON.stringify(Object.assign({}, item, { expected_revision: revision, enabled: Number(item.enabled) ? '0' : '1', next_due_at: '' })),
       });
       await loadAutomationView();
     }

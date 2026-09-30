@@ -11,6 +11,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
@@ -18,12 +19,12 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
 import time
-from typing import Callable
-import urllib.request
-from urllib.parse import quote, urlencode, urlparse
+from typing import Callable, Mapping
+from urllib.parse import quote, urlencode, urljoin, urlparse
 
 try:
     import yaml
@@ -32,6 +33,39 @@ except Exception:  # pragma: no cover - production dependency is checked by call
 
 
 MAX_SUBSCRIPTION_BYTES = 4 * 1024 * 1024
+MAX_SUBSCRIPTION_REDIRECTS = 5
+PROXY_ENVIRONMENT_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+)
+_SAFE_SUBSCRIPTION_FETCH_ERRORS = frozenset({
+    "invalid_subscription_url",
+    "subscription_url_credentials_forbidden",
+    "subscription_url_port_forbidden",
+    "subscription_host_not_public",
+    "subscription_host_resolution_failed",
+    "subscription_proxy_environment_forbidden",
+    "subscription_peer_mismatch",
+    "subscription_payload_too_large",
+    "subscription_download_failed",
+    "subscription_source_tls_failed",
+    "subscription_source_timeout",
+    "subscription_source_connection_failed",
+    "subscription_source_http_4xx",
+    "subscription_source_http_5xx",
+    "subscription_source_redirect_failed",
+    "subscription_payload_invalid",
+})
+_SUBSCRIPTION_REDIRECT_ERRORS = frozenset({
+    "subscription_redirect_location_missing",
+    "subscription_redirect_limit_exceeded",
+})
 SUPPORTED_URI_SCHEMES = (
     "ss://",
     "ssr://",
@@ -53,6 +87,7 @@ SUBCONVERTER_PREF_PATH = Path(
         str(Path(__file__).with_name("deploy") / "proxy" / "subconverter-pref.ini"),
     )
 )
+SUBCONVERTER_TEMP_ROOT = Path("/run/agent-bridge")
 
 
 def safe_subscription_key(name: str) -> str:
@@ -82,6 +117,24 @@ def _is_public_address(value: str) -> bool:
     return bool(address.is_global)
 
 
+def _raw_port_syntax_valid(value: str) -> bool:
+    _, separator, remainder = value.partition("://")
+    if not separator:
+        return False
+    authority = re.split(r"[/?#]", remainder, maxsplit=1)[0]
+    if authority.startswith("["):
+        closing = authority.find("]")
+        if closing < 0:
+            return False
+        suffix = authority[closing + 1 :]
+        if not suffix:
+            return True
+        return bool(suffix.startswith(":") and re.fullmatch(r"[0-9]+", suffix[1:]))
+    if ":" not in authority:
+        return True
+    return bool(re.fullmatch(r"[0-9]+", authority.rsplit(":", 1)[1]))
+
+
 def validate_subscription_url(
     value: str,
     *,
@@ -94,20 +147,30 @@ def validate_subscription_url(
     the downloader follows a redirect to a destination that was not rechecked.
     """
 
-    parsed = urlparse((value or "").strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return {"ok": False, "error": "invalid_subscription_url"}
-    if parsed.username is not None or parsed.password is not None:
-        return {"ok": False, "error": "subscription_url_credentials_forbidden"}
-    if parsed.port is not None and parsed.port not in {80, 443}:
-        return {"ok": False, "error": "subscription_url_port_forbidden"}
     try:
-        addresses = sorted(
-            {
-                str(item[4][0]).split("%", 1)[0]
-                for item in resolver(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
-            }
-        )
+        raw_value = (value or "").strip()
+        parsed = urlparse(raw_value)
+        host = parsed.hostname
+        username = parsed.username
+        password = parsed.password
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "invalid_subscription_url"}
+    if parsed.scheme not in {"http", "https"} or not host:
+        return {"ok": False, "error": "invalid_subscription_url"}
+    if username is not None or password is not None:
+        return {"ok": False, "error": "subscription_url_credentials_forbidden"}
+    if not _raw_port_syntax_valid(raw_value):
+        return {"ok": False, "error": "invalid_subscription_url"}
+    try:
+        explicit_port = parsed.port
+    except ValueError:
+        return {"ok": False, "error": "invalid_subscription_url"}
+    port = explicit_port if explicit_port is not None else (443 if parsed.scheme == "https" else 80)
+    if not 1 <= port <= 65535:
+        return {"ok": False, "error": "invalid_subscription_url"}
+    try:
+        resolved = resolver(host, port, type=socket.SOCK_STREAM)
+        addresses = list(dict.fromkeys(str(item[4][0]).split("%", 1)[0] for item in resolved))
     except Exception:
         return {"ok": False, "error": "subscription_host_resolution_failed"}
     if not addresses or any(not _is_public_address(address) for address in addresses):
@@ -115,10 +178,39 @@ def validate_subscription_url(
     return {
         "ok": True,
         "scheme": parsed.scheme,
-        "host": parsed.hostname,
-        "port": parsed.port or (443 if parsed.scheme == "https" else 80),
+        "host": host,
+        "port": port,
+        "resolved_addresses": addresses,
         "resolved_count": len(addresses),
     }
+
+
+def safe_subscription_fetch_error(error: Exception) -> str:
+    """Reduce a source-fetch exception to a stable, non-sensitive code."""
+
+    if isinstance(error, ssl.SSLError):
+        return "subscription_source_tls_failed"
+    if isinstance(error, TimeoutError):
+        return "subscription_source_timeout"
+    if isinstance(error, (ConnectionError, OSError, http.client.HTTPException)):
+        return "subscription_source_connection_failed"
+    code = str(error).strip()
+    if code in _SAFE_SUBSCRIPTION_FETCH_ERRORS:
+        return code
+    if code in _SUBSCRIPTION_REDIRECT_ERRORS:
+        return "subscription_source_redirect_failed"
+    if code == "subscription_content_length_invalid":
+        return "subscription_payload_invalid"
+    match = re.match(r"^HTTP Error ([0-9]{3})(?:\b|:)", code)
+    if match:
+        status = int(match.group(1))
+        if 300 <= status < 400:
+            return "subscription_source_redirect_failed"
+        if 400 <= status < 500:
+            return "subscription_source_http_4xx"
+        if 500 <= status < 600:
+            return "subscription_source_http_5xx"
+    return "subscription_download_failed"
 
 
 def _uri_lines(text: str) -> list[str]:
@@ -213,21 +305,40 @@ def convert_uri_payload_with_subconverter(
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     image: str = SUBCONVERTER_IMAGE,
     pref_path: Path = SUBCONVERTER_PREF_PATH,
+    temp_root: Path = SUBCONVERTER_TEMP_ROOT,
 ) -> bytes:
     classification = classify_subscription_payload(payload)
     if not classification.get("ok") or not classification.get("needs_converter"):
         raise ValueError("subscription_converter_input_invalid")
     if not pref_path.is_file():
         raise RuntimeError("subscription_converter_config_missing")
-    with tempfile.TemporaryDirectory(prefix="agent-subconverter-") as directory_name:
+    try:
+        temporary_directory_kwargs = {"prefix": "agent-subconverter-"}
+        if os.name == "posix":
+            temporary_directory_kwargs["dir"] = str(temp_root)
+        temporary_directory = tempfile.TemporaryDirectory(**temporary_directory_kwargs)
+    except OSError as exc:
+        raise RuntimeError("subscription_converter_permission_failed") from exc
+    with temporary_directory as directory_name:
         directory = Path(directory_name)
         source = directory / "subscription.txt"
-        source.write_bytes(payload)
-        if os.name == "posix":
-            os.chown(directory, 65534, 65534)
-            os.chown(source, 65534, 65534)
-            os.chmod(directory, 0o700)
-            os.chmod(source, 0o400)
+        container_user = "65534:65534"
+        try:
+            source.write_bytes(payload)
+            if os.name == "posix":
+                effective_uid = int(os.geteuid())
+                effective_gid = int(os.getegid())
+                os.chmod(directory, 0o700)
+                os.chmod(source, 0o400)
+                if effective_uid == 0:
+                    os.chown(source, 65534, 65534)
+                    os.chown(directory, -1, 65534)
+                    os.chmod(directory, 0o710)
+                else:
+                    container_gid = effective_gid if effective_gid != 0 else 65534
+                    container_user = f"{effective_uid}:{container_gid}"
+        except PermissionError as exc:
+            raise RuntimeError("subscription_converter_permission_failed") from exc
         script = (
             "set -eu; "
             "subconverter >/tmp/subconverter.log 2>&1 & converter_pid=$!; "
@@ -258,7 +369,7 @@ def convert_uri_payload_with_subconverter(
             "--cpus",
             "0.5",
             "--user",
-            "65534:65534",
+            container_user,
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,noexec,size=16m",
             "--mount",
@@ -283,34 +394,195 @@ def convert_uri_payload_with_subconverter(
         return yaml.safe_dump(normalized, allow_unicode=True, sort_keys=False).encode("utf-8")
 
 
-class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, new_url):
-        validation = validate_subscription_url(new_url)
+def _verify_pinned_peer(sock: socket.socket, pinned_ip: str) -> None:
+    try:
+        peer_ip = str(sock.getpeername()[0]).split("%", 1)[0]
+        peer = ipaddress.ip_address(peer_ip)
+        pinned = ipaddress.ip_address(pinned_ip)
+    except Exception as exc:
+        sock.close()
+        raise ValueError("subscription_peer_mismatch") from exc
+    if not peer.is_global or peer != pinned:
+        sock.close()
+        raise ValueError("subscription_peer_mismatch")
+
+
+def _connect_validated_address(
+    addresses: list[str],
+    port: int,
+    timeout: float,
+    source_address,
+    socket_connector: Callable[..., socket.socket],
+) -> socket.socket:
+    last_error: OSError | None = None
+    for pinned_ip in addresses:
+        try:
+            sock = socket_connector((pinned_ip, port), timeout, source_address)
+        except OSError as exc:
+            last_error = exc
+            continue
+        _verify_pinned_peer(sock, pinned_ip)
+        return sock
+    if last_error is not None:
+        raise last_error
+    raise OSError("subscription_connection_failed")
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        *,
+        pinned_addresses: list[str],
+        timeout: float,
+        socket_connector: Callable[..., socket.socket],
+    ):
+        super().__init__(host, port=port, timeout=timeout)
+        self._pinned_addresses = list(pinned_addresses)
+        self._socket_connector = socket_connector
+
+    def connect(self) -> None:
+        self.sock = _connect_validated_address(
+            self._pinned_addresses,
+            self.port,
+            self.timeout,
+            self.source_address,
+            self._socket_connector,
+        )
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        *,
+        pinned_addresses: list[str],
+        timeout: float,
+        socket_connector: Callable[..., socket.socket],
+        context: ssl.SSLContext | None = None,
+    ):
+        super().__init__(host, port=port, timeout=timeout, context=context)
+        self._pinned_addresses = list(pinned_addresses)
+        self._socket_connector = socket_connector
+
+    def connect(self) -> None:
+        sock = _connect_validated_address(
+            self._pinned_addresses,
+            self.port,
+            self.timeout,
+            self.source_address,
+            self._socket_connector,
+        )
+        try:
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except Exception:
+            sock.close()
+            raise
+
+
+def _subscription_host_header(host: str, port: int, scheme: str, *, explicit_port: bool) -> str:
+    value = f"[{host}]" if ":" in host else host
+    default_port = 443 if scheme == "https" else 80
+    return f"{value}:{port}" if explicit_port or port != default_port else value
+
+
+def fetch_subscription_payload(
+    url: str,
+    timeout: int = 20,
+    *,
+    resolver: Callable[..., list] = socket.getaddrinfo,
+    socket_connector: Callable[..., socket.socket] = socket.create_connection,
+    environment: Mapping[str, str] | None = None,
+    max_redirects: int = MAX_SUBSCRIPTION_REDIRECTS,
+) -> tuple[bytes, str]:
+    active_environment = os.environ if environment is None else environment
+    if any(key in active_environment for key in PROXY_ENVIRONMENT_KEYS):
+        raise ValueError("subscription_proxy_environment_forbidden")
+
+    request_timeout = max(5, min(int(timeout), 30))
+    redirect_limit = max(0, min(int(max_redirects), MAX_SUBSCRIPTION_REDIRECTS))
+    current_url = (url or "").strip()
+    redirect_count = 0
+    while True:
+        validation = validate_subscription_url(current_url, resolver=resolver)
         if not validation.get("ok"):
-            raise ValueError(str(validation.get("error") or "unsafe_subscription_redirect"))
-        return super().redirect_request(request, fp, code, msg, headers, new_url)
+            if redirect_count > 0:
+                raise ValueError("subscription_source_redirect_failed")
+            raise ValueError(str(validation.get("error") or "invalid_subscription_url"))
+        parsed = urlparse(current_url)
+        host = str(validation["host"])
+        port = int(validation["port"])
+        pinned_addresses = [str(address) for address in validation["resolved_addresses"]]
+        if validation["scheme"] == "https":
+            connection: http.client.HTTPConnection = _PinnedHTTPSConnection(
+                host,
+                port,
+                pinned_addresses=pinned_addresses,
+                timeout=request_timeout,
+                socket_connector=socket_connector,
+                context=ssl.create_default_context(),
+            )
+        else:
+            connection = _PinnedHTTPConnection(
+                host,
+                port,
+                pinned_addresses=pinned_addresses,
+                timeout=request_timeout,
+                socket_connector=socket_connector,
+            )
+        response = None
+        try:
+            target = parsed.path or "/"
+            if parsed.query:
+                target = f"{target}?{parsed.query}"
+            connection.request(
+                "GET",
+                target,
+                headers={
+                    "Accept": "application/yaml,text/yaml,text/plain,*/*;q=0.8",
+                    "User-Agent": "Agent-Control-Subscription/1.0",
+                    "Host": _subscription_host_header(
+                        host,
+                        port,
+                        str(validation["scheme"]),
+                        explicit_port=parsed.port is not None,
+                    ),
+                    "Connection": "close",
+                },
+            )
+            response = connection.getresponse()
+            if response.status in {301, 302, 303, 307, 308}:
+                location = str(response.getheader("Location") or "").strip()
+                if not location:
+                    raise ValueError("subscription_redirect_location_missing")
+                if redirect_count >= redirect_limit:
+                    raise ValueError("subscription_redirect_limit_exceeded")
+                current_url = urljoin(current_url, location)
+                redirect_count += 1
+                continue
+            if not 200 <= response.status < 300:
+                raise ValueError(f"HTTP Error {response.status}: subscription_source_http_error")
+            content_length = response.getheader("Content-Length")
+            if content_length:
+                try:
+                    declared_length = int(content_length)
+                except ValueError as exc:
+                    raise ValueError("subscription_content_length_invalid") from exc
+                if declared_length < 0 or declared_length > MAX_SUBSCRIPTION_BYTES:
+                    raise ValueError("subscription_payload_too_large")
+            payload = response.read(MAX_SUBSCRIPTION_BYTES + 1)
+            if len(payload) > MAX_SUBSCRIPTION_BYTES:
+                raise ValueError("subscription_payload_too_large")
+            return payload, str(response.getheader("Content-Type") or "")
+        finally:
+            if response is not None:
+                response.close()
+            connection.close()
 
 
-def fetch_subscription_payload(url: str, timeout: int = 20) -> tuple[bytes, str]:
-    validation = validate_subscription_url(url)
-    if not validation.get("ok"):
-        raise ValueError(str(validation.get("error") or "invalid_subscription_url"))
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/yaml,text/yaml,text/plain,*/*;q=0.8",
-            "User-Agent": "Agent-Control-Subscription/1.0",
-        },
-    )
-    opener = urllib.request.build_opener(_SafeRedirectHandler())
-    with opener.open(request, timeout=max(5, min(int(timeout), 30))) as response:
-        content_length = response.headers.get("Content-Length")
-        if content_length and int(content_length) > MAX_SUBSCRIPTION_BYTES:
-            raise ValueError("subscription_payload_too_large")
-        payload = response.read(MAX_SUBSCRIPTION_BYTES + 1)
-        if len(payload) > MAX_SUBSCRIPTION_BYTES:
-            raise ValueError("subscription_payload_too_large")
-        return payload, str(response.headers.get("Content-Type") or "")
+MANAGED_FILE_MODE = 0o660
 
 
 def _atomic_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
@@ -381,13 +653,25 @@ class ManagedSubscriptionStore:
         return destination
 
     def _restore(self, backup: Path, provider_path: Path, provider_existed: bool) -> None:
-        _atomic_write(self.config_path, (backup / "config.yaml").read_bytes())
+        _atomic_write(
+            self.config_path,
+            (backup / "config.yaml").read_bytes(),
+            mode=MANAGED_FILE_MODE,
+        )
         state_backup = backup / "codex-subscriptions.json"
         if state_backup.is_file():
-            _atomic_write(self.state_path, state_backup.read_bytes())
+            _atomic_write(
+                self.state_path,
+                state_backup.read_bytes(),
+                mode=MANAGED_FILE_MODE,
+            )
         provider_backup = backup / provider_path.name
         if provider_existed and provider_backup.is_file():
-            _atomic_write(provider_path, provider_backup.read_bytes())
+            _atomic_write(
+                provider_path,
+                provider_backup.read_bytes(),
+                mode=MANAGED_FILE_MODE,
+            )
         elif not provider_existed:
             try:
                 provider_path.unlink()
@@ -484,8 +768,8 @@ class ManagedSubscriptionStore:
         try:
             provider_bytes = yaml.safe_dump(provider_document, allow_unicode=True, sort_keys=False).encode("utf-8")
             config_bytes = yaml.safe_dump(config, allow_unicode=True, sort_keys=False).encode("utf-8")
-            _atomic_write(provider_path, provider_bytes)
-            _atomic_write(self.config_path, config_bytes)
+            _atomic_write(provider_path, provider_bytes, mode=MANAGED_FILE_MODE)
+            _atomic_write(self.config_path, config_bytes, mode=MANAGED_FILE_MODE)
             tested, _ = self.config_test()
             if not tested:
                 raise RuntimeError("mihomo_config_test_failed")
@@ -519,6 +803,7 @@ class ManagedSubscriptionStore:
         _atomic_write(
             self.state_path,
             (json.dumps({"subscriptions": state}, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+            mode=MANAGED_FILE_MODE,
         )
         return {
             "ok": True,
@@ -550,6 +835,7 @@ class ManagedSubscriptionStore:
             _atomic_write(
                 self.state_path,
                 (json.dumps({"subscriptions": state}, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+                mode=MANAGED_FILE_MODE,
             )
             result["error"] = safe_error
         return result
@@ -590,6 +876,7 @@ class ManagedSubscriptionStore:
             _atomic_write(
                 self.state_path,
                 (json.dumps({"subscriptions": state}, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+                mode=MANAGED_FILE_MODE,
             )
             result["subscription"]["last_status"] = "ready_cached"
             result["subscription"]["last_error"] = prior_error
@@ -630,6 +917,7 @@ class ManagedSubscriptionStore:
             _atomic_write(
                 self.config_path,
                 yaml.safe_dump(config, allow_unicode=True, sort_keys=False).encode("utf-8"),
+                mode=MANAGED_FILE_MODE,
             )
             tested, _ = self.config_test()
             if not tested:
@@ -641,6 +929,7 @@ class ManagedSubscriptionStore:
             _atomic_write(
                 self.state_path,
                 (json.dumps({"subscriptions": remaining}, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+                mode=MANAGED_FILE_MODE,
             )
             if provider_path.is_file():
                 provider_path.unlink()

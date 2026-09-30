@@ -8,11 +8,14 @@ import hmac
 from enum import Enum
 from pathlib import Path
 
+from bridge_public_admin_policy import bridge_gateway_route_allowed
+
 
 class PrincipalKind(str, Enum):
     ANONYMOUS = "anonymous"
     ADMIN_SESSION = "admin_session"
     ADMIN_TOKEN = "admin_token"
+    ADMIN_GATEWAY = "admin_gateway"
     QQ_CHANNEL = "qq_channel"
 
 
@@ -37,9 +40,21 @@ def resolve_principal(
     supplied_channel_token: str,
     client_allowed: bool,
     allow_public_admin: bool,
+    *,
+    gateway_token: str = "",
+    supplied_gateway_token: str = "",
+    gateway_client_allowed: bool = False,
 ) -> PrincipalKind:
     if has_admin_session:
         return PrincipalKind.ADMIN_SESSION
+    gateway_distinct = (
+        secrets_distinct(gateway_token, admin_token)
+        and secrets_distinct(gateway_token, channel_token)
+    )
+    if gateway_token and gateway_distinct and gateway_client_allowed and hmac.compare_digest(
+        supplied_gateway_token.encode("utf-8"), gateway_token.encode("utf-8"),
+    ):
+        return PrincipalKind.ADMIN_GATEWAY
     if admin_token and hmac.compare_digest(
         supplied_admin_token.encode("utf-8"), admin_token.encode("utf-8"),
     ) and (allow_public_admin or client_allowed):
@@ -70,6 +85,7 @@ _CHANNEL_POST_ROUTES = frozenset(
     {
         "/qq/access/check",
         "/qq/channel/heartbeat",
+        "/qq/channel/groups",
         "/qq/voice/transport-probe",
         "/qq/voice/fetch",
         "/qq/voice/input",
@@ -81,6 +97,11 @@ _CHANNEL_POST_ROUTES = frozenset(
         "/assistant/memories/delete",
         "/assistant/settings",
         "/assistant/dispatch",
+        "/assistant/private-conversation/ingress",
+        "/assistant/private-conversation/media",
+        "/assistant/private-turn-join",
+        "/assistant/private-response-handoff",
+        "/assistant/private-response-ownership",
         "/assistant/group/dispatch",
         "/assistant/memes/mark",
         "/tasks",
@@ -108,6 +129,8 @@ def route_allowed(principal: PrincipalKind, method: str, path: str) -> bool:
 
     if principal in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN}:
         return True
+    if principal is PrincipalKind.ADMIN_GATEWAY:
+        return bridge_gateway_route_allowed(method, path)
     if principal is not PrincipalKind.QQ_CHANNEL:
         return False
 

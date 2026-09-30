@@ -155,7 +155,7 @@ def upsert_executor_profile(conn: sqlite3.Connection, provider_id: str, payload:
     ).fetchone()
     if transport != "codex_cli_custom_provider":
         if existing:
-            conn.execute("DELETE FROM model_executor_profiles WHERE provider_id=?", (provider_id,))
+            raise ValueError("provider_transport_change_requires_rebind")
         return None
 
     profile_name = validate_profile_name(
@@ -346,6 +346,23 @@ def executor_runtime_status(profile: dict | None) -> dict:
     }
 
 
+def executor_candidate_runtime_status(profile: dict | None) -> dict:
+    """Host prerequisites for a Draft that has not been activated yet.
+
+    ``applied_version`` describes the singleton proxy's currently active
+    configuration, so it is intentionally excluded from a candidate's staged
+    verification prerequisites.  Profile file, credential, sandbox, workspace
+    and upstream requirements are still mandatory.
+    """
+    state = executor_runtime_status(profile)
+    errors = [error for error in state.get("errors") or () if error != "executor_runtime_not_applied"]
+    result = dict(state)
+    result["ready"] = not errors
+    result["error"] = errors[0] if errors else ""
+    result["errors"] = errors
+    return result
+
+
 def executor_model_display_label(model: dict, upstream: dict | None) -> str:
     """Show the configured upstream instead of a stale proxy catalog label."""
     current = str(model.get("label") or model.get("model") or model.get("id") or "").strip()
@@ -363,7 +380,7 @@ def public_executor_profile(profile: dict | None, verification: dict | None = No
             "provider_id", "adapter_type", "profile_name", "enabled",
             "upstream_provider_id", "upstream_model_id",
             "config_version", "applied_version", "last_apply_status",
-            "last_error", "updated_at",
+            "updated_at",
         )
     }
     item["credential_source"] = "受保护的代理凭证"
@@ -374,6 +391,5 @@ def public_executor_profile(profile: dict | None, verification: dict | None = No
             "verified_at": verification.get("verified_at"),
             "verification_hash": verification.get("verification_hash"),
             "reason_code": verification.get("reason_code"),
-            "last_error": verification.get("last_error"),
         }
     return item

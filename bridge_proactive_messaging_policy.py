@@ -211,11 +211,12 @@ def get_proactive_messaging_policy(
     *,
     target_type: str = "global",
     target_id: str = "",
+    assistant: dict | None = None,
 ) -> dict:
     """Return the most specific policy and its inheritance path."""
 
     require_proactive_messaging_schema(conn)
-    assistant = _active_assistant(conn)
+    assistant = dict(assistant or {}) or _active_assistant(conn)
     kind, target = _validate_target(target_type, target_id)
     candidates = _candidate_keys(kind, target)
     row = None
@@ -404,6 +405,7 @@ def proactive_message_gate(
     target_type: str,
     target_id: str = "",
     intent: str = "",
+    assistant: dict | None = None,
 ) -> dict:
     """Return the decision that the scheduler/delivery layer must enforce."""
 
@@ -411,6 +413,7 @@ def proactive_message_gate(
         conn,
         target_type=target_type,
         target_id=target_id,
+        assistant=assistant,
     )
     normalized_intent = _clip(intent, 80)
     if policy["mode"] == "off":
@@ -440,7 +443,11 @@ def proactive_target_for_user(
     actor_id = _clip(user_id, 160)
     if actor_id in {"owner", "owner-local"}:
         return "owner", ""
-    assistant = _active_assistant(conn)
+    # This read-only scope classification verifies Assistant identity without
+    # re-auditing unrelated chat/task foreign keys on every scheduler pass.
+    assistant = current_assistant(conn, integrity_scope="identity")
+    if not assistant:
+        raise ValueError("active_assistant_missing")
     if actor_id == _clip(assistant.get("owner_actor_id"), 160):
         return "owner", ""
     # Channel identities are not the same namespace as the platform's stable
@@ -472,7 +479,12 @@ def proactive_target_for_user(
     return "user", actor_id
 
 
-def policy_gate_if_present(conn: sqlite3.Connection, user_id: str) -> dict | None:
+def policy_gate_if_present(
+    conn: sqlite3.Connection,
+    user_id: str,
+    *,
+    assistant: dict | None = None,
+) -> dict | None:
     """Use the configurable gate when v25 is installed; otherwise preserve
     isolated legacy scheduler tests and pre-migration maintenance databases."""
 
@@ -487,12 +499,24 @@ def policy_gate_if_present(conn: sqlite3.Connection, user_id: str) -> dict | Non
     if not feature or not int(feature[0]):
         return None
     try:
+        gate_assistant = dict(assistant or {})
+        if not gate_assistant:
+            # The gate only reads Assistant identity.  Do not repeat a full
+            # database FK audit for each due group policy in one worker pass.
+            gate_assistant = current_assistant(conn, integrity_scope="identity") or {}
+            if not gate_assistant:
+                return None
         actor = _clip(user_id, 160)
         if actor.startswith("group:") and actor[6:]:
             target_type, target_id = "group", actor[6:]
         else:
             target_type, target_id = proactive_target_for_user(conn, actor)
-        return proactive_message_gate(conn, target_type=target_type, target_id=target_id)
+        return proactive_message_gate(
+            conn,
+            target_type=target_type,
+            target_id=target_id,
+            assistant=gate_assistant,
+        )
     except (sqlite3.Error, ValueError):
         return None
 

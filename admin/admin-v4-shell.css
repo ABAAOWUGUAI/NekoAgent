@@ -23,7 +23,7 @@ body[data-v4-experience="active"] .main { min-width: 0; overflow: hidden; backgr
 .v4-shell-sidebar { min-width: 0; display: none; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 12px; padding: 13px 10px 10px; color: var(--v4-text); background: var(--v4-shell); border: 1px solid #ffffffd8; border-radius: var(--v4-radius); box-shadow: 0 24px 80px #29203e1c, 0 2px 10px #29203e0b; backdrop-filter: blur(22px); }
 body[data-v4-experience="active"] .v4-shell-sidebar { display: grid; }
 .v4-brand { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 9px; align-items: center; padding: 2px 6px 4px; }
-.v4-brand-avatar, .v4-overview-mark { background: linear-gradient(145deg, #f4ebff, #ded4fb); border: 1px solid #fff; box-shadow: 0 6px 18px #63395116; }
+.v4-brand-avatar, .v4-overview-mark { background: linear-gradient(145deg, #f4ebff, #ded4fb); border: 1px solid #fff; box-shadow: 0 6px 18px rgba(99, 57, 81, 0.0862745098039); }
 .v4-brand-avatar { width: 36px; height: 36px; border-radius: 12px; }
 .v4-brand strong, .v4-brand small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .v4-brand strong { font-size: 14px; }

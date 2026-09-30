@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from bridge_auth import PrincipalKind
+
 from bridge_model_routing_presets import (
     apply_routing_preset,
     list_routing_presets,
@@ -24,6 +26,8 @@ from bridge_proactive_messaging_policy import (
     update_proactive_messaging_policy,
 )
 from bridge_proactive_review import decide_proactive_review, list_proactive_reviews
+from bridge_qq_access_service import QQ_ID_PATTERN
+from bridge_qq_conversation_read import private_subject_read_allowed
 
 
 POST_PATHS = {
@@ -45,6 +49,26 @@ def _truthy(value: object) -> bool:
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_public_private_subject(conn, user_id: object) -> str:
+    subject = str(user_id or "").strip()
+    if not QQ_ID_PATTERN.fullmatch(subject):
+        raise ValueError("public_private_subject_required")
+    if not private_subject_read_allowed(conn, subject):
+        raise ValueError("qq_conversation_not_available")
+    return subject
+
+
+def _guard_public_private_management(conn, path: str, payload: dict, principal) -> None:
+    if principal is not PrincipalKind.ADMIN_GATEWAY:
+        return
+    if path == "/assistant/relationship":
+        if str(payload.get("scope_type") or "private_user") != "private_user" or str(payload.get("scope_id") or ""):
+            raise ValueError("public_private_scope_required")
+        _require_public_private_subject(conn, payload.get("user_id"))
+    elif path == "/assistant/proactive/social-policy":
+        _require_public_private_subject(conn, payload.get("user_id"))
 
 
 class Gate8HttpApi:
@@ -83,7 +107,7 @@ class Gate8HttpApi:
             {"ok": False, "error": message},
         )
 
-    def handle_get(self, request, path: str, query: dict) -> bool:
+    def handle_get(self, request, path: str, query: dict, principal=None) -> bool:
         supported = {
             "/assistant/relationship",
             "/assistant/notification-policy",
@@ -103,6 +127,16 @@ class Gate8HttpApi:
                 result = self._health_service.summary(live=live)
             else:
                 with self._assistant_connect() as conn:
+                    if principal is PrincipalKind.ADMIN_GATEWAY:
+                        if path == "/assistant/relationship":
+                            if (
+                                _first(query, "scope_type") != "private_user"
+                                or _first(query, "scope_id")
+                            ):
+                                raise ValueError("public_private_scope_required")
+                            _require_public_private_subject(conn, _first(query, "user_id"))
+                        elif path == "/assistant/proactive/social-policy":
+                            _require_public_private_subject(conn, _first(query, "user_id"))
                     if path == "/assistant/relationship":
                         result = get_relationship_state(
                             conn,
@@ -149,7 +183,7 @@ class Gate8HttpApi:
         self._json_response(request, 200, {"ok": True, **result})
         return True
 
-    def handle_post(self, request, path: str, payload: dict) -> bool:
+    def handle_post(self, request, path: str, payload: dict, principal=None) -> bool:
         is_review_post = path.startswith("/assistant/proactive/reviews/")
         if path not in POST_PATHS and not is_review_post:
             return False
@@ -158,6 +192,7 @@ class Gate8HttpApi:
         ).strip()
         try:
             with self._assistant_connect() as conn:
+                _guard_public_private_management(conn, path, payload, principal)
                 if path == "/assistant/relationship":
                     result = update_relationship_state(
                         conn,

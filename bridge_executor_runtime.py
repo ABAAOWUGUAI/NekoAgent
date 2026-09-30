@@ -72,7 +72,8 @@ def codex_exec_args(task: dict, profile: dict | None = None) -> list[str]:
     if str(task.get("network_mode") or "controlled") == "search":
         if adapter != "codex_login":
             raise RuntimeError("executor_web_search_unsupported")
-        # Codex Web Search is a model tool. It does not grant arbitrary shell
-        # egress and therefore preserves the selected file/process sandbox.
-        args.append("--search")
+        # Codex Web Search is now a model tool (not a CLI flag) for codex-cli >=0.144.
+        # The flag --search is removed; the model uses its built-in web search
+        # when the prompt instructs it.  We keep the network_mode gate but
+        # do not append a CLI flag.
     return args

@@ -253,7 +253,7 @@ def detect_agent_intent(message: str) -> str:
     if any(word in text for word in ("代码", "开发", "修复", "bug", "重构", "测试", "git", "仓库", "项目", "上线")):
         return "code"
     if requires_fresh_external_data(message) or any(
-        word in text for word in ("github", "热门", "搜索", "查询", "资料", "新闻", "最新", "榜", "文档", "说明")
+        word in text for word in ("github", "热门", "搜索", "查询", "资料", "新闻", "最新", "榜", "文档", "说明", "调查", "研究")
     ):
         return "research"
     if any(word in text for word in ("为什么", "怎么", "如何", "帮我分析", "方案", "建议", "评估")):

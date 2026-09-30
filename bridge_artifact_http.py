@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import re
 from typing import Callable
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
 from bridge_artifact_cutover import artifact_preview_feature_enabled
 from bridge_artifact_repository import ArtifactError, ArtifactRepository
+from bridge_artifact_service import attachment_response_headers
 
 
 def _error_status(message: str) -> int:
@@ -31,18 +32,9 @@ def _identifier(value: str) -> str:
 
 
 def _attachment_response(request, payload: bytes, content_type: str, filename: str) -> None:
-    fallback = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(filename or "artifact"))[:120] or "artifact"
-    encoded = quote(str(filename or fallback), safe="")
     request.send_response(200)
-    request.send_header("Content-Type", str(content_type or "application/octet-stream"))
-    request.send_header("Content-Length", str(len(payload)))
-    request.send_header("Content-Disposition", f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
-    request.send_header("Cache-Control", "private, no-store")
-    request.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
-    request.send_header("Cross-Origin-Resource-Policy", "same-origin")
-    request.send_header("X-Content-Type-Options", "nosniff")
-    request.send_header("Referrer-Policy", "no-referrer")
-    request.send_header("Connection", "close")
+    for key, value in attachment_response_headers(payload, content_type, filename).items():
+        request.send_header(key, value)
     request.end_headers()
     if request.command != "HEAD":
         request.wfile.write(payload)

@@ -103,7 +103,14 @@ def create_opportunity(
             _clip(expires_at, 80),
         ),
     )
-    return present_opportunity(conn, dict(conn.execute("SELECT * FROM social_opportunities WHERE id=?", (item_id,)).fetchone()))
+    # The ambient group worker creates this open join before its model decision.
+    # Avoid the legacy JSON LIKE scan while that worker owns a writer; preserve
+    # existing-row and other opportunity projections unchanged.
+    return present_opportunity(
+        conn,
+        dict(conn.execute("SELECT * FROM social_opportunities WHERE id=?", (item_id,)).fetchone()),
+        freshly_created=kind == "join" and trigger_type == "active_group_topic",
+    )
 
 
 def add_topic_candidate(conn: sqlite3.Connection, opportunity_id: str, payload: dict) -> dict:
@@ -214,6 +221,31 @@ def decide_opportunity(conn: sqlite3.Connection, opportunity_id: str, payload: d
     return result
 
 
+def cancel_start_opportunity(conn: sqlite3.Connection, opportunity_id: str) -> bool:
+    """Close one undeliverable start opportunity without inventing an event.
+
+    A model proposal is not the final delivery decision.  If the authoritative
+    claim/preflight changes after generation, the opportunity must become a
+    terminal cancellation rather than remain a decided reply with no event.
+    """
+
+    item_id = _clip(opportunity_id, 80)
+    if not item_id:
+        return False
+    changed = conn.execute(
+        """
+        UPDATE social_opportunities
+        SET status='cancelled',decided_at=?
+        WHERE id=? AND kind='start' AND status IN ('open','decided')
+          AND NOT EXISTS(
+              SELECT 1 FROM proactive_events WHERE opportunity_id=social_opportunities.id
+          )
+        """,
+        (utc_now(), item_id),
+    )
+    return changed.rowcount == 1
+
+
 def enrich_participation_payload(
     conn: sqlite3.Connection,
     payload: dict,
@@ -312,7 +344,9 @@ def record_feedback(conn: sqlite3.Connection, payload: dict) -> dict:
     return result
 
 
-def present_opportunity(conn: sqlite3.Connection, row: dict) -> dict:
+def present_opportunity(
+    conn: sqlite3.Connection, row: dict, *, freshly_created: bool = False,
+) -> dict:
     item = dict(row)
     item["policy_snapshot"] = _load(item.pop("policy_snapshot_json", "{}"), {})
     candidates = conn.execute(
@@ -335,11 +369,32 @@ def present_opportunity(conn: sqlite3.Connection, row: dict) -> dict:
         decision["decision_source"] = "proactive_event"
         item["decision"] = decision
     else:
-        engagement = conn.execute(
-            """SELECT id,action,reason_code,decision_json FROM engagement_decisions
-               WHERE decision_json LIKE ? ORDER BY created_at DESC LIMIT 1""",
-            (f'%"opportunity_id":"{item["id"]}"%',),
-        ).fetchone()
+        engagement = None
+        legacy_lookup = not item["id"].startswith("decision-")
+        if not legacy_lookup:
+            # Inbound opportunities use decision-<engagement primary key>.
+            # The old leading-wildcard JSON search scans every decision while
+            # this group ingress connection already owns the SQLite writer.
+            engagement = conn.execute(
+                """SELECT id,action,reason_code,decision_json FROM engagement_decisions
+                   WHERE id=?""",
+                (item["id"][len("decision-"):],),
+            ).fetchone()
+            if engagement:
+                linked = _load(engagement["decision_json"], {})
+                social = linked.get("social_opportunity") if isinstance(linked, dict) else {}
+                if not isinstance(social, dict) or social.get("opportunity_id") != item["id"]:
+                    engagement = None
+                    legacy_lookup = True
+            elif item.get("status") != "open":
+                # Preserve historical non-canonical finalized projections.
+                legacy_lookup = True
+        if legacy_lookup and not freshly_created:
+            engagement = conn.execute(
+                """SELECT id,action,reason_code,decision_json FROM engagement_decisions
+                   WHERE decision_json LIKE ? ORDER BY created_at DESC LIMIT 1""",
+                (f'%"opportunity_id":"{item["id"]}"%',),
+            ).fetchone()
         if engagement:
             payload = _load(engagement["decision_json"], {})
             social = payload.get("social_opportunity") if isinstance(payload, dict) else {}
@@ -359,6 +414,14 @@ def present_opportunity(conn: sqlite3.Connection, row: dict) -> dict:
                 "reason": final_reason or _clip(social.get("reason_code") or social.get("reason"), 120),
                 "phase": "final",
                 "decision_source": "engagement_decision",
+            }
+        elif item.get("status") in {"decided", "cancelled", "expired"}:
+            item["decision"] = {
+                "action": "silent",
+                "reason_code": f"social_opportunity_{item['status']}",
+                "reason": f"social_opportunity_{item['status']}",
+                "phase": "final",
+                "decision_source": "social_opportunity",
             }
         else:
             item["decision"] = {
@@ -410,10 +473,29 @@ def list_feedback(conn: sqlite3.Connection, *, assistant_id: str = "", limit: in
 
 
 def record_delivery_feedback(conn: sqlite3.Connection, delivery: dict | None, signal: str) -> dict | None:
-    if not delivery or signal not in {"delivery_failed", "ambiguous"}:
+    if not delivery or signal not in {"replied", "delivery_failed", "ambiguous"}:
         return None
     delivery_id = _clip(delivery.get("id"), 80)
+    if not delivery_id:
+        return None
     payload = delivery.get("payload") if isinstance(delivery.get("payload"), dict) else {}
+    group_id = _clip(payload.get("group_id"), 160)
+    payload_kind = _clip(payload.get("kind"), 40)
+    if signal == "replied" and (
+        payload_kind not in {"assistant_reply", "assistant_voice_reply"} or not group_id
+    ):
+        return None
+    feedback_id = "delivery-feedback-" + hashlib.sha256(
+        f"{delivery_id}\0{signal}".encode("utf-8")
+    ).hexdigest()[:24]
+    existing = conn.execute(
+        "SELECT * FROM social_feedback_events WHERE id=?",
+        (feedback_id,),
+    ).fetchone()
+    if existing:
+        item = dict(existing)
+        item["detail"] = _load(item.pop("detail_json"), {})
+        return item
     if payload.get("kind") == "proactive_chat":
         event = conn.execute("SELECT * FROM proactive_events WHERE delivery_id=?", (delivery_id,)).fetchone()
         if not event or not event["opportunity_id"]:
@@ -422,24 +504,58 @@ def record_delivery_feedback(conn: sqlite3.Connection, delivery: dict | None, si
         if "feedback_state" in event:
             conn.execute("UPDATE proactive_events SET feedback_state=? WHERE id=?", (signal, event["id"]))
         return record_feedback(conn, {
+            "id": feedback_id,
             "assistant_id": event.get("assistant_id"), "opportunity_id": event.get("opportunity_id"),
             "decision_ref": event["id"], "subject_type": "private_user", "subject_id": event["user_id"],
             "topic_candidate_id": event.get("topic_candidate_id"), "approach": event.get("approach"),
             "signal": signal, "source": "delivery_outbox", "detail": {"delivery_id": delivery_id},
         })
     decision_id = _clip(delivery.get("engagement_decision_id"), 80)
-    if not decision_id:
-        return None
-    row = conn.execute(
-        "SELECT assistant_id,decision_json FROM engagement_decisions WHERE id=?", (decision_id,),
-    ).fetchone()
-    if not row:
-        return None
-    decision_payload = _load(row["decision_json"], {})
+    row = (
+        conn.execute(
+            "SELECT assistant_id,decision_json FROM engagement_decisions WHERE id=?",
+            (decision_id,),
+        ).fetchone()
+        if decision_id
+        else None
+    )
+    decision_payload = _load(row["decision_json"], {}) if row else {}
     social = decision_payload.get("social_opportunity") if isinstance(decision_payload, dict) else None
-    if not isinstance(social, dict) or not social.get("opportunity_id"):
+    social = social if isinstance(social, dict) else {}
+    if signal == "replied" and group_id:
+        assistant_id = _clip(row["assistant_id"], 80) if row else ""
+        if not assistant_id:
+            assistant = conn.execute(
+                "SELECT id FROM assistant_instances WHERE status='active' ORDER BY updated_at DESC,id LIMIT 1",
+            ).fetchone()
+            assistant_id = _clip(assistant[0], 80) if assistant else ""
+        if not assistant_id:
+            return None
+        source_message_id = _clip(
+            payload.get("source_message_id") or delivery.get("source_message_id"),
+            160,
+        )
+        return record_feedback(conn, {
+            "id": feedback_id,
+            "assistant_id": assistant_id,
+            "opportunity_id": social.get("opportunity_id"),
+            "decision_ref": decision_id,
+            "subject_type": "qq_group",
+            "subject_id": group_id,
+            "topic_candidate_id": social.get("topic_candidate_id"),
+            "approach": social.get("approach") or payload.get("social_action"),
+            "signal": signal,
+            "source": "delivery_outbox",
+            "detail": {
+                "delivery_id": delivery_id,
+                "source_message_id": source_message_id,
+                "ack_state": "confirmed",
+            },
+        })
+    if not row or not social.get("opportunity_id"):
         return None
     return record_feedback(conn, {
+        "id": feedback_id,
         "assistant_id": row["assistant_id"], "opportunity_id": social.get("opportunity_id"),
         "decision_ref": decision_id, "subject_type": social.get("scope_type"),
         "subject_id": social.get("scope_id"), "topic_candidate_id": social.get("topic_candidate_id"),
@@ -449,6 +565,7 @@ def record_delivery_feedback(conn: sqlite3.Connection, delivery: dict | None, si
 
 
 __all__ = [
+    "cancel_start_opportunity",
     "add_topic_candidate", "create_opportunity", "decide_opportunity",
     "enrich_participation_payload", "list_feedback", "list_opportunities",
     "normalize_social_decision", "record_delivery_feedback", "record_feedback", "set_social_opportunity_feature",

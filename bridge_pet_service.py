@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +20,7 @@ from pathlib import Path
 BUILTIN_PACK_ID = "assistant-placeholder"
 ASSISTANT_CORE_NAMESPACE = "assistant-core"
 MAX_ASSET_BYTES = 5 * 1024 * 1024
+MAX_PORTRAIT_BYTES = 200 * 1024
 ASSET_ROOT = Path(os.environ.get("AGENT_PET_ASSET_ROOT", "/opt/agent-stack/codex-qq-bridge/assets/pets"))
 BUILTIN_ASSET_PATH = Path(__file__).with_name("admin") / "pet-placeholder.svg"
 BUILTIN_MANIFEST_PATH = Path(__file__).with_name("admin") / "pet-placeholder.svg"
@@ -186,6 +190,7 @@ def _pack_dict(row: sqlite3.Row | tuple, *, identity_migrated: bool) -> dict:
             and (identity_migrated or not bool(values["built_in"]))
         ),
         "asset_url": f"/assistant/pets/assets/{values['id']}",
+        "portrait": _portrait_descriptor(values, manifest),
         "created_at": values["created_at"],
         "updated_at": values["updated_at"],
 }
@@ -202,7 +207,7 @@ def list_pet_packs(conn: sqlite3.Connection) -> list[dict]:
     return [_pack_dict(row, identity_migrated=identity_migrated) for row in rows]
 
 
-def pet_state(conn: sqlite3.Connection) -> dict:
+def pet_state(conn: sqlite3.Connection, *, integrity_scope: str = "identity") -> dict:
     packs = list_pet_packs(conn)
     pack_ids = {item["id"] for item in packs}
     selected = _setting(conn, "admin_pet_pack_id", BUILTIN_PACK_ID)
@@ -212,7 +217,7 @@ def pet_state(conn: sqlite3.Connection) -> dict:
 
         identity_enabled = identity_feature_enabled(conn)
         if identity_enabled:
-            assistant = current_assistant(conn)
+            assistant = current_assistant(conn, integrity_scope=integrity_scope)
             selected = str((((assistant or {}).get("appearance") or {}).get("id")) or "")
     if selected not in pack_ids:
         selected = "" if identity_enabled else (BUILTIN_PACK_ID if BUILTIN_PACK_ID in pack_ids else "")
@@ -238,7 +243,9 @@ def pet_state(conn: sqlite3.Connection) -> dict:
 
 
 def save_pet_settings(conn: sqlite3.Connection, payload: dict) -> dict:
-    state = pet_state(conn)
+    if "portrait" in payload:
+        return _save_pet_portrait(conn, payload)
+    state = pet_state(conn, integrity_scope="database")
     pack_id = str(payload.get("pack_id") or state["pack_id"]).strip()
     if not pack_id or not conn.execute(
         "SELECT 1 FROM pet_packs WHERE id=? AND status='active'",
@@ -301,7 +308,7 @@ def save_pet_settings(conn: sqlite3.Connection, payload: dict) -> dict:
             _utc_now(),
         ),
     )
-    return pet_state(conn)
+    return pet_state(conn, integrity_scope="database")
 
 
 def _image_dimensions(data: bytes, mime: str) -> tuple[int, int] | None:
@@ -325,6 +332,155 @@ def _image_dimensions(data: bytes, mime: str) -> tuple[int, int] | None:
             return 1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF)
         offset += 8 + size + (size & 1)
     return None
+
+
+def _portrait_dimensions(data: bytes, mime: str) -> tuple[int, int]:
+    if not data or len(data) > MAX_PORTRAIT_BYTES:
+        raise ValueError("invalid_portrait_size")
+    if mime == "image/webp":
+        if len(data) < 20 or data[:4] != b"RIFF" or data[8:12] != b"WEBP" or int.from_bytes(data[4:8], "little") + 8 != len(data):
+            raise ValueError("invalid_portrait_image")
+        offset = 12
+        while offset + 8 <= len(data):
+            kind = data[offset:offset + 4]
+            size = int.from_bytes(data[offset + 4:offset + 8], "little")
+            if offset + 8 + size > len(data):
+                raise ValueError("invalid_portrait_image")
+            if kind in {b"ANIM", b"ANMF"} or (kind == b"VP8X" and size and data[offset + 8] & 2):
+                raise ValueError("portrait_must_be_static")
+            offset += 8 + size + (size & 1)
+        if offset != len(data):
+            raise ValueError("invalid_portrait_image")
+    elif mime == "image/png":
+        if not data.startswith(b"\x89PNG\r\n\x1a\n") or data[12:16] != b"IHDR":
+            raise ValueError("invalid_portrait_image")
+        offset = 8
+        while offset + 12 <= len(data):
+            size = int.from_bytes(data[offset:offset + 4], "big")
+            if data[offset + 4:offset + 8] == b"acTL":
+                raise ValueError("portrait_must_be_static")
+            offset += 12 + size
+        if offset != len(data):
+            raise ValueError("invalid_portrait_image")
+    else:
+        raise ValueError("unsupported_portrait_type")
+    dimensions = _image_dimensions(data, mime)
+    if not dimensions or any(value <= 0 or value > 8192 for value in dimensions) or dimensions[0] * dimensions[1] > 16_777_216:
+        raise ValueError("invalid_portrait_dimensions")
+    executable = shutil.which("ffmpeg")
+    if not executable:
+        raise ValueError("portrait_decoder_unavailable")
+    try:
+        decoded = subprocess.run(
+            [executable, "-nostdin", "-v", "error", "-xerror", "-err_detect", "explode", "-threads", "1", "-i", "pipe:0", "-map", "0:v:0", "-f", "null", "-"],
+            input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("portrait_decode_failed") from exc
+    if decoded.returncode != 0:
+        raise ValueError("portrait_decode_failed")
+    return dimensions
+
+
+def _portrait_resource(values: dict, manifest: object) -> tuple[bytes, dict] | None:
+    if values.get("status", "active") != "active" or values.get("deleted_at") or values.get("owner_actor_id", "owner-local") != "owner-local":
+        return None
+    item = manifest.get("portrait") if isinstance(manifest, dict) else None
+    if not isinstance(item, dict):
+        return None
+    version = item.get("content_version")
+    mime = item.get("mime_type")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9a-f]{64}", version) or mime not in {"image/webp", "image/png"}:
+        return None
+    expected_name = f"portrait-{version}{MIME_EXTENSIONS[mime]}"
+    if item.get("asset_name") != expected_name:
+        return None
+    root = ASSET_ROOT.resolve()
+    path = (root / expected_name).resolve()
+    try:
+        if not path.is_relative_to(root) or not 0 < path.stat().st_size <= MAX_PORTRAIT_BYTES:
+            return None
+        data = path.read_bytes()
+        width, height = _portrait_dimensions(data, mime)
+    except (OSError, ValueError):
+        return None
+    if hashlib.sha256(data).hexdigest() != version or any(type(item.get(key)) is not int or item[key] != value for key, value in (("width", width), ("height", height), ("bytes", len(data)))):
+        return None
+    descriptor = {"pack_id": values["id"], "url": f"/assistant/pets/assets/{values['id']}/portrait?v={version[:16]}",
+                  "mime_type": mime, "width": width, "height": height, "bytes": len(data), "content_version": version}
+    return data, descriptor
+
+
+def _portrait_descriptor(values: dict, manifest: object) -> dict | None:
+    resource = _portrait_resource(values, manifest)
+    return resource[1] if resource else None
+
+
+def _save_pet_portrait(conn: sqlite3.Connection, payload: dict) -> dict:
+    if set(payload) != {"pack_id", "portrait"} or not isinstance(payload["portrait"], dict):
+        raise ValueError("invalid_portrait_request")
+    state = pet_state(conn, integrity_scope="database")
+    pack_id = str(payload["pack_id"])
+    if not pack_id or pack_id != state["pack_id"]:
+        raise ValueError("portrait_requires_current_pack")
+    row = conn.execute("SELECT manifest_json FROM pet_packs WHERE id=? AND owner_actor_id='owner-local' AND status='active' AND deleted_at=''", (pack_id,)).fetchone()
+    if row is None:
+        raise ValueError("pet_pack_not_found")
+    raw = str(row[0])
+    manifest = json.loads(raw)
+    if not isinstance(manifest, dict):
+        raise ValueError("invalid_pet_manifest")
+    request = payload["portrait"]
+    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    if request.get("expected_manifest_sha256") != digest:
+        raise ValueError("portrait_manifest_conflict")
+    if request.get("clear") is True and set(request) == {"clear", "expected_manifest_sha256"}:
+        manifest.pop("portrait", None)
+        event = {"cleared": True}
+    else:
+        if set(request) != {"expected_manifest_sha256", "mime_type", "asset_base64"}:
+            raise ValueError("invalid_portrait_request")
+        encoded = request["asset_base64"]
+        if not isinstance(encoded, str) or len(encoded) > 4 * ((MAX_PORTRAIT_BYTES + 2) // 3):
+            raise ValueError("invalid_portrait_size")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("invalid_portrait_base64") from exc
+        mime = str(request["mime_type"])
+        width, height = _portrait_dimensions(data, mime)
+        version = hashlib.sha256(data).hexdigest()
+        name = f"portrait-{version}{MIME_EXTENSIONS[mime]}"
+        root = ASSET_ROOT.resolve(); root.mkdir(parents=True, exist_ok=True)
+        destination = (root / name).resolve()
+        if not destination.is_relative_to(root):
+            raise ValueError("unsafe_pet_asset_path")
+        if destination.exists():
+            if hashlib.sha256(destination.read_bytes()).hexdigest() != version:
+                raise ValueError("portrait_asset_conflict")
+        else:
+            temporary = root / (name + "." + uuid.uuid4().hex + ".tmp")
+            temporary.write_bytes(data); os.chmod(temporary, 0o600); os.replace(temporary, destination)
+        manifest["portrait"] = {"asset_name": name, "mime_type": mime, "width": width, "height": height, "bytes": len(data), "content_version": version}
+        event = {"content_version": version, "bytes": len(data)}
+    now = _utc_now()
+    changed = conn.execute("UPDATE pet_packs SET manifest_json=?,updated_at=? WHERE id=? AND manifest_json=? AND status='active'",
+                           (json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), now, pack_id, raw))
+    if changed.rowcount != 1:
+        raise ValueError("portrait_manifest_conflict")
+    conn.execute("INSERT INTO pet_pack_events(pack_id,action,detail_json,created_at) VALUES(?,?,?,?)", (pack_id, "portrait", json.dumps(event), now))
+    return pet_state(conn, integrity_scope="database")
+
+
+def pet_portrait_asset(conn: sqlite3.Connection, pack_id: str, version: str) -> tuple[bytes, str] | None:
+    state = pet_state(conn)
+    if not pack_id or pack_id != state["pack_id"]:
+        return None
+    pack = next((item for item in state["packs"] if item["id"] == pack_id), None)
+    resource = _portrait_resource(pack, pack["manifest"]) if pack else None
+    if resource is None or resource[1]["content_version"][:16] != version:
+        return None
+    return resource[0], resource[1]["mime_type"]
 
 
 def _validated_manifest(raw: object, data: bytes, mime: str) -> dict:
@@ -467,7 +623,7 @@ def import_pet_pack(conn: sqlite3.Connection, payload: dict) -> dict:
     except Exception:
         destination.unlink(missing_ok=True)
         raise
-    return {"pack": next(item for item in list_pet_packs(conn) if item["id"] == pack_id), "state": pet_state(conn)}
+    return {"pack": next(item for item in list_pet_packs(conn) if item["id"] == pack_id), "state": pet_state(conn, integrity_scope="database")}
 
 
 def delete_pet_pack(conn: sqlite3.Connection, payload: dict) -> dict:
@@ -506,7 +662,7 @@ def delete_pet_pack(conn: sqlite3.Connection, payload: dict) -> dict:
     target = (root / asset_name).resolve()
     if not bool(row[1]) and target.is_relative_to(root):
         target.unlink(missing_ok=True)
-    return pet_state(conn)
+    return pet_state(conn, integrity_scope="database")
 
 
 def pet_asset(conn: sqlite3.Connection, pack_id: str) -> tuple[bytes, str] | None:

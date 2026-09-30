@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from bridge_artifact_broker import ArtifactAuthorizationBroker, ArtifactBrokerClient, broker_security_supported
 from bridge_artifact_cutover import artifact_cutover_plan, artifact_preview_feature_enabled
 from bridge_artifact_http import ArtifactHttpApi
+from bridge_artifact_repository import ArtifactRepository
 from bridge_artifact_service import ARTIFACT_MANIFEST_INSTRUCTION, ArtifactService
 from bridge_assistant_identity import current_assistant
 
@@ -31,6 +34,7 @@ class ArtifactRuntime:
         self.storage_root = Path(os.environ.get("ARTIFACT_STORAGE_ROOT", "/var/lib/agent-artifacts"))
         self.socket_path = Path(os.environ.get("ARTIFACT_BROKER_SOCKET", "/run/agent-artifact/broker.sock"))
         self.preview_base_url = os.environ.get("ARTIFACT_PREVIEW_BASE_URL", "")
+        self.redemption_base_url = os.environ.get("ARTIFACT_REDEMPTION_BASE_URL", "").rstrip("/")
         self.admin_origin = os.environ.get("ADMIN_ORIGIN", "")
         self.revision_root = Path(os.environ.get("ARTIFACT_REVISION_ROOT", "/opt/agent-workspace/artifact-revisions"))
         self.preview_uid = int(os.environ.get("ARTIFACT_PREVIEW_UID", "-1"))
@@ -51,6 +55,15 @@ class ArtifactRuntime:
     def enabled(self) -> bool:
         with self._assistant_connect() as conn:
             return artifact_preview_feature_enabled(conn)
+
+    @staticmethod
+    def retry_source_prompt(prompt: str) -> str:
+        """Remove a previous Task-owned manifest suffix before a retry."""
+
+        text = str(prompt or "")
+        marker = "\n\n" + ARTIFACT_MANIFEST_INSTRUCTION
+        index = text.find(marker)
+        return text[:index].rstrip() if index >= 0 else text
 
     def decorate_prompt(
         self,
@@ -74,31 +87,199 @@ class ArtifactRuntime:
             assistant = current_assistant(conn) or {}
         capture_task = dict(task)
         capture_task["user_id"] = str(assistant.get("owner_actor_id") or "admin")
-        return self.service.capture_task_manifest(
+        captured = self.service.capture_task_manifest(
             capture_task, origin_assistant_id=str(assistant.get("id") or ""),
         )
+        if not captured or str(task.get("source") or "") != "qq" or not self.redemption_base_url:
+            return captured
+        parsed = urlsplit(self.redemption_base_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("artifact_redemption_base_url_invalid")
+        artifact = captured.get("artifact") if isinstance(captured.get("artifact"), dict) else {}
+        version = captured.get("version") if isinstance(captured.get("version"), dict) else {}
+        version_id = str(version.get("id") or "")
+        if not version_id:
+            raise ValueError("artifact_delivery_version_missing")
+        with self._task_connect() as conn:
+            grant = ArtifactRepository(conn).create_delivery_grant(
+                version_id,
+                created_by=str(assistant.get("owner_actor_id") or "admin"),
+            )
+        result = dict(captured)
+        result["delivery_access"] = {
+            "artifact_id": str(artifact.get("id") or ""),
+            "artifact_version_id": version_id,
+            "source_goal_id": str(artifact.get("source_goal_id") or ""),
+            "source_run_id": str(artifact.get("source_run_id") or ""),
+            "grant_id": str(grant["id"]),
+            "expires_at": str(grant["expires_at"]),
+            "redemption_url": self.redemption_base_url + "/r/" + str(grant["token"]),
+        }
+        return result
 
     def _revision_task(self, artifact: dict, payload: dict) -> dict:
-        instruction = str(payload.get("instruction") or "").strip()
+        return self._create_revision_task(
+            artifact_id=str(artifact.get("id") or ""),
+            artifact_title=str(artifact.get("title") or ""),
+            artifact_kind=str(artifact.get("kind") or "file"),
+            base_version_id=str(artifact.get("current_version_id") or ""),
+            source_goal_id=str(artifact.get("source_goal_id") or ""),
+            source_run_id=str(artifact.get("source_run_id") or ""),
+            instruction=str(payload.get("instruction") or ""),
+            source="admin",
+            user_id="admin",
+            delivery_recipient_id="",
+            delivery_session="",
+            trace_id="",
+            timeout=int(payload.get("timeout") or 600),
+        )
+
+    def latest_delivered_artifact(self, actor_id: str, channel: str, conversation_ref: str) -> dict:
+        """Resolve the latest acknowledged Artifact from structured Outbox data.
+
+        The search deliberately parses structured JSON rows after SQLite filters
+        delivery success.  It never uses payload text matching and never
+        introduces a second latest-artifact cache.
+        """
+
+        actor_id = str(actor_id or "")
+        channel = str(channel or "")
+        conversation_ref = str(conversation_ref or "")
+        if not actor_id or not channel or not conversation_ref:
+            return {"resolution": "not_found"}
+        candidates: list[dict] = []
+        with self._task_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id,acked_at,payload_json FROM delivery_outbox
+                WHERE acked_at<>''
+                ORDER BY acked_at DESC,id DESC
+                """,
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or ""))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            delivery = payload.get("artifact_delivery") if isinstance(payload, dict) else None
+            if not isinstance(delivery, dict) or str(payload.get("kind") or "") != "run_result":
+                continue
+            scope = (actor_id, channel, conversation_ref)
+            if (
+                tuple(str(payload.get(key) or "") for key in ("actor_id", "channel", "conversation_ref")) != scope
+                or tuple(str(delivery.get(key) or "") for key in ("actor_id", "channel", "conversation_ref")) != scope
+            ):
+                continue
+            fields = {
+                key: str(delivery.get(key) or "")
+                for key in ("artifact_id", "artifact_version_id", "source_goal_id", "source_run_id", "grant_id")
+            }
+            if not all(fields.values()):
+                continue
+            candidates.append({"acked_at": str(row["acked_at"] or ""), **fields})
+        if not candidates:
+            return {"resolution": "not_found"}
+        latest_at = candidates[0]["acked_at"]
+        latest = [item for item in candidates if item["acked_at"] == latest_at]
+        if len(latest) != 1:
+            return {"resolution": "ambiguous", "candidate_count": len(latest)}
+        return {"resolution": "resolved", **latest[0]}
+
+    @staticmethod
+    def delivery_revision_clarification(target: dict) -> str:
+        if str(target.get("resolution") or "") == "ambiguous":
+            return "我这里有不止一个刚交付的成果，怕改错。你想改哪一份？"
+        return "我没有找到刚刚成功交付的成果。请先把需要修改的那份发给我，或说明它的内容。"
+
+    def create_delivered_revision_task(
+        self,
+        target: dict,
+        *,
+        instruction: str,
+        actor_id: str,
+        channel: str,
+        conversation_ref: str,
+        delivery_session: str,
+        trace_id: str,
+        timeout: int,
+    ) -> dict:
+        if str(target.get("resolution") or "") != "resolved":
+            raise ValueError("artifact_delivery_revision_target_invalid")
+        artifact_id = str(target.get("artifact_id") or "")
+        base_version_id = str(target.get("artifact_version_id") or "")
+        with self._assistant_connect() as conn:
+            assistant = current_assistant(conn) or {}
+        owner_id = str(assistant.get("owner_actor_id") or "")
+        if not owner_id:
+            raise ValueError("artifact_delivery_revision_target_invalid")
+        with self._task_connect() as conn:
+            artifact = ArtifactRepository(conn).get_artifact(artifact_id)
+        if not artifact or str(artifact.get("owner_id") or "") != owner_id:
+            raise ValueError("artifact_delivery_revision_target_invalid")
+        return self._create_revision_task(
+            artifact_id=artifact_id,
+            artifact_title=str(artifact.get("title") or ""),
+            artifact_kind=str(artifact.get("kind") or "file"),
+            base_version_id=base_version_id,
+            source_goal_id=str(target.get("source_goal_id") or ""),
+            source_run_id=str(target.get("source_run_id") or ""),
+            instruction=instruction,
+            source="qq",
+            user_id=str(actor_id),
+            delivery_recipient_id=str(conversation_ref),
+            delivery_session=str(delivery_session),
+            trace_id=str(trace_id),
+            timeout=int(timeout),
+            owner_id=owner_id,
+        )
+
+    def _create_revision_task(
+        self,
+        *,
+        artifact_id: str,
+        artifact_title: str,
+        artifact_kind: str,
+        base_version_id: str,
+        source_goal_id: str,
+        source_run_id: str,
+        instruction: str,
+        source: str,
+        user_id: str,
+        delivery_recipient_id: str,
+        delivery_session: str,
+        trace_id: str,
+        timeout: int,
+        owner_id: str = "admin",
+    ) -> dict:
+        instruction = str(instruction or "").strip()
         if not instruction or len(instruction) > 8000:
             raise ValueError("artifact_revision_instruction_invalid")
-        version_id = str(artifact.get("current_version_id") or "")
-        workspace = self.revision_root / (artifact["id"] + "-" + uuid.uuid4().hex[:10])
+        if not artifact_id or not base_version_id:
+            raise ValueError("artifact_revision_target_invalid")
+        workspace = self.revision_root / (artifact_id + "-" + uuid.uuid4().hex[:10])
         self.service.materialize_version(
-            version_id, workspace, owner_id=str(artifact.get("owner_id") or "admin"),
+            base_version_id, workspace, owner_id=owner_id,
         )
         prompt = (
-            f"修改当前成品《{artifact['title']}》。用户要求：{instruction}\n"
-            f"必须在完成时生成 .agent-artifact-manifest.json，并将 artifact_id 写为 {artifact['id']}，"
+            f"修改当前成品《{artifact_title or '当前成品'}》。用户要求：{instruction}\n"
+            f"必须在完成时生成 .agent-artifact-manifest.json，并将 artifact_id 写为 {artifact_id}，"
+            f"title 必须保持为《{artifact_title or '当前成品'}》，kind 必须保持为 {artifact_kind}，"
             "只列出本次成品文件，不要包含缓存、依赖或凭据。"
         )
         source_task_id = ""
         with self._task_connect() as conn:
-            source_run_id = str(artifact.get("source_run_id") or "")
-            if not source_run_id and str(artifact.get("source_goal_id") or ""):
+            source_run_id = str(source_run_id or "")
+            if not source_run_id and str(source_goal_id or ""):
                 row = conn.execute(
                     "SELECT current_run_id FROM goals WHERE id=?",
-                    (str(artifact.get("source_goal_id")),),
+                    (str(source_goal_id),),
                 ).fetchone()
                 source_run_id = str(row[0] or "") if row else ""
             if source_run_id:
@@ -106,13 +287,15 @@ class ArtifactRuntime:
                 source_task_id = str(row[0] or "") if row else ""
         return self._create_task(
             prompt=prompt, sandbox="workspace-write",
-            timeout=max(60, min(int(payload.get("timeout") or 600), 900)), cwd=self._safe_cwd(str(workspace)),
-            source="admin", user_id="admin", origin_message=instruction,
+            timeout=max(60, min(int(timeout or 600), 900)), cwd=self._safe_cwd(str(workspace)),
+            source=source, user_id=user_id, trace_id=trace_id, origin_message=instruction,
             intent="artifact_revision", mode="work",
             source_task_id=source_task_id,
             follow_up_source_task_id=source_task_id,
-            artifact_revision_id=str(artifact.get("id") or ""),
-            artifact_revision_base_version_id=version_id,
+            delivery_recipient_id=delivery_recipient_id,
+            delivery_session=delivery_session,
+            artifact_revision_id=artifact_id,
+            artifact_revision_base_version_id=base_version_id,
         )
 
     def start(self) -> dict:

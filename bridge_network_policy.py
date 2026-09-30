@@ -24,6 +24,7 @@ NETWORK_CAPABILITY_IDS = frozenset(
         "weather.forecast.read",
         "github.trending.read",
         "meme.discovery.search",
+        "research.web.read",
     },
 )
 _NETWORK_TOPIC = re.compile(

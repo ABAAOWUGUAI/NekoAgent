@@ -79,39 +79,25 @@ def select_media_observation(
     daily_remaining: int,
     burst_limit: int = DEFAULT_MEDIA_BURST_LIMIT,
 ) -> dict:
-    """Select one bounded visual observation attempt.
+    """Select observation independently of whether this event will get a reply.
 
-    Explicitly addressed visual turns are observed in every enabled
-    participation mode.  Ambient visual turns are eligible only for natural
-    participation while a topic is active and are then sampled by the
-    supplied probability.  Budget checks happen first and always block.
+    The existing model worker enforces bounded capacity and digest deduplication.
+    Reply budgets, burst counts and topic activity must not silently turn off
+    an explicitly enabled media-observation policy.  A zero probability is a
+    group-level opt-out, including for addressed media.
     """
 
-    daily = _bounded_count(daily_remaining, default=0)
-    # An invalid burst count is treated as exhausted (fail closed).  Negative
-    # values are also invalid rather than an accidental unlimited allowance.
-    burst = _bounded_count(burst_count, default=DEFAULT_MEDIA_BURST_LIMIT)
-    limit = max(1, _bounded_count(burst_limit, default=DEFAULT_MEDIA_BURST_LIMIT))
-    if daily <= 0:
-        return _result("blocked", "media_budget_exhausted")
-    if burst < 0 or burst >= limit:
-        return _result("blocked", "media_burst_exhausted")
-
+    del topic_active, burst_count, daily_remaining, burst_limit
+    if not str(event_id or "").strip():
+        return _result("blocked", "media_event_invalid")
     mode = str(participation_mode or "").strip().lower()
     if mode in {"", "disabled"}:
         return _result("blocked", "media_participation_disabled")
-
-    if bool(addressed):
-        return _result("observe", "addressed_media")
-
-    if mode != "natural_participation":
-        return _result("deferred", "media_participation_mode")
-    if not bool(topic_active):
-        return _result("deferred", "media_topic_inactive")
-
     chance = _bounded_probability(probability)
     if chance <= 0.0:
-        return _result("deferred", "media_observation_disabled")
+        return _result("blocked", "media_observation_disabled")
+    if bool(addressed):
+        return _result("observe", "addressed_media")
     if _stable_sample(event_id) < chance:
         return _result("observe", "ambient_probability_sample")
     return _result("deferred", "ambient_probability_miss")

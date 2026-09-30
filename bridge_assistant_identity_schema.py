@@ -330,7 +330,9 @@ def apply_assistant_identity_v2(conn: sqlite3.Connection) -> None:
     )
 
 
-def inspect_identity_schema(conn: sqlite3.Connection) -> dict:
+def inspect_identity_schema(conn: sqlite3.Connection, *, integrity_scope: str = "database") -> dict:
+    if integrity_scope not in {"database", "identity"}:
+        raise ValueError("identity_integrity_scope_invalid")
     tables = {
         str(row[0])
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -355,7 +357,13 @@ def inspect_identity_schema(conn: sqlite3.Connection) -> dict:
     )
     missing_pet_columns = sorted(set(PET_OWNERSHIP_COLUMNS) - pet_columns)
     missing_indexes = sorted(set(IDENTITY_REQUIRED_INDEXES) - indexes)
-    foreign_key_errors = [tuple(row) for row in conn.execute("PRAGMA foreign_key_check")]
+    # Full audits remain the default for migration, diagnostics and writes.
+    # Display projections explicitly check their domain, not all chat history.
+    checks = ["PRAGMA foreign_key_check"] if integrity_scope == "database" else [
+        f"PRAGMA foreign_key_check({table})"
+        for table in sorted(set(IDENTITY_TABLE_COLUMNS) | {"pet_packs"}) if table in tables
+    ]
+    foreign_key_errors = [tuple(row) for sql in checks for row in conn.execute(sql)]
     active_count = (
         int(conn.execute("SELECT count(*) FROM assistant_instances WHERE status='active'").fetchone()[0])
         if "assistant_instances" in tables
@@ -380,8 +388,8 @@ def inspect_identity_schema(conn: sqlite3.Connection) -> dict:
     }
 
 
-def require_identity_schema(conn: sqlite3.Connection) -> dict:
-    audit = inspect_identity_schema(conn)
+def require_identity_schema(conn: sqlite3.Connection, *, integrity_scope: str = "database") -> dict:
+    audit = inspect_identity_schema(conn, integrity_scope=integrity_scope)
     if not audit["ok"]:
         raise MigrationDriftError(
             "assistant_identity_schema_drift:"

@@ -9,6 +9,15 @@ from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
 
+# Bounded send window applied at ``begin_send`` so a slow but live send is not
+# misclassified as ``worker_lost_during_send`` by a later claimer.  Reuses the
+# bridge's existing per-claim lease upper bound (300s, see
+# ``bridge_delivery_claim.py``) and the LLBot delivery worker's retry backoff
+# cap (``min(300, ...)`` in remote-plugin/delivery_worker.py) as the system's
+# tolerated single-send duration; it still expires so true worker loss is
+# eventually recovered.
+SEND_LEASE_SECONDS = 300.0
+
 
 def _clip(value: object, limit: int) -> str:
     return str(value or "").strip()[:limit]
@@ -33,11 +42,19 @@ def _error_kind(value: object) -> str:
     return text.split(":", 1)[0].split(" ", 1)[0][:120] or "unknown"
 
 
-def begin_send(outbox, delivery_id: str, lease_token: str) -> dict | None:
+def begin_send(
+    outbox,
+    delivery_id: str,
+    lease_token: str,
+    *,
+    now=None,
+    send_lease_seconds: float = SEND_LEASE_SECONDS,
+) -> dict | None:
     delivery_id, lease_token = _clip(delivery_id, 80), _clip(lease_token, 80)
     if not delivery_id or not lease_token:
         raise ValueError("delivery_send_identity_required")
-    now_ts = _timestamp()
+    current = _utc(now)
+    now_ts = _timestamp(current)
     with closing(outbox._connect()) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -49,9 +66,17 @@ def begin_send(outbox, delivery_id: str, lease_token: str) -> dict | None:
                 from bridge_delivery_outbox import LeaseLostError
 
                 raise LeaseLostError("delivery_lease_lost")
+            # Extend the send lease so a slow but live send is not reclaimed as
+            # worker_lost_during_send once the (usually shorter) claim lease
+            # lapses.  The extension is bounded and still expires, so a truly
+            # lost worker is eventually recovered.
+            existing_expiry = _utc(row["lease_expires_at"]) if row["lease_expires_at"] else current
+            send_expiry = max(existing_expiry, current + timedelta(seconds=send_lease_seconds))
             conn.execute(
-                "UPDATE delivery_outbox SET delivery_certainty='sending',last_action='send_start',updated_at=? WHERE id=?",
-                (now_ts, delivery_id),
+                """UPDATE delivery_outbox
+                   SET delivery_certainty='sending',last_action='send_start',
+                       lease_expires_at=?,updated_at=? WHERE id=?""",
+                (_timestamp(send_expiry), now_ts, delivery_id),
             )
             conn.execute(
                 """
@@ -65,7 +90,7 @@ def begin_send(outbox, delivery_id: str, lease_token: str) -> dict | None:
         except Exception:
             conn.rollback()
             raise
-    return outbox._row_to_delivery(row)
+    return outbox._row_to_delivery(row, now=current)
 
 
 def ack(outbox, delivery_id: str, lease_token: str, *, platform_message_id: str = "") -> dict | None:

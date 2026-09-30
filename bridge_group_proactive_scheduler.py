@@ -13,11 +13,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from bridge_automation_schema import ensure_automation_tables
+from bridge_conversation_participation import TRANSIENT_RETENTION_MINUTES
 from bridge_migrations import utc_now
 from bridge_proactive_messaging_policy import policy_gate_if_present
 
 GROUP_DORMANT_AFTER_MINUTES = 72 * 60
 GROUP_DORMANT_RECHECK_MINUTES = 24 * 60
+GROUP_PROACTIVE_SILENCE_MINUTES = max(15, TRANSIENT_RETENTION_MINUTES - 10)
+GROUP_GENERIC_HISTORY_RECHECK_MINUTES = 24 * 60
+GROUP_SKIP_RECHECK_MINUTES = 24 * 60
 
 
 def _clip(value: object, limit: int) -> str:
@@ -44,6 +48,37 @@ def dormant_group_next_check(
     if current - last_user < timedelta(minutes=GROUP_DORMANT_AFTER_MINUTES):
         return None
     return current + timedelta(minutes=GROUP_DORMANT_RECHECK_MINUTES)
+
+
+def generic_group_history_backoff(
+    *,
+    last_user: datetime | None,
+    current: datetime,
+) -> dict | None:
+    """Avoid a model call after the only generic group body evidence expired."""
+
+    if last_user is None:
+        return None
+    if current - last_user <= timedelta(minutes=TRANSIENT_RETENTION_MINUTES):
+        return None
+    return {
+        "reason": "group_generic_history_expired",
+        "next_check_at": current + timedelta(minutes=GROUP_GENERIC_HISTORY_RECHECK_MINUTES),
+    }
+
+
+def proactive_result_recheck_minutes(
+    *,
+    policy_kind: str,
+    action: str,
+    requested_minutes: int,
+) -> int:
+    """One group skip consumes the unchanged situation until new activity."""
+
+    requested = max(15, int(requested_minutes or 15))
+    if str(policy_kind or "") == "group_social" and str(action or "") == "skip":
+        return max(requested, GROUP_SKIP_RECHECK_MINUTES)
+    return requested
 
 
 def _wake_group_policy_from_activity(
@@ -86,7 +121,29 @@ def _sync_messaging_limits(
     conn: sqlite3.Connection,
     user_id: str,
     messaging_policy: dict,
+    *,
+    unanswered_limit: int | None = None,
 ) -> None:
+    desired = (
+        _clip(messaging_policy.get("quiet_start") or "23:00", 5),
+        _clip(messaging_policy.get("quiet_end") or "08:00", 5),
+        max(1, int(messaging_policy.get("daily_limit") or 1)),
+        max(1, int(messaging_policy.get("weekly_limit") or 1)),
+        max(1, int(
+            unanswered_limit
+            if unanswered_limit is not None
+            else messaging_policy.get("unanswered_limit") or 1
+        )),
+    )
+    current = conn.execute(
+        """SELECT quiet_start,quiet_end,daily_limit,weekly_limit,unanswered_limit
+           FROM proactive_policies WHERE user_id=?""",
+        (user_id,),
+    ).fetchone()
+    # A no-op UPDATE acquires the WAL writer before the scheduler's later
+    # identity audit.  Only a changed policy projection needs a new timestamp.
+    if current is None or tuple(current) == desired:
+        return
     conn.execute(
         """
         UPDATE proactive_policies
@@ -94,15 +151,46 @@ def _sync_messaging_limits(
             unanswered_limit=?,updated_at=?
         WHERE user_id=?
         """,
-        (
-            _clip(messaging_policy.get("quiet_start") or "23:00", 5),
-            _clip(messaging_policy.get("quiet_end") or "08:00", 5),
-            max(1, int(messaging_policy.get("daily_limit") or 1)),
-            max(1, int(messaging_policy.get("weekly_limit") or 1)),
-            max(1, int(messaging_policy.get("unanswered_limit") or 1)),
-            utc_now(),
-            user_id,
-        ),
+        (*desired, utc_now(), user_id),
+    )
+
+
+def _sync_group_schedule(conn: sqlite3.Connection, user_id: str) -> None:
+    """Keep the first group evaluation inside the existing transient window."""
+
+    row = conn.execute(
+        """SELECT last_user_at,next_check_at,state,state_reason,
+                  min_silence_minutes,policy_kind
+           FROM proactive_policies WHERE user_id=?""",
+        (user_id,),
+    ).fetchone()
+    if row and str(row[5]) == "group_social" and row[4] != GROUP_PROACTIVE_SILENCE_MINUTES:
+        conn.execute(
+            """UPDATE proactive_policies
+               SET min_silence_minutes=?,updated_at=?
+               WHERE user_id=? AND policy_kind='group_social'""",
+            (GROUP_PROACTIVE_SILENCE_MINUTES, utc_now(), user_id),
+        )
+    if not row or str(row[2] or "") != "waiting_silence":
+        return
+    last_user = _parse_timestamp(row[0])
+    current = _parse_timestamp(utc_now())
+    if not last_user or not current:
+        return
+    age = current - last_user
+    if age < timedelta(0) or age > timedelta(minutes=TRANSIENT_RETENTION_MINUTES):
+        return
+    desired = max(
+        current,
+        last_user + timedelta(minutes=GROUP_PROACTIVE_SILENCE_MINUTES),
+    )
+    saved_next = _parse_timestamp(row[1])
+    if saved_next is not None and saved_next <= desired:
+        return
+    conn.execute(
+        """UPDATE proactive_policies SET next_check_at=?,updated_at=?
+           WHERE user_id=? AND state='waiting_silence'""",
+        (desired.isoformat(), utc_now(), user_id),
     )
 
 
@@ -125,17 +213,36 @@ def persist_subject_metadata(
     )
     if policy_kind not in {"social", "group_social"}:
         raise ValueError("invalid_proactive_policy_kind")
+    assistant_id = _clip(
+        payload.get("assistant_id") or existing.get("assistant_id"),
+        80,
+    )
+    previous_assistant_id = _clip(existing.get("assistant_id"), 80)
+    previous_policy_kind = _clip(existing.get("policy_kind") or "social", 40)
+    rebound = bool(existing) and (
+        assistant_id != previous_assistant_id
+        or policy_kind != previous_policy_kind
+    )
+    if rebound and "policy_version" in columns:
+        # A proactive policy is a projection owned by one Assistant Instance.
+        # Switching the active Assistant starts a fresh scheduling generation:
+        # old claims/events remain auditable, but cannot carry cooldowns,
+        # unanswered state, failures, or leases into the new identity.
+        conn.execute(
+            """
+            UPDATE proactive_policies
+            SET assistant_id=?,policy_kind=?,policy_version=policy_version+1,
+                lease_until='',last_evaluated_at='',last_sent_at='',
+                consecutive_unanswered=0,decision_count=0,skip_count=0,
+                failed_count=0
+            WHERE user_id=?
+            """,
+            (assistant_id, policy_kind, user_id),
+        )
+        return
     conn.execute(
-        """
-        UPDATE proactive_policies
-        SET assistant_id=?,policy_kind=?
-        WHERE user_id=?
-        """,
-        (
-            _clip(payload.get("assistant_id") or existing.get("assistant_id"), 80),
-            policy_kind,
-            user_id,
-        ),
+        "UPDATE proactive_policies SET assistant_id=?,policy_kind=? WHERE user_id=?",
+        (assistant_id, policy_kind, user_id),
     )
 
 
@@ -174,6 +281,15 @@ def proactive_due_query(conn: sqlite3.Connection) -> str:
             AND p.user_id=('group:' || gp.group_id)
            WHERE p.enabled=1 AND p.authorized=1 AND p.next_check_at<=?
              AND (p.lease_until='' OR p.lease_until<=?)
+             AND (
+               p.policy_kind<>'group_social'
+               OR (
+                 gp.group_id IS NOT NULL
+                 AND gp.enabled=1
+                 AND gp.participation_mode='natural_participation'
+                 AND gp.session<>''
+               )
+             )
            ORDER BY p.next_check_at ASC LIMIT 30"""
 
 
@@ -199,6 +315,7 @@ def reconcile_group_proactive_policies(
     ).fetchone()
     if not assistant:
         return 0
+    assistant_ref = {"id": str(assistant[0])}
     created = 0
     groups = conn.execute(
         """
@@ -212,15 +329,33 @@ def reconcile_group_proactive_policies(
         policy_key = f"group:{group_id}"
         if not group_id:
             continue
-        gate = policy_gate_if_present(conn, policy_key)
+        gate = policy_gate_if_present(conn, policy_key, assistant=assistant_ref)
         if not gate or not gate.get("allowed"):
             continue
         messaging_policy = gate["policy"]
-        if conn.execute(
-            "SELECT 1 FROM proactive_policies WHERE user_id=?",
+        existing = conn.execute(
+            "SELECT * FROM proactive_policies WHERE user_id=?",
             (policy_key,),
-        ).fetchone():
+        ).fetchone()
+        if existing:
+            existing_policy = dict(existing)
+            if (
+                _clip(existing_policy.get("assistant_id"), 80) != str(assistant[0])
+                or _clip(existing_policy.get("policy_kind") or "social", 40)
+                != "group_social"
+            ):
+                upsert_policy(
+                    conn,
+                    {
+                        "user_id": policy_key,
+                        "assistant_id": str(assistant[0]),
+                        "policy_kind": "group_social",
+                        "enabled": True,
+                        "authorized": True,
+                    },
+                )
             _sync_messaging_limits(conn, policy_key, messaging_policy)
+            _sync_group_schedule(conn, policy_key)
             _wake_group_policy_from_activity(
                 conn,
                 user_id=policy_key,
@@ -235,7 +370,7 @@ def reconcile_group_proactive_policies(
                 "policy_kind": "group_social",
                 "enabled": True,
                 "authorized": True,
-                "min_silence_minutes": 120,
+                "min_silence_minutes": GROUP_PROACTIVE_SILENCE_MINUTES,
                 "min_gap_minutes": 720,
                 "quiet_start": messaging_policy["quiet_start"],
                 "quiet_end": messaging_policy["quiet_end"],
@@ -247,7 +382,6 @@ def reconcile_group_proactive_policies(
                 "schedule_jitter_minutes": 30,
                 "initiative_mode": "balanced",
                 "allowed_intents": ["share", "check_in"],
-                "topic_notes": "群内共同兴趣、最近讨论的自然延续、轻松且不要求回应的开放话题",
             },
         )
         created += 1
@@ -294,16 +428,33 @@ def reconcile_owner_proactive_policy(
     ).fetchone()
     if not assistant or not owner:
         return 0
+    assistant_ref = {"id": str(assistant[0])}
     user_id = _clip(owner[0], 80)
-    gate = policy_gate_if_present(conn, user_id)
+    gate = policy_gate_if_present(conn, user_id, assistant=assistant_ref)
     if not user_id or not gate or not gate.get("allowed"):
         return 0
     messaging_policy = gate["policy"]
-    if conn.execute(
-        "SELECT 1 FROM proactive_policies WHERE user_id=?",
+    existing = conn.execute(
+        "SELECT * FROM proactive_policies WHERE user_id=?",
         (user_id,),
-    ).fetchone():
-        _sync_messaging_limits(conn, user_id, messaging_policy)
+    ).fetchone()
+    if existing:
+        existing_policy = dict(existing)
+        if (
+            _clip(existing_policy.get("assistant_id"), 80) != str(assistant[0])
+            or _clip(existing_policy.get("policy_kind") or "social", 40) != "social"
+        ):
+            upsert_policy(
+                conn,
+                {
+                    "user_id": user_id,
+                    "assistant_id": str(assistant[0]),
+                    "policy_kind": "social",
+                    "enabled": True,
+                    "authorized": True,
+                },
+            )
+        _sync_messaging_limits(conn, user_id, messaging_policy, unanswered_limit=1)
         return 0
     upsert_policy(
         conn,
@@ -319,13 +470,12 @@ def reconcile_owner_proactive_policy(
             "quiet_end": messaging_policy["quiet_end"],
             "daily_limit": messaging_policy["daily_limit"],
             "weekly_limit": messaging_policy["weekly_limit"],
-            "unanswered_limit": messaging_policy["unanswered_limit"],
+            "unanswered_limit": 1,
             "evaluation_interval_minutes": 60,
             "topic_cooldown_minutes": 1440,
             "schedule_jitter_minutes": 20,
             "initiative_mode": "balanced",
             "allowed_intents": ["follow_up", "share", "check_in", "celebrate"],
-            "topic_notes": "自然延续最近对话、轻量分享共同兴趣、适度关心近况；没有真实切入点就保持安静",
         },
     )
     return 1
@@ -333,7 +483,9 @@ def reconcile_owner_proactive_policy(
 
 __all__ = [
     "dormant_group_next_check",
+    "generic_group_history_backoff",
     "persist_subject_metadata",
+    "proactive_result_recheck_minutes",
     "proactive_due_query",
     "reconcile_group_proactive_policies",
     "reconcile_owner_proactive_policy",

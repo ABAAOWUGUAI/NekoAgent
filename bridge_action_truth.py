@@ -9,6 +9,7 @@ keeps that boundary deterministic and independent from model prompts.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import re
 
 
 _OPERATION_TERMS = (
@@ -103,6 +104,17 @@ _CLAIM_MARKERS = _CLAIM_MARKERS + (
     "重新走一遍",
 )
 
+_ACTION_OFFER_PATTERNS = (
+    re.compile(
+        r"(?:需要|要|是否需要|是否要|要不要).{0,8}(?:我|把|将).{0,36}"
+        r"(?:加入|加进|添加|开放|启用|关闭|撤销|删除|修改|设置|同步|复制|对齐|部署|重启|重载|执行|触发|运行|创建|更新)",
+    ),
+    re.compile(
+        r"我(?:可以|来).{0,32}"
+        r"(?:加入|加进|添加|开放|启用|关闭|撤销|删除|修改|设置|同步|复制|对齐|部署|重启|重载|执行|触发|运行|创建|更新)",
+    ),
+)
+
 
 def completed_receipts(receipts: Iterable[Mapping[str, object]] | None) -> list[dict]:
     return [
@@ -127,25 +139,59 @@ def has_ungrounded_action_claim(
     return any(marker in text for marker in _CLAIM_MARKERS)
 
 
-def enforce_action_truth(
+def has_ungrounded_action_offer(
     reply: object,
-    receipts: Iterable[Mapping[str, object]] | None = None,
+    *,
+    server_offer: Mapping[str, object] | None = None,
+) -> bool:
+    """Return True when a model invents an operational confirmation offer."""
+
+    if isinstance(server_offer, Mapping) and str(server_offer.get("id") or "").strip():
+        return False
+    text = str(reply or "").strip().lower()
+    return bool(text) and any(pattern.search(text) for pattern in _ACTION_OFFER_PATTERNS)
+
+
+def enforce_action_offer_truth(
+    reply: object,
+    *,
+    server_offer: Mapping[str, object] | None = None,
 ) -> tuple[str, bool]:
-    """Replace an unsupported execution claim with a fail-closed fact block."""
+    """Block an operational offer unless the server has bound it to an action."""
 
     text = str(reply or "").strip()
-    if not has_ungrounded_action_claim(text, receipts):
+    if not has_ungrounded_action_offer(text, server_offer=server_offer):
         return text, False
     return (
-        "我不能把这项操作说成已经开始或完成：本轮没有产生可验证的动作回执。"
-        "当前只能确认尚未通过 Bridge 执行。"
-        "请给出明确操作目标；受支持的操作会走可审计动作，不支持的操作我会直接说明。",
+        "我不能把“是否替你执行”说成一个可操作的承诺：本轮没有服务端提出并绑定的动作。"
+        "请直接说明目标；系统会先返回可确认的受控操作，再等待你的确认。",
         True,
     )
 
 
+def enforce_action_truth(
+    reply: object,
+    receipts: Iterable[Mapping[str, object]] | None = None,
+    *,
+    server_offer: Mapping[str, object] | None = None,
+) -> tuple[str, bool]:
+    """Replace an unsupported execution claim with a fail-closed fact block."""
+
+    text = str(reply or "").strip()
+    if has_ungrounded_action_claim(text, receipts):
+        return (
+            "我不能把这项操作说成已经开始或完成：本轮没有产生可验证的动作回执。"
+            "当前只能确认尚未通过 Bridge 执行。"
+            "请给出明确操作目标；受支持的操作会走可审计动作，不支持的操作我会直接说明。",
+            True,
+        )
+    return enforce_action_offer_truth(text, server_offer=server_offer)
+
+
 __all__ = [
     "completed_receipts",
+    "enforce_action_offer_truth",
     "enforce_action_truth",
+    "has_ungrounded_action_offer",
     "has_ungrounded_action_claim",
 ]

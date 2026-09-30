@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import sqlite3
@@ -106,45 +106,78 @@ def record_group_message(conn: sqlite3.Connection, payload: dict) -> dict:
     return dict(row)
 
 
+def purge_expired_group_bodies(conn: sqlite3.Connection, *, limit: int = 64) -> int:
+    """Redact a bounded number of expired bodies off the group read path.
+
+    The existing (group_id, retention_class, expires_at, id) index serves each
+    group query; no global unindexed expiration scan or new worker is needed.
+    """
+
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(group_messages)")}
+    if "retention_class" not in columns or not participation_shadow_enabled(conn):
+        return 0
+    remaining = max(1, min(int(limit), 256))
+    now = _utc_now()
+    changed = 0
+    groups = conn.execute("SELECT group_id FROM group_policies ORDER BY group_id").fetchall()
+    for group in groups:
+        if not remaining:
+            break
+        group_id = str(group[0])
+        due = conn.execute(
+            """SELECT id FROM group_messages
+               WHERE group_id=? AND retention_class='transient'
+                 AND expires_at<>'' AND expires_at<=? AND content<>''
+               ORDER BY expires_at,id LIMIT ?""",
+            (group_id, now, min(remaining, 16)),
+        ).fetchall()
+        if not due:
+            continue
+        ids = [int(row[0]) for row in due]
+        marks = ",".join("?" for _ in ids)
+        cursor = conn.execute(
+            f"UPDATE group_messages SET content='',body_redacted_at=? "
+            f"WHERE id IN ({marks}) AND content<>''",
+            (now, *ids),
+        )
+        count = int(cursor.rowcount)
+        changed += count
+        remaining -= count
+    return changed
+
+
 def group_context(
     conn: sqlite3.Connection,
     group_id: str,
     limit: int = DEFAULT_GROUP_CONTEXT_LIMIT,
     *,
     preserve_latest_message_id: int | None = None,
+    before_message_id: int | None = None,
+    min_remaining_seconds: int = 0,
 ) -> list[dict]:
+    # Read the same previous-N window as ingress, before the current event was
+    # recorded. Apply the event boundary before LIMIT, not to a truncated tail.
+    before_id = int(before_message_id) if before_message_id is not None else None
+    if before_id is not None and before_id <= 0:
+        raise ValueError("group_context_before_message_id_invalid")
+    before_clause = "AND id<?" if before_id is not None else ""
+    before_parameters = (before_id,) if before_id is not None else ()
     columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(group_messages)")}
     if "retention_class" in columns and participation_shadow_enabled(conn):
-        now = _utc_now()
-        if preserve_latest_message_id:
-            conn.execute(
-                """
-                UPDATE group_messages SET content='',body_redacted_at=?
-                WHERE retention_class='transient' AND content<>''
-                  AND expires_at<>'' AND expires_at<=? AND id<>?
-                """,
-                (now, now, int(preserve_latest_message_id)),
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE group_messages SET content='',body_redacted_at=?
-                WHERE retention_class='transient' AND content<>''
-                  AND expires_at<>'' AND expires_at<=?
-                """,
-                (now, now),
-            )
+        now = (datetime.now(timezone.utc) + timedelta(seconds=max(0, int(min_remaining_seconds)))).isoformat()
         rows = conn.execute(
-            """
+            f"""
             SELECT id,sender_id,sender_name,content,is_mention,replied,created_at,
                    retention_class,expires_at,external_message_id,metadata_json
             FROM group_messages
             WHERE group_id=? AND content<>'' AND retention_class<>'metadata_only'
+                  {before_clause}
                   AND (expires_at='' OR expires_at>? OR id=?)
             ORDER BY id DESC LIMIT ?
             """,
             (
                 str(group_id or "").strip(),
+                *before_parameters,
                 now,
                 int(preserve_latest_message_id or 0),
                 normalize_group_context_limit(limit),
@@ -152,12 +185,13 @@ def group_context(
         ).fetchall()
         return [dict(row) for row in reversed(rows)]
     rows = conn.execute(
-        """
+        f"""
         SELECT id,sender_id,sender_name,content,is_mention,replied,created_at,
                external_message_id,metadata_json
-        FROM group_messages WHERE group_id=? ORDER BY id DESC LIMIT ?
+        FROM group_messages WHERE group_id=? {before_clause}
+        ORDER BY id DESC LIMIT ?
         """,
-        (str(group_id or "").strip(), normalize_group_context_limit(limit)),
+        (str(group_id or "").strip(), *before_parameters, normalize_group_context_limit(limit)),
     ).fetchall()
     return [dict(row) for row in reversed(rows)]
 

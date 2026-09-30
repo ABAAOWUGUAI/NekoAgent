@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reserve inbound order and cancel replies made stale before QQ send."""
+"""Reserve inbound order without taking ownership of finalized Delivery."""
 
 from __future__ import annotations
 
@@ -68,32 +68,10 @@ def reserve_response_sequence(
                     """,
                     (channel, thread_ref, reservation_key, sequence, now, now),
                 )
-            stale = conn.execute(
-                """
-                SELECT id,attempt FROM delivery_outbox
-                WHERE channel=? AND thread_ref=? AND delivery_class='social'
-                  AND acked_at='' AND dead_letter=0 AND superseded_by=''
-                  AND delivery_certainty IN ('pending','rejected','claimed')
-                """,
-                (channel, thread_ref),
-            ).fetchall()
-            marker = f"revision:{sequence}"
-            for delivery in stale:
-                conn.execute(
-                    """
-                    UPDATE delivery_outbox SET superseded_by=?,last_action='superseded',
-                        lease_owner='',lease_token='',lease_expires_at='',updated_at=? WHERE id=?
-                    """,
-                    (marker, now, delivery["id"]),
-                )
-                if int(delivery["attempt"] or 0) > 0:
-                    conn.execute(
-                        """
-                        UPDATE delivery_attempts SET state='superseded',certainty='not_sent',
-                            finished_at=?,updated_at=? WHERE delivery_id=? AND attempt_no=?
-                        """,
-                        (now, now, delivery["id"], int(delivery["attempt"])),
-                    )
+            # Reservations establish inbound ordering only.  A candidate may
+            # be replaced in group_participation_queue, but a finalized
+            # Delivery (especially a claimed one) is never cancelled or has
+            # its lease rewritten merely because a later inbound turn arrived.
             conn.commit()
         except Exception:
             conn.rollback()

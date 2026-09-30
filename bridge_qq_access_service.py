@@ -304,6 +304,111 @@ def get_qq_access_settings(conn: sqlite3.Connection) -> dict:
     }
 
 
+def get_group_participation_windows(conn: sqlite3.Connection) -> dict:
+    """Read the dynamic default/override policy for the live QQ allowlist."""
+
+    from bridge_group_participation_window_schema import effective_ambient_window_policy
+
+    require_qq_access_schema(conn)
+    groups = _access_rows(conn, "qq_group")
+    defaults = effective_ambient_window_policy(conn, "")
+    return {
+        "defaults": defaults,
+        "effective_by_group": {
+            str(item["group_id"]): effective_ambient_window_policy(conn, item["group_id"])
+            for item in groups
+        },
+    }
+
+
+def update_group_participation_windows(
+    conn: sqlite3.Connection,
+    *,
+    scope: object,
+    expected_version: object,
+    policy: object,
+    changed_by: object,
+    group_id: object = "",
+    operation: object = "upsert",
+    idempotency_key: object = "",
+) -> dict:
+    """Persist a versioned default or explicit group override with one audit event."""
+
+    from bridge_group_participation_window_schema import (
+        clear_group_participation_window_override,
+        update_group_participation_windows as update_windows,
+    )
+
+    require_qq_access_schema(conn)
+    scope_name = _clip(scope, 20)
+    operation_name = _clip(operation, 20) or "upsert"
+    group = _qq_id(group_id, "group_participation_windows_group_invalid") if scope_name == "group" else ""
+    if scope_name == "group" and not _entry_enabled(conn, "qq_group", group):
+        raise ValueError("group_participation_windows_group_not_allowlisted")
+    if operation_name not in {"upsert", "clear"} or (operation_name == "clear" and scope_name != "group"):
+        raise ValueError("group_participation_windows_operation_invalid")
+    request = {
+        "scope": scope_name,
+        "group_id": group,
+        "operation": operation_name,
+        "expected_version": expected_version,
+        "policy": policy,
+    }
+    request_hash = _request_hash(request)
+    key = _clip(idempotency_key, 160)
+    if key:
+        row = conn.execute(
+            """SELECT request_hash,response_json FROM assistant_idempotency_records
+               WHERE action='qq_group_participation_windows_update' AND idempotency_key=?""",
+            (key,),
+        ).fetchone()
+        if row:
+            if str(row[0]) != request_hash:
+                raise ValueError("idempotency_key_payload_conflict")
+            replay = json.loads(str(row[1] or "{}"))
+            if not isinstance(replay, dict):
+                raise ValueError("idempotency_record_corrupt")
+            return {**replay, "idempotent_replay": True}
+    with _write_transaction(conn):
+        result = (
+            clear_group_participation_window_override(
+                conn,
+                group_id=group,
+                expected_version=expected_version,
+            )
+            if operation_name == "clear"
+            else update_windows(
+                conn,
+                scope=scope_name,
+                group_id=group,
+                expected_version=expected_version,
+                policy=policy,
+                changed_by=changed_by,
+            )
+        )
+        record_security_audit(
+            conn,
+            "qq_group_participation_windows_updated",
+            "success",
+            actor_type=_clip(changed_by, 40) or "admin",
+            detail={
+                "scope": scope_name,
+                "operation": operation_name,
+                "origin": result["origin"],
+                "policy_version": result["version"],
+                "effective_at": result["effective_at"],
+            },
+        )
+        if key:
+            conn.execute(
+                """INSERT INTO assistant_idempotency_records(
+                        action,idempotency_key,request_hash,response_json,created_at
+                    ) VALUES('qq_group_participation_windows_update',?,?,?,?)""",
+                (key, request_hash, _canonical_json(result), utc_now()),
+            )
+    return {**result, "idempotent_replay": False}
+
+
 def _normalize_administrators(value: object) -> list[dict]:
     if not isinstance(value, list):
         raise ValueError("administrators_must_be_list")
@@ -728,7 +833,12 @@ def _object_feature_enabled(conn: sqlite3.Connection) -> bool:
     return bool(row and int(row[0]))
 
 
-def check_qq_access(conn: sqlite3.Connection, payload: dict) -> dict:
+def _check_qq_access(
+    conn: sqlite3.Connection,
+    payload: dict,
+    *,
+    record_last_seen: bool,
+) -> dict:
     require_qq_access_schema(conn)
     if not isinstance(payload, dict):
         raise ValueError("qq_access_payload_invalid")
@@ -778,18 +888,79 @@ def check_qq_access(conn: sqlite3.Connection, payload: dict) -> dict:
     object_action = action in OBJECT_ACTIONS and _object_feature_enabled(conn)
     if not (_action_allowed(effective_role, action) or object_action):
         return {**base, "reason": "action_not_allowed"}
-    conn.execute(
-        "UPDATE qq_identities SET last_seen_at=?,updated_at=? WHERE qq_id=?",
-        (utc_now(), utc_now(), sender_id),
-    )
+    if record_last_seen:
+        now = utc_now()
+        conn.execute(
+            "UPDATE qq_identities SET last_seen_at=?,updated_at=? WHERE qq_id=?",
+            (now, now, sender_id),
+        )
     return {**base, "allowed": True, "reason": "authorized", "role": effective_role}
+
+
+def check_qq_access(conn: sqlite3.Connection, payload: dict) -> dict:
+    """Authorize an observed QQ event and record its authenticated presence."""
+
+    return _check_qq_access(conn, payload, record_last_seen=True)
+
+
+def check_private_chat_access(
+    conn: sqlite3.Connection,
+    sender_id: object,
+    *,
+    requested_action: str = "chat",
+) -> dict:
+    """Read-only private-chat authorization for scheduler and delivery preflight.
+
+    A proactive eligibility probe is not an inbound contact event.  It must use
+    the same admission and action contract as a private chat without changing
+    ``qq_identities.last_seen_at``.
+    """
+
+    return _check_qq_access(
+        conn,
+        {
+            "sender_id": sender_id,
+            "event_type": "private",
+            "requested_action": requested_action,
+        },
+        record_last_seen=False,
+    )
+
+
+def check_private_owner_access(conn: sqlite3.Connection, sender_id: object) -> dict:
+    """Read-only minimum admission for early private response ownership."""
+
+    require_qq_access_schema(conn)
+    owner_id = _qq_id(sender_id, "sender_qq_id_invalid")
+    row = _settings_row(conn)
+    base = {
+        "allowed": False,
+        "reason": "access_denied",
+        "role": "",
+        "config_version": int(row[5]),
+        "feature_enabled": qq_access_feature_enabled(conn),
+    }
+    if not base["feature_enabled"]:
+        return {**base, "reason": "access_feature_disabled"}
+    if not bool(row[1]) or str(row[2]) == "disabled":
+        return {**base, "reason": "channel_disabled"}
+    if not bool(row[3]):
+        return {**base, "reason": "private_chat_disabled"}
+    role = _active_role(conn, owner_id)
+    if role != "super_admin":
+        return {**base, "reason": "owner_required", "role": role}
+    return {**base, "allowed": True, "reason": "owner_authorized", "role": role}
 
 
 __all__ = [
     "check_qq_access",
+    "check_private_chat_access",
+    "check_private_owner_access",
+    "get_group_participation_windows",
     "get_qq_access_settings",
     "qq_access_cutover_plan",
     "qq_access_feature_enabled",
     "set_qq_access_feature",
+    "update_group_participation_windows",
     "update_qq_access_settings",
 ]

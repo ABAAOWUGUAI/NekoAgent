@@ -298,14 +298,25 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE automation_jobs ADD COLUMN {name} {definition}")
     contract = normalize_output_contract(DEFAULT_OUTPUT_CONTRACT)
     contract_json = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    conn.execute(
-        """UPDATE automation_jobs
-           SET revision=CASE WHEN revision<1 THEN 1 ELSE revision END,
-               output_contract_json=CASE WHEN output_contract_json='' OR output_contract_json='{}'
-                                         THEN ? ELSE output_contract_json END,
-               output_contract_hash=CASE WHEN output_contract_hash='' THEN ? ELSE output_contract_hash END""",
-        (contract_json, output_contract_hash(contract)),
-    )
+    # A no-op UPDATE still opens a WAL writer transaction.  In the scheduler,
+    # policy/identity checks follow this bootstrap on the same connection; do
+    # not hold the writer lock through those read-only audits when no legacy
+    # job needs backfilling.
+    output_backfill_needed = conn.execute(
+        """SELECT 1 FROM automation_jobs
+           WHERE revision<1 OR output_contract_json='' OR output_contract_json='{}'
+              OR output_contract_hash=''
+           LIMIT 1"""
+    ).fetchone()
+    if output_backfill_needed:
+        conn.execute(
+            """UPDATE automation_jobs
+               SET revision=CASE WHEN revision<1 THEN 1 ELSE revision END,
+                   output_contract_json=CASE WHEN output_contract_json='' OR output_contract_json='{}'
+                                             THEN ? ELSE output_contract_json END,
+                   output_contract_hash=CASE WHEN output_contract_hash='' THEN ? ELSE output_contract_hash END""",
+            (contract_json, output_contract_hash(contract)),
+        )
     legacy_rows = conn.execute(
         """SELECT id,action_type,instruction,parameters_json
            FROM automation_jobs
@@ -346,7 +357,9 @@ def ensure_automation_tables(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """UPDATE automation_jobs
                    SET execution_contract_json=?,execution_contract_hash=?,
-                       enabled=0,state='disabled',next_due_at=''
+                       enabled=0,
+                       state=CASE WHEN state='archived' THEN 'archived' ELSE 'disabled' END,
+                       next_due_at=''
                    WHERE id=? AND (execution_contract_json='' OR execution_contract_json='{}')""",
                 (execution_json, execution_contract_hash(execution_contract), str(row[0])),
             )

@@ -69,6 +69,11 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
         "result", "Disable QQ group access while retaining its audit history.",
     ),
     ActionDefinition(
+        "qq_group_allowlist_disable_all", "ops", "qq.group.allowlist.disable_all",
+        "", "medium", True, True, "owner_private",
+        "result", "Disable an Owner-confirmed frozen set of QQ group admissions atomically.",
+    ),
+    ActionDefinition(
         "qq_group_allowlist_list", "ops", "qq.group.allowlist.list",
         "", "low", False, True, "owner_private",
         "result", "Read the current QQ group access allowlist.",

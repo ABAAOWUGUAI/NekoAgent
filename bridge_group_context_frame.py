@@ -10,6 +10,7 @@ attention signal and active-conversation interpretation.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import re
@@ -28,8 +29,58 @@ MEDIA_GATE_FOLLOWUP_SECONDS = 120
 _ACKNOWLEDGEMENT = re.compile(
     r"(?:好+|嗯+|哦+|行|知道了|谢谢|谢了|收到|可以|ok|OK)[呀啊呢。！!~～]*",
 )
+_AMBIGUOUS_FRAGMENT = re.compile(
+    r"^[？?！!。…\s]*(?:嗯+|哦+|啊+|额+|这(?:个|呢|样)?|那(?:个|呢|样)?|可以|行吗|对吗|是吗|真的吗|真的假的|为什么|怎么|咋办|咋|啥|然后呢|所以)[？?！!。…\s]*$",
+)
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _MENTION_ACCOUNT_SUFFIX = re.compile(r"(@[^@\n]{1,60}?)\s*\(\d{5,20}\)")
+_NAPCAT_NUMERIC_MESSAGE_ID = re.compile(r"^(?:napcat:)?(-?[0-9]+)$")
+
+
+def _stable_hash(value: object) -> str:
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _unique_source_ids(turns: list[dict], current_turn: dict) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in [*turns, current_turn]:
+        source_id = str(item.get("external_message_id") or "").strip()
+        if source_id and source_id not in seen:
+            seen.add(source_id)
+            result.append(source_id)
+    return result
+
+
+def refresh_group_situation_revision(frame: dict) -> dict:
+    """Refresh one derived revision after typed observations change."""
+
+    media = frame.get("media") if isinstance(frame.get("media"), Mapping) else {}
+    frame["revision"] = _stable_hash({
+        "schema_version": int(frame.get("schema_version") or 4),
+        "source_set_hash": str(frame.get("source_set_hash") or ""),
+        "attention": str(frame.get("attention") or ""),
+        "reply_target_id": str(frame.get("reply_target_id") or ""),
+        "topic_anchor_id": str(frame.get("topic_anchor_id") or ""),
+        "message_kind": str(frame.get("message_kind") or ""),
+        "observed_user_expression": frame.get("observed_user_expression") or {},
+        "media": {
+            "status": str(media.get("status") or ""),
+            "kind": str(media.get("kind") or ""),
+            "objective_facts": list(media.get("objective_facts") or [])[:3],
+            "uncertainties": list(media.get("uncertainties") or [])[:3],
+            "social_interpretation_policy": str(
+                media.get("social_interpretation_policy") or ""
+            ),
+        },
+    })
+    return frame
 
 
 def _assistant_media_gate_reason(item: dict | None) -> str:
@@ -105,6 +156,29 @@ def _message_kind(item: dict) -> str:
     return str(metadata.get("message_kind") or "text")
 
 
+def canonical_group_reply_message_id(value: object) -> str:
+    """Match QQ's bare numeric reply IDs with persisted ``napcat:`` IDs."""
+
+    text = str(value or "").strip()
+    match = _NAPCAT_NUMERIC_MESSAGE_ID.fullmatch(text)
+    return match.group(1) if match else text
+
+
+def group_source_message_id(item: dict) -> str:
+    """Return the platform reply identifier without exposing it to prompts."""
+
+    try:
+        metadata = json.loads(str(item.get("metadata_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        metadata = {}
+    return str(
+        item.get("external_message_id")
+        or metadata.get("external_message_id")
+        or metadata.get("platform_message_id")
+        or ""
+    ).strip()
+
+
 def _turn(item: dict) -> dict:
     assistant = str(item.get("sender_id") or "") == "bot"
     try:
@@ -135,11 +209,7 @@ def _turn(item: dict) -> dict:
         "is_mention": bool(item.get("is_mention")),
         "message_kind": _message_kind(item),
         "row_id": str(item.get("id") or ""),
-        "external_message_id": str(
-            item.get("external_message_id")
-            or metadata.get("external_message_id")
-            or ""
-        ),
+        "external_message_id": group_source_message_id(item),
         "reply_to_external_message_id": str(
             item.get("reply_to_external_message_id")
             or metadata.get("reply_to_external_message_id")
@@ -179,13 +249,21 @@ def _resolve_reply_target(current_turn: dict, turns: list[dict]) -> tuple[str, s
     reply_to = _reply_target_id_for(current_turn)
     if not reply_to:
         return "", "", ""
+    reply_key = canonical_group_reply_message_id(reply_to)
     target_turn = next(
-        (item for item in turns if item.get("external_message_id") == reply_to),
+        (
+            item for item in turns
+            if canonical_group_reply_message_id(item.get("external_message_id")) == reply_key
+        ),
         None,
     )
     if target_turn is None:
         return reply_to, "", ""
-    return reply_to, str(target_turn.get("actor_id") or ""), str(target_turn.get("row_id") or "")
+    return (
+        str(target_turn.get("external_message_id") or reply_to),
+        str(target_turn.get("actor_id") or ""),
+        str(target_turn.get("row_id") or ""),
+    )
 
 
 def _topic_root_id(reply_target_id: str, turns: list[dict]) -> str:
@@ -210,24 +288,42 @@ def _ambiguous_target(
     turns: list[dict],
     *,
     member_actor: str,
+    short_turn_participation: bool = True,
 ) -> bool:
-    """Flag when the Reply edge is absent and the short utterance is ambiguous.
+    """Flag only deictic fragments with no Reply edge as target-ambiguous.
 
-    Single-char/question/pronoun/"这个/那个/可以" utterances with no explicit
-    reply edge must not be assigned a fabricated target.
+    A question mark is not evidence of ambiguity.  A complete natural-language
+    question can carry its own subject and is a valid group-topic candidate;
+    classifying every ``?``/``？`` as ambiguous silently discarded real
+    participation before the topic/value policy could inspect it.  What stays
+    blocked here are truly context-free acknowledgements and pronoun fragments
+    that would require inventing a target.  Short turns with concrete content
+    (repetitive bursts, pointed short replies) are deliberately not blocked:
+    the participation model decides whether to echo, answer or stay silent.
     """
 
     if reply_target_id:
-        return False
+        # An identifier without its author/body is not resolved evidence.
+        # Explicit addressing still has a known assistant target, but an
+        # ambient reply must not inherit a fictitious known recipient.
+        if current_turn.get("is_mention") or current_turn.get("reply_to_assistant"):
+            return False
+        resolved = any(
+            canonical_group_reply_message_id(item.get("external_message_id"))
+            == canonical_group_reply_message_id(reply_target_id)
+            for item in turns
+        )
+        if resolved:
+            return False
+        # Missing quote evidence does not erase a self-contained topic. Only
+        # the same context-dependent fragments as an unquoted turn are gated.
     text = str(current_turn.get("content") or "").strip()
-    if not text or len(text) <= 4 or any(token in text for token in ("？", "?", "这个", "那个", "可以", "嗯")):
+    if not text or _AMBIGUOUS_FRAGMENT.fullmatch(text):
         return True
-    # Two different members both addressed the same recent message with no
-    # reply edge: the target is genuinely ambiguous.
-    if member_actor:
-        recent_members = [item["actor_id"] for item in turns[-4:] if item["role"] == "member"]
-        if len({actor for actor in recent_members if actor and actor != member_actor}) >= 1 and len(text) <= 12:
-            return True
+    if re.fullmatch(r"[？?！!。…~～]+", text):
+        return True
+    if not short_turn_participation and len(text) <= 4:
+        return True
     return False
 
 
@@ -288,7 +384,7 @@ def build_grounding_envelope(
     # researched claims are forbidden unless a caller later attaches evidence.
     forbidden.extend(("heard_song", "audio_listen", "researched_claim", "remembered_claim", "executed_claim"))
     allowed.extend(("subjective_opinion", "greeting"))
-    if not reply_target_id or ambiguous:
+    if not reply_target_id or ambiguous or not _resolve_reply_target(current_turn, turns)[2]:
         forbidden.append("concrete_attribution")
     else:
         allowed.append("referenced_reply")
@@ -323,6 +419,7 @@ def build_group_conversation_frame(
     *,
     context_limit: int = DEFAULT_GROUP_CONTEXT_LIMIT,
     continuation_window_seconds: int = ACTIVE_CONTINUATION_SECONDS,
+    short_turn_participation: bool = True,
     now: datetime | None = None,
 ) -> dict:
     """Build one bounded interpretation of the current group turn.
@@ -348,6 +445,13 @@ def build_group_conversation_frame(
     current_actor = str(current.get("sender_id") or "")
     current_kind = _message_kind(current)
     text = str(current.get("content") or "").strip()
+    bare_mention = bool(
+        current_kind == "mention_only"
+        and current.get("is_mention")
+        and text in {"", "@"}
+        and not current.get("attachments")
+    )
+    visible_text = "" if bare_mention else text
 
     last_assistant_index = next(
         (index for index in range(len(turns) - 1, -1, -1) if turns[index]["role"] == "assistant"),
@@ -390,8 +494,8 @@ def build_group_conversation_frame(
         and seconds_since_assistant <= continuation_window
     )
     attachment_only = current_kind == "attachment" or (not text and bool(current.get("attachments")))
-    acknowledgement = acknowledgement_only(text)
-    meaningful_text = bool(text and not acknowledgement and not attachment_only)
+    acknowledgement = acknowledgement_only(visible_text)
+    meaningful_text = bool(visible_text and not acknowledgement and not attachment_only)
     active_continuation = bool(active_exchange and meaningful_text)
     continuation_assistant_turns = 0
     if active_continuation:
@@ -413,7 +517,7 @@ def build_group_conversation_frame(
         and seconds_since_assistant is not None
         and seconds_since_assistant <= MEDIA_GATE_FOLLOWUP_SECONDS
     )
-    if bool(current.get("reply_to_assistant")):
+    if bool(current_turn.get("reply_to_assistant")):
         attention = "reply_to_assistant"
     elif bool(current.get("is_mention")):
         attention = "explicit_mention"
@@ -428,12 +532,21 @@ def build_group_conversation_frame(
     if current_actor:
         participant_ids.add(current_actor)
     topic_summary = _topic_summary(turns, current_turn)
+    # The current substantive message is itself a real topic candidate.  The
+    # old calculation looked only at a prior turn, so the first complete group
+    # question after a quiet period was deterministically classified as "no
+    # active topic" before the value model could decide whether to join.
+    # Short acknowledgements, attachment-only events and deictic fragments are
+    # still excluded by their dedicated gates below.
     latest_prior_at = _utc((turns[-1] if turns else {}).get("created_at"))
+    current_at = _utc(current.get("created_at"))
+    topic_reference_at = current_at or latest_prior_at
     seconds_since_topic = (
-        max(0, int((basis - latest_prior_at).total_seconds())) if latest_prior_at else None
+        max(0, int((basis - topic_reference_at).total_seconds())) if topic_reference_at else None
     )
     topic_active = bool(
         topic_summary
+        and meaningful_text
         and seconds_since_topic is not None
         and seconds_since_topic <= ACTIVE_TOPIC_SECONDS
     )
@@ -450,11 +563,34 @@ def build_group_conversation_frame(
         reply_target_id,
         turns,
         member_actor=current_actor,
+        short_turn_participation=short_turn_participation,
     )
     direct_addressee = reply_target_actor if reply_target_id else (
         "" if ambiguous else current_actor
     )
     reply_target_in_window = bool(reply_target_id and reply_target_mid)
+    bare_mention_context_anchor = bool(
+        bare_mention
+        and (
+            reply_target_in_window
+            or (
+                active_exchange
+                and bool((member_before or {}).get("content", "").strip())
+                and (member_before or {}).get("content", "").strip() != "@"
+                and not acknowledgement_only((member_before or {}).get("content", ""))
+                and (member_before or {}).get("message_kind") != "mention_only"
+            )
+        )
+    )
+    bare_mention_repeat = bool(
+        bare_mention
+        and assistant_is_latest
+        and same_dialogue_actor
+        and (member_before or {}).get("message_kind") == "mention_only"
+        and not after_assistant
+        and seconds_since_assistant is not None
+        and seconds_since_assistant <= 20
+    )
     grounding_envelope = build_grounding_envelope(
         current_turn,
         turns,
@@ -462,8 +598,46 @@ def build_group_conversation_frame(
         topic_root_id=topic_root_id,
         ambiguous=ambiguous,
     )
-    return {
-        "schema_version": 3,
+    source_message_ids = _unique_source_ids(turns, current_turn)
+    source_set_hash = _stable_hash(source_message_ids)
+    has_attachment = bool(current.get("attachments")) or current_kind in {
+        "attachment", "image", "mixed", "video", "audio",
+    }
+    observed_user_expression = {
+        "has_text": bool(visible_text),
+        "is_mention": bool(current.get("is_mention")),
+        "reply_edge": bool(reply_target_id),
+        "acknowledgement_only": acknowledgement,
+        "has_attachment": has_attachment,
+        "psychology_inferred": False,
+    }
+    bounded_history_refs = [
+        {
+            "source_message_id": str(item.get("external_message_id") or ""),
+            "role": str(item.get("role") or "member"),
+            "message_kind": str(item.get("message_kind") or "text"),
+        }
+        for item in turns
+        if str(item.get("external_message_id") or "").strip()
+    ]
+    result = {
+        "schema_version": 4,
+        "latest_source_message_id": str(current_turn.get("external_message_id") or ""),
+        "source_message_ids": source_message_ids,
+        "source_set_hash": source_set_hash,
+        "revision": "",
+        "current_text_presence": bool(visible_text),
+        "bounded_history_refs": bounded_history_refs,
+        "observed_user_expression": observed_user_expression,
+        # User-visible expression facts and Assistant Affect are separate
+        # domains.  The frame carries no Affect value; the expression runtime
+        # resolves an optional body-free state after response ownership.
+        "assistant_affect_ref": {"mode": "separate_expression_runtime", "state_id": ""},
+        "observation_requirements": {
+            "required": ["text_context"] if visible_text else [],
+            "useful": ["visual_context"] if has_attachment else [],
+            "optional": ["relationship_context", "assistant_affect"],
+        },
         "context_limit": limit,
         "context_turn_count": len(turns),
         "participant_count": len(participant_ids),
@@ -484,6 +658,8 @@ def build_group_conversation_frame(
         "media_gate_active": media_gate_active,
         "media_gate_reason": last_assistant_media_gate_reason,
         "message_kind": current_kind,
+        "bare_mention_context_anchor": bare_mention_context_anchor,
+        "bare_mention_repeat": bare_mention_repeat,
         "topic_summary": topic_summary,
         "topic_evidence": bool(topic_summary),
         "topic_active": topic_active,
@@ -496,6 +672,7 @@ def build_group_conversation_frame(
         "ambiguous_target": ambiguous,
         "grounding_envelope": grounding_envelope,
     }
+    return refresh_group_situation_revision(result)
 
 
 def group_model_history(history: list[dict], *, limit: int = DEFAULT_GROUP_CONTEXT_LIMIT) -> list[dict[str, str]]:
@@ -561,12 +738,16 @@ def audit_group_conversation_frame(frame: dict | None) -> dict:
     source = frame or {}
     keys = (
         "schema_version", "context_limit", "context_turn_count", "participant_count",
+        "latest_source_message_id", "source_message_ids", "source_set_hash", "revision",
+        "current_text_presence", "bounded_history_refs", "observed_user_expression",
+        "assistant_affect_ref", "observation_requirements",
         "attention", "assistant_active", "assistant_is_latest",
         "last_assistant_turn_distance", "seconds_since_assistant",
         "same_dialogue_actor", "intervening_other_actor", "active_exchange",
         "active_continuation", "continuation_window_seconds",
         "continuation_assistant_turns", "continuation_strength", "acknowledgement_only",
         "attachment_only", "message_kind", "topic_evidence", "topic_active",
+        "bare_mention_context_anchor", "bare_mention_repeat",
         # v3 identifier/category-only projection.  No reply text is retained;
         # only the opaque external ids, whether the target is in-window, and
         # the ambiguous flag are persisted.
@@ -595,6 +776,7 @@ __all__ = [
     "ACTIVE_CONTINUATION_SECONDS", "DEFAULT_GROUP_CONTEXT_LIMIT",
     "MAX_GROUP_CONTEXT_LIMIT", "acknowledgement_only",
     "audit_group_conversation_frame", "build_group_conversation_frame",
-    "group_context_lines", "group_expression_rhythm", "group_model_history", "normalize_group_context_limit",
-    "normalize_group_visible_text",
+    "group_context_lines", "group_expression_rhythm", "group_model_history", "group_source_message_id",
+    "canonical_group_reply_message_id", "normalize_group_context_limit",
+    "normalize_group_visible_text", "refresh_group_situation_revision",
 ]

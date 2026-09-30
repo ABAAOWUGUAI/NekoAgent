@@ -155,7 +155,14 @@ def observe_task(
         return
 
 
-def settle_delivery(kernel, delivery_id: str, outcome: str, error_kind: str = "") -> None:
+def settle_delivery(
+    kernel,
+    delivery_id: str,
+    outcome: str,
+    error_kind: str = "",
+    *,
+    experience_assimilated: bool = False,
+) -> None:
     delivery_id = _clip(delivery_id)
     if not delivery_id:
         return
@@ -215,6 +222,22 @@ def settle_delivery(kernel, delivery_id: str, outcome: str, error_kind: str = ""
                 {"delivery_id": delivery_id, "plan_status": plan_status},
                 key=f"delivery-settled:{delivery_id}:{outcome}",
             )
+            if (
+                outcome == "confirmed"
+                and experience_assimilated
+                and str(turn["channel_type"]) == "qq_group"
+            ):
+                kernel._event(
+                    conn,
+                    str(turn["id"]),
+                    "experience_assimilated",
+                    "confirmed",
+                    {
+                        "delivery_id": delivery_id,
+                        "relationship_evidence": "social_feedback",
+                    },
+                    key=f"experience-assimilated:{delivery_id}",
+                )
             if outcome in {"dead_letter", "ambiguous"} and learning_feature_enabled(conn):
                 record_learning_signal(
                     conn,

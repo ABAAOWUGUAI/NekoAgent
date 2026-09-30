@@ -11,7 +11,7 @@
 Date: 2026-08-11
 Status: local implementation only; **not deployed**
 
-This record is the implementation companion to the existing V4.1 semantic-ownership package. The V4.1 experience architecture remains frozen: Overview, QQ, AI Chat, Work, Artifact, Memory, XiaoFei, Console and Settings. It does not introduce V4.2, restore 17 legacy views as primary navigation, or retire any legacy behavior.
+This record is the implementation companion to the existing V4.1 semantic-ownership package. The V4.1 experience architecture remains frozen: Overview, QQ, AI Chat, Work, Artifact, Memory, Assistant, Console and Settings. It does not introduce V4.2, restore 17 legacy views as primary navigation, or retire any legacy behavior.
 
 ## 1. Review Pass 1
 
@@ -56,7 +56,7 @@ Controls: no default-on flag, no deletion of legacy UI, no change to model routi
 
 - **Navigation:** local Chromium rehearsal verified Sidebar → AI Chat invokes one `overview` transition while retaining AI Chat selection; Command Palette → Work invokes one `tasks` transition and closes; programmatic `switchView('proxy')` selects Console.
 - **Legacy fallback:** the shell still delegates to existing `switchView`; no legacy partial, deep-link target or action was removed.
-- **Semantic boundaries:** `views-models.js`, `views-persona.js`, runtime routing and relationship/voice/expression sources are outside this diff. Manual model routing and Assistant Instance customization are therefore not replaced by a XiaoFei default.
+- **Semantic boundaries:** `views-models.js`, `views-persona.js`, runtime routing and relationship/voice/expression sources are outside this diff. Manual model routing and Assistant Instance customization are therefore not replaced by an instance-specific default.
 - **Behavior depth:** the canonical registry now separately protects security/session rotation, operational notifications, AI Chat dispatch/context/work-start, and Artifact revision/delete. Skill/Plugin, three-way Voice and Habit/Asset distinctions remain separate groups.
 - **Snapshot contamination:** no pet asset, favicon, `core.js`, `runtime.js`, legacy partial or backend file is in the patch.
 - **Test-strength limitation:** the repository test is self-contained but mostly contract/static. The browser interaction rehearsal is explicit local external evidence (Chromium plus Playwright), not claimed as a bundled CI test.
@@ -98,7 +98,7 @@ Rollback is removal of the four V4 asset registrations and four V4 files (plus t
 | QQ | mixed product/infrastructure and delivery truth | high | strong | defer |
 | Work | P0 state machines and approval semantics | high | strong | defer |
 | **Artifact** | existing list endpoint and an isolated object boundary | **low** | **strong** | **selected** |
-| XiaoFei | identity, policy, voice and learning coupling | medium/high | strong | defer |
+| Assistant | identity, policy, voice and learning coupling | medium/high | strong | defer |
 | Console | sensitive operational and security actions | high | strong | defer |
 
 Selected capability: `CAP-ARTIFACT-LIFECYCLE`. Protected contract: `MCON-ARTIFACT-LIFECYCLE`. Protected invariants: `INV-ARTIFACT-GRANT-GENERATION` and `INV-ARTIFACT-DELETION-TERMINAL`. Legacy source: `admin/views-artifacts.js`.
@@ -218,7 +218,7 @@ This ledger is intentionally separate from the dependency-free repository tests.
 | --- | --- |
 | Date | 2026-08-11 |
 | Target commit | `0b20f2c1d9a64b2f6c1d1bdd166019346051b94f` (local `HEAD` and `origin/main` rechecked equal) |
-| Worktree | `C:\\FUWUQI\\worktrees\\nekoagent-main-20260811` |
+| Worktree | `C:\\FUWUQI\\worktrees\\nekoagent-worktree` |
 | Harness | `tools/run_v4_artifact_browser_rehearsal.cjs` |
 | Environment | Local Node runtime, Playwright supplied through `NODE_PATH`, and `C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe`; no production browser session or production URL was used. |
 | Command | `node tools/run_v4_artifact_browser_rehearsal.cjs` with the local runtime and `NODE_PATH` described above |

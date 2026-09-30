@@ -8,6 +8,7 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from typing import Mapping
 
 from bridge_living_wiki import (
     content_hash,
@@ -333,8 +334,56 @@ def review_knowledge(conn: sqlite3.Connection, item_id: str, payload: dict, *, a
     return _public(conn.execute("SELECT * FROM assistant_knowledge_items WHERE id=?", (item_id,)).fetchone())
 
 
-def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit: int = 5) -> list[dict]:
+def _group_scope_filter(conn: sqlite3.Connection, group_id: object) -> tuple[str, list[object]]:
+    """Keep R7 auto knowledge in its originating authorized group.
+
+    Older knowledge has no scope row and retains its original audience
+    semantics.  A missing R7 table also keeps pre-migration reads compatible.
+    """
+
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='assistant_knowledge_item_scopes'",
+    ).fetchone()
+    if not exists:
+        return "", []
+    group = str(group_id or "").strip()[:180]
+    base = "NOT EXISTS (SELECT 1 FROM assistant_knowledge_item_scopes ks WHERE ks.knowledge_item_id=assistant_knowledge_items.id)"
+    if not group:
+        return " AND " + base, []
+    now = _now()
+    return (
+        " AND (" + base
+        + " OR EXISTS (SELECT 1 FROM assistant_knowledge_item_scopes ks "
+        "WHERE ks.knowledge_item_id=assistant_knowledge_items.id "
+        "AND ks.scope_type='qq_group' AND ks.scope_id=? "
+        "AND (NOT EXISTS (SELECT 1 FROM group_research_knowledge_links grkl "
+        "WHERE grkl.knowledge_item_id=assistant_knowledge_items.id) "
+        "OR EXISTS (SELECT 1 FROM group_research_knowledge_links grkl "
+        "JOIN group_research_runs grr ON grr.id=grkl.run_id "
+        "WHERE grkl.knowledge_item_id=assistant_knowledge_items.id AND grr.expires_at>?))))",
+        [group, now],
+    )
+
+
+def search_published(
+    conn: sqlite3.Connection,
+    text: str,
+    *,
+    channel: str,
+    group_id: object = "",
+    limit: int = 5,
+    audit_query: str | None = None,
+) -> list[dict]:
+    """Search published knowledge without forcing audit text to equal input.
+
+    Most owner/private callers intentionally retain their supplied retrieval
+    query.  The group-research path uses a body-free audit label because the
+    retrieval input was derived from a live group utterance and must never be
+    copied into durable audit history.
+    """
+
     audience = "group_all" if channel == "group" else "private_all"
+    audit_text = str(audit_query if audit_query is not None else text)
     terms = _keyword_set(text)
     assistant_id = _assistant_id(conn)
     projected = search_projection(conn, assistant_id, text, limit=100) if str(text or "").strip() else []
@@ -343,7 +392,7 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
         record_retrieval_audit(
             conn,
             assistant_id=assistant_id,
-            query=text,
+            query=audit_text,
             channel=channel,
             item_id="",
             signals={"backend": "none", "audience": audience},
@@ -355,6 +404,10 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
         return []
     params: list[object] = [assistant_id, audience]
     where = "assistant_id=? AND status='published' AND audience IN (?, 'all_channels')"
+    if channel == "group":
+        scope_where, scope_params = _group_scope_filter(conn, group_id)
+        where += scope_where
+        params.extend(scope_params)
     if projection:
         where += " AND id IN (" + ",".join("?" for _ in projection) + ")"
         params.extend(projection)
@@ -400,7 +453,7 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
         record_retrieval_audit(
             conn,
             assistant_id=assistant_id,
-            query=text,
+            query=audit_text,
             channel=channel,
             item_id=str(item["id"]),
             signals={
@@ -420,7 +473,7 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
         record_retrieval_audit(
             conn,
             assistant_id=assistant_id,
-            query=text,
+            query=audit_text,
             channel=channel,
             item_id="",
             signals={
@@ -433,6 +486,116 @@ def search_published(conn: sqlite3.Connection, text: str, *, channel: str, limit
         )
     conn.commit()
     return selected
+
+
+def publish_group_research_provisional(
+    conn: sqlite3.Connection,
+    *,
+    group_id: str,
+    run_id: str,
+    payload: Mapping[str, object],
+    actor: str = "group-research-auto",
+) -> dict:
+    """Publish a bounded R7 low-public item with group retrieval scope.
+
+    This narrow helper is the only automatic-publish path.  It cannot publish
+    a private memory or arbitrary source type: callers must provide a public
+    research run, evidence and a finite freshness window.
+    """
+
+    group = str(group_id or "").strip()[:180]
+    source_ref = str(run_id or "").strip()[:180]
+    evidence = payload.get("evidence_refs")
+    if not group or not source_ref or not isinstance(evidence, list) or not evidence:
+        raise ValueError("group_research_provisional_invalid")
+    draft_payload = dict(payload)
+    draft_payload.update(
+        {
+            "audience": "group_all",
+            "kind": "reference",
+            "source_scope_type": "qq_group",
+            "consent_basis": "public_source",
+            "review_note": "自动发布：低敏感公开来源临时参考；到期后不再检索。",
+        },
+    )
+    draft = _insert_knowledge(
+        conn,
+        draft_payload,
+        actor=actor,
+        source_type="group_research",
+        source_ref=source_ref,
+    )
+    conn.execute(
+        """INSERT INTO assistant_knowledge_item_scopes(knowledge_item_id,scope_type,scope_id,created_at)
+           VALUES(?,'qq_group',?,?)""",
+        (str(draft["id"]), group, _now()),
+    )
+    return review_knowledge(
+        conn,
+        str(draft["id"]),
+        {
+            "status": "published",
+            "expected_version": int(draft["version"]),
+            "review_note": "自动发布：低敏感公开来源临时参考；到期后不再检索。",
+            "evidence_refs": evidence,
+            "freshness_status": str(payload.get("freshness_status") or "fresh"),
+            "fresh_until": str(payload.get("fresh_until") or ""),
+            "last_verified_at": str(payload.get("last_verified_at") or _now()),
+        },
+        actor=actor,
+    )
+
+
+def create_group_research_review_draft(
+    conn: sqlite3.Connection,
+    *,
+    group_id: str,
+    run_id: str,
+    topic_redacted: str,
+    actor: str = "group-research-auto",
+) -> dict:
+    """Store a de-identified high-impact topic as a non-retrievable Draft.
+
+    ``topic_redacted`` is an opaque ``public-query:`` audit label, never a
+    copied group utterance.  The owner can decide whether to open a separate,
+    explicitly scoped research task without this Draft becoming a backdoor
+    transcript store.
+    """
+
+    group = str(group_id or "").strip()[:180]
+    source_ref = str(run_id or "").strip()[:180]
+    topic = str(topic_redacted or "").strip()[:120]
+    if not group or not source_ref or len(topic) < 4:
+        raise ValueError("group_research_review_draft_invalid")
+    draft = _insert_knowledge(
+        conn,
+        {
+            "title": "待审核公开议题（未留存群聊正文）",
+            "content": (
+                "该条仅记录一个需 Owner 批量审核的公开议题请求（审计引用：" + topic
+                + "）。它尚未经过可用证据核验，不能作为事实回复或检索知识。"
+            ),
+            "audience": "group_all",
+            "kind": "reference",
+            "summary": "高影响公开议题；等待 Owner 审核研究范围与证据。",
+            "tags": ["group_research", "review_required"],
+            "confidence": 0.0,
+            "source_scope_type": "qq_group",
+            "consent_basis": "public_topic_review",
+            "review_note": "自动创建：高影响公共议题待批量审核；未验证、不可检索。",
+            "freshness_status": "unverified",
+        },
+        actor=actor,
+        source_type="group_research",
+        source_ref=source_ref,
+    )
+    conn.execute(
+        """INSERT INTO assistant_knowledge_item_scopes(knowledge_item_id,scope_type,scope_id,created_at)
+           VALUES(?,'qq_group',?,?)""",
+        (str(draft["id"]), group, _now()),
+    )
+    conn.commit()
+    return draft
 
 
 def create_relation(conn: sqlite3.Connection, payload: dict, *, actor: str = "admin") -> dict:

@@ -277,17 +277,17 @@ def _scope_summary(conn: sqlite3.Connection, assistant_id: str) -> dict:
     return {"relationships": relationships, "expression_habits": expression}
 
 
-def _assistant_or_error(conn: sqlite3.Connection) -> dict:
+def _assistant_or_error(conn: sqlite3.Connection, *, integrity_scope: str = "database") -> dict:
     from bridge_assistant_identity import current_assistant
 
-    assistant = current_assistant(conn)
+    assistant = current_assistant(conn, integrity_scope=integrity_scope)
     if assistant is None:
         raise ValueError("active_assistant_missing")
     return assistant
 
 
 def runtime_persona_metadata(conn: sqlite3.Connection) -> dict:
-    assistant = _assistant_or_error(conn)
+    assistant = _assistant_or_error(conn, integrity_scope="identity")
     contract, resolution = resolve_voice_contract(assistant["persona"].get("behavior_boundaries"))
     requested = assistant["persona"]["version_id"]
     applied = requested if resolution["source"] == "persona_version" else "safe-neutral-v1"
@@ -306,7 +306,7 @@ def runtime_persona_metadata(conn: sqlite3.Connection) -> dict:
 
 
 def persona_workspace(conn: sqlite3.Connection) -> dict:
-    assistant = _assistant_or_error(conn)
+    assistant = _assistant_or_error(conn, integrity_scope="identity")
     contract, resolution = resolve_voice_contract(assistant["persona"].get("behavior_boundaries"))
     compiled = compile_voice_contract(
         contract,

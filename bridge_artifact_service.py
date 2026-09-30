@@ -17,6 +17,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Mapping
+from urllib.parse import quote
 
 from bridge_artifact_repository import ArtifactError, ArtifactRepository
 
@@ -28,10 +29,38 @@ MAX_PATH_DEPTH = 12
 MAX_PATH_LENGTH = 240
 MANIFEST_NAME = ".agent-artifact-manifest.json"
 INTERNAL_MANIFEST = ".artifact-internal-manifest.json"
+RESULT_PAGE_PRESENTATION = "result_page_v1"
 
 CANONICAL_MEDIA_TYPES = {
     ".wav": "audio/wav",
 }
+
+
+def _normalize_iso_utc_z(value: object) -> str:
+    """Normalize a terminal ISO-8601 UTC ``Z`` designator to ``+00:00``.
+
+    ``datetime.fromisoformat`` only accepts ``Z`` on Python 3.11+; production
+    runs Python 3.10, where the identical UTC timestamp ``...Z`` would raise
+    ``ValueError``.  Everything else is returned unchanged.
+    """
+    text = str(value or "")
+    if text.endswith("Z"):
+        return text[:-1] + "+00:00"
+    return text
+
+
+def parse_manifest_generated_at(value: object) -> datetime:
+    """Parse the Artifact manifest ``generated_at`` field.
+
+    Accepts standard ISO-8601 timestamps including the UTC ``Z`` designator
+    (normalized to ``+00:00`` before the Python 3.10-compatible parse).
+    Raises ``ArtifactError("artifact_manifest_time_invalid")`` on malformed
+    values.
+    """
+    try:
+        return datetime.fromisoformat(_normalize_iso_utc_z(value))
+    except ValueError as exc:
+        raise ArtifactError("artifact_manifest_time_invalid") from exc
 
 ALLOWED_PREVIEW_MEDIA = {
     ".html": "text/html; charset=utf-8",
@@ -55,7 +84,7 @@ ALLOWED_PREVIEW_MEDIA = {
 ARTIFACT_MANIFEST_INSTRUCTION = """
 如果本任务生成了用户需要下载、预览或继续修改的成品，请在工作目录根部创建
 .agent-artifact-manifest.json。它必须是 UTF-8 JSON 对象：
-{"schema_version":1,"task_id":"由任务指令提供的 ID","generated_at":"ISO-8601 时间","title":"成品名称","kind":"file|report|presentation|image|archive|static_site","summary":"简述","entrypoint":"静态站点入口或空字符串","files":["相对路径"],"preview_days":7}
+{"schema_version":1,"task_id":"由任务指令提供的 ID","generated_at":"ISO-8601 时间","title":"成品名称","kind":"file|report|presentation|image|archive|static_site","summary":"简述","entrypoint":"静态站点或服务端授权报告的入口，否则为空字符串","files":["相对路径"],"preview_days":7,"presentation":"仅在任务指令明确要求时填写 result_page_v1，否则省略"}
 只列出本任务明确交付的文件；禁止绝对路径、..、符号链接、凭据和项目无关文件。若没有成品，不创建该文件。
 """.strip()
 
@@ -129,6 +158,87 @@ def normalize_relative_path(value: object) -> str:
     if len(path.parts) > MAX_PATH_DEPTH or path.name in {MANIFEST_NAME, INTERNAL_MANIFEST}:
         raise ArtifactError("artifact_path_invalid")
     return str(path)
+
+
+def attachment_response_headers(payload: bytes, content_type: str, filename: str) -> dict[str, str]:
+    """Return the shared attachment boundary used by private and public paths."""
+
+    fallback = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(filename or "artifact"))[:120] or "artifact"
+    encoded = quote(str(filename or fallback), safe="")
+    return {
+        "Content-Type": str(content_type or "application/octet-stream"),
+        "Content-Length": str(len(payload)),
+        "Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}",
+        "Cache-Control": "private, no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Connection": "close",
+    }
+
+
+def build_download_payload(
+    version_id: str,
+    files: Iterable[Mapping[str, object]],
+    read_file: Callable[[Mapping[str, object]], bytes],
+) -> tuple[bytes, str, str]:
+    """Build the one canonical single-file or deterministic ZIP response.
+
+    Callers provide only the immutable version file records and a reader.  This
+    keeps authorization independent from representation while retaining the
+    same path, size and SHA-256 checks for every serving route.
+    """
+
+    records = [dict(item) for item in files]
+    if not records or len(records) > MAX_FILES:
+        raise ArtifactError("artifact_file_set_invalid")
+    normalized: list[dict] = []
+    names: set[str] = set()
+    total = 0
+    for item in records:
+        relative = normalize_relative_path(item.get("relative_path"))
+        storage_name = normalize_relative_path(item.get("storage_name") or relative)
+        if relative in names:
+            raise ArtifactError("artifact_file_set_invalid")
+        names.add(relative)
+        size = int(item.get("size_bytes") or -1)
+        expected_hash = str(item.get("sha256") or "")
+        if size < 0 or size > MAX_FILE_BYTES or not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
+            raise ArtifactError("artifact_file_integrity_failed")
+        total += size
+        if total > MAX_TOTAL_BYTES:
+            raise ArtifactError("artifact_total_too_large")
+        normalized.append({
+            **item,
+            "relative_path": relative,
+            "storage_name": storage_name,
+            "size_bytes": size,
+            "sha256": expected_hash,
+        })
+
+    def verified(item: Mapping[str, object]) -> bytes:
+        payload = read_file(item)
+        if len(payload) != int(item["size_bytes"]) or hashlib.sha256(payload).hexdigest() != str(item["sha256"]):
+            raise ArtifactError("artifact_file_integrity_failed")
+        return payload
+
+    if len(normalized) == 1:
+        item = normalized[0]
+        return (
+            verified(item),
+            str(item.get("media_type") or "application/octet-stream"),
+            PurePosixPath(str(item["relative_path"])).name,
+        )
+    with tempfile.SpooledTemporaryFile(max_size=MAX_TOTAL_BYTES + 1024) as stream:
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+            for item in sorted(normalized, key=lambda value: str(value["relative_path"])):
+                info = zipfile.ZipInfo(str(item["relative_path"]), date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100440 << 16
+                archive.writestr(info, verified(item))
+        stream.seek(0)
+        return stream.read(), "application/zip", f"artifact-{version_id}.zip"
 
 
 def _safe_source(root: Path, relative_path: str) -> Path:
@@ -233,6 +343,43 @@ class ArtifactService:
             })
         return result
 
+    @staticmethod
+    def _meaningful_title(value: object) -> str:
+        title = " ".join(str(value or "").split()).strip()[:160]
+        if (
+            len(title) < 2
+            or title.lower() in {"untitled", "report", "artifact", "未命名", "未命名成品"}
+            or re.fullmatch(r"(?:task|run|artifact|version|grant)[-_][a-zA-Z0-9-]+", title, flags=re.I)
+        ):
+            raise ArtifactError("artifact_presentation_title_invalid")
+        return title
+
+    @staticmethod
+    def _task_authorized_presentation(task: Mapping[str, object]) -> str:
+        projection = task.get("_delivery_projection")
+        if not isinstance(projection, Mapping):
+            return ""
+        if (
+            str(projection.get("mode") or "").upper() in {"ARTIFACT", "BOTH"}
+            and bool(projection.get("d1_report_profile"))
+            and str(projection.get("presentation") or "") == RESULT_PAGE_PRESENTATION
+        ):
+            return RESULT_PAGE_PRESENTATION
+        return ""
+
+    def _version_internal_manifest(self, version_id: str, *, owner_id: str) -> dict:
+        with self._connect() as conn:
+            version = ArtifactRepository(conn).require_accessible_version(
+                str(version_id), owner_id=str(owner_id), include_storage=True,
+            )
+        root = self.published / str(version.get("storage_key") or "")
+        self._verify_published_tree(version, root)
+        try:
+            manifest = json.loads((root / INTERNAL_MANIFEST).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ArtifactError("artifact_internal_manifest_invalid") from exc
+        return manifest if isinstance(manifest, dict) else {}
+
     def import_from_directory(
         self,
         *,
@@ -250,13 +397,61 @@ class ArtifactService:
         expected_base_version_id: str = "",
         retention_days: int = 30,
         preview_days: int = 7,
+        presentation: str = "",
+        server_authorized_presentation: str = "",
+        internal_identifiers: Iterable[object] = (),
     ) -> dict:
         self.ensure_storage()
         preview = str(kind) == "static_site"
         entrypoint = normalize_relative_path(entrypoint) if entrypoint else ""
+        requested_presentation = str(presentation or "").strip()
+        authorized_presentation = str(server_authorized_presentation or "").strip()
+        if expected_base_version_id:
+            base_manifest = self._version_internal_manifest(
+                expected_base_version_id, owner_id=str(owner_id),
+            )
+            base_presentation = str(base_manifest.get("presentation") or "")
+            if base_presentation == RESULT_PAGE_PRESENTATION:
+                authorized_presentation = RESULT_PAGE_PRESENTATION
+                if not requested_presentation:
+                    requested_presentation = RESULT_PAGE_PRESENTATION
+        if requested_presentation:
+            if requested_presentation != RESULT_PAGE_PRESENTATION:
+                raise ArtifactError("artifact_presentation_invalid")
+            if authorized_presentation != requested_presentation:
+                raise ArtifactError("artifact_presentation_unauthorized")
         files = self._validate_files(Path(source_root), file_names, preview=preview)
         if preview and (not entrypoint or entrypoint not in {item["relative_path"] for item in files}):
             raise ArtifactError("artifact_entrypoint_invalid")
+        title = self._meaningful_title(title) if requested_presentation else str(title or "")
+        summary = " ".join(str(summary or "").split()).strip()[:500]
+        presentation_entrypoint = ""
+        if requested_presentation == RESULT_PAGE_PRESENTATION:
+            if preview or str(kind) != "report" or len(files) != 1:
+                raise ArtifactError("artifact_presentation_profile_invalid")
+            presentation_entrypoint = entrypoint
+            if (
+                not presentation_entrypoint
+                or PurePosixPath(presentation_entrypoint).suffix.lower() != ".md"
+                or presentation_entrypoint != files[0]["relative_path"]
+            ):
+                raise ArtifactError("artifact_presentation_profile_invalid")
+            try:
+                presentation_text = files[0]["payload"].decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ArtifactError("artifact_text_not_utf8") from exc
+            identifiers = {
+                str(value or "").strip()
+                for value in (
+                    source_goal_id, source_run_id, artifact_id,
+                    expected_base_version_id, *internal_identifiers,
+                )
+                if len(str(value or "").strip()) >= 4
+            }
+            presentation_surface = "\n".join((title, summary, presentation_text))
+            if any(identifier in presentation_surface for identifier in identifiers):
+                raise ArtifactError("artifact_presentation_internal_id")
+        version_entrypoint = entrypoint if preview else ""
         storage_key = secrets_token()
         retention_expires = (
             datetime.now(timezone.utc) + timedelta(days=max(1, min(int(retention_days), 365)))
@@ -283,7 +478,7 @@ class ArtifactService:
                 artifact["id"],
                 source_run_id=source_run_id,
                 storage_key=storage_key,
-                entrypoint_path=entrypoint,
+                entrypoint_path=version_entrypoint,
                 retention_expires_at=retention_expires,
                 expected_current_version_id=expected_base_version_id,
             )
@@ -305,9 +500,16 @@ class ArtifactService:
                 "artifact_id": artifact["id"],
                 "version_id": version["id"],
                 "storage_key": storage_key,
-                "entrypoint_path": entrypoint,
+                "entrypoint_path": version_entrypoint,
                 "files": public_files,
             }
+            if requested_presentation:
+                manifest_payload.update({
+                    "presentation": requested_presentation,
+                    "presentation_entrypoint": presentation_entrypoint,
+                    "title": title,
+                    "summary": summary,
+                })
             manifest_bytes = json.dumps(
                 manifest_payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"),
             ).encode("utf-8")
@@ -332,11 +534,14 @@ class ArtifactService:
                 publication = repo.create_publication(
                     published["id"], ttl_seconds=max(300, min(int(preview_days), 30) * 86400),
                 ) if preview else None
-                return {
+                result = {
                     "artifact": repo.get_artifact(artifact["id"]),
                     "version": published,
                     "publication": publication,
                 }
+                if requested_presentation:
+                    result["presentation"] = requested_presentation
+                return result
         except Exception as exc:
             if stage.exists():
                 shutil.rmtree(stage, ignore_errors=True)
@@ -388,6 +593,7 @@ class ArtifactService:
         allowed = {
             "schema_version", "title", "kind", "summary", "entrypoint", "files",
             "artifact_id", "retention_days", "preview_days", "task_id", "generated_at",
+            "presentation",
         }
         if set(manifest) - allowed or not isinstance(manifest.get("files"), list):
             raise ArtifactError("artifact_manifest_invalid")
@@ -396,9 +602,10 @@ class ArtifactService:
         if str(manifest.get("task_id") or "") != str(task.get("id") or ""):
             raise ArtifactError("artifact_manifest_task_mismatch")
         generated_at = str(manifest.get("generated_at") or "")
+        created_text = str(task.get("created_at") or "")
         try:
-            generated = datetime.fromisoformat(generated_at)
-            created = datetime.fromisoformat(str(task.get("created_at") or ""))
+            generated = parse_manifest_generated_at(generated_at)
+            created = datetime.fromisoformat(created_text)
         except ValueError as exc:
             raise ArtifactError("artifact_manifest_time_invalid") from exc
         if generated.tzinfo is None:
@@ -430,6 +637,9 @@ class ArtifactService:
             expected_base_version_id=expected_base_version_id,
             retention_days=int(manifest.get("retention_days") or 30),
             preview_days=int(manifest.get("preview_days") or 7),
+            presentation=str(manifest.get("presentation") or ""),
+            server_authorized_presentation=self._task_authorized_presentation(task),
+            internal_identifiers=(task.get("id"),),
         )
         consumed = root / (MANIFEST_NAME + ".consumed")
         os.replace(manifest_path, consumed)
@@ -459,24 +669,13 @@ class ArtifactService:
             version = ArtifactRepository(conn).require_accessible_version(
                 version_id, owner_id=owner_id, include_storage=True,
             )
-        if len(version["files"]) == 1:
-            item = version["files"][0]
-            payload, media, name = self.file_payload(version_id, str(item["relative_path"]), owner_id=owner_id)
-            result = (payload, media, PurePosixPath(name).name)
-            self._record_download(version, owner_id=owner_id)
-            return result
-        with tempfile.SpooledTemporaryFile(max_size=MAX_TOTAL_BYTES + 1024) as stream:
-            with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-                for item in sorted(version["files"], key=lambda value: value["relative_path"]):
-                    payload, _, name = self.file_payload(
-                        version_id, str(item["relative_path"]), owner_id=owner_id,
-                    )
-                    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-                    info.compress_type = zipfile.ZIP_DEFLATED
-                    info.external_attr = 0o100440 << 16
-                    archive.writestr(info, payload)
-            stream.seek(0)
-            result = (stream.read(), "application/zip", f"artifact-{version_id}.zip")
+        result = build_download_payload(
+            version_id,
+            version["files"],
+            lambda item: self.file_payload(
+                version_id, str(item["relative_path"]), owner_id=owner_id,
+            )[0],
+        )
         self._record_download(version, owner_id=owner_id)
         return result
 
@@ -696,5 +895,7 @@ def secrets_token() -> str:
 
 __all__ = [
     "ALLOWED_PREVIEW_MEDIA", "ARTIFACT_MANIFEST_INSTRUCTION", "ArtifactService",
-    "INTERNAL_MANIFEST", "MANIFEST_NAME", "normalize_relative_path",
+    "INTERNAL_MANIFEST", "MANIFEST_NAME", "RESULT_PAGE_PRESENTATION", "attachment_response_headers",
+    "build_download_payload", "normalize_relative_path",
+    "parse_manifest_generated_at",
 ]

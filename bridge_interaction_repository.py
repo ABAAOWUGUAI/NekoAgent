@@ -18,6 +18,10 @@ from bridge_interaction_plan_schema import (
 from bridge_migrations import utc_after, utc_now
 
 
+DELIVERY_PROJECTION_KEY = "d1_delivery_projections_v1"
+DELIVERY_PROJECTION_LIMIT = 16
+
+
 def _rows(cursor: sqlite3.Cursor) -> list[dict]:
     columns = [str(item[0]) for item in cursor.description or ()]
     return [dict(zip(columns, tuple(row))) for row in cursor.fetchall()]
@@ -34,6 +38,108 @@ def interaction_plan_feature_enabled(conn: sqlite3.Connection) -> bool:
         (INTERACTION_PLAN_FEATURE_FLAG,),
     ).fetchone()
     return bool(row and int(row[0]))
+
+
+def _delivery_projection(value: Mapping[str, object]) -> dict:
+    mode = str(value.get("mode") or "INLINE").strip().upper()
+    if mode not in {"INLINE", "ARTIFACT", "BOTH"}:
+        raise ValueError("delivery_projection_mode_invalid")
+    points: list[str] = []
+    if mode == "BOTH":
+        raw_points = value.get("summary_points")
+        if not isinstance(raw_points, list):
+            raw_points = []
+        for raw in raw_points[:3]:
+            point = " ".join(str(raw or "").split()).strip()[:200]
+            if point and point not in points:
+                points.append(point)
+    d1_report = bool(value.get("d1_report_profile"))
+    presentation = str(value.get("presentation") or "").strip()
+    if d1_report:
+        if mode not in {"ARTIFACT", "BOTH"} or presentation != "result_page_v1":
+            raise ValueError("delivery_projection_profile_invalid")
+    elif presentation:
+        raise ValueError("delivery_projection_presentation_invalid")
+    return {
+        "schema_version": 1,
+        "mode": mode,
+        "summary_points": points,
+        "d1_report_profile": d1_report,
+        "presentation": presentation,
+    }
+
+
+def store_task_delivery_projection(
+    conn: sqlite3.Connection,
+    goal_id: str,
+    task_id: str,
+    projection: Mapping[str, object],
+) -> dict:
+    """Persist bounded runtime delivery state without mutating the Plan.
+
+    Goal metadata is already an extensible runtime field and, unlike projected
+    Run metadata, is not overwritten by later legacy Task synchronization.
+    """
+
+    goal_id = str(goal_id or "").strip()
+    task_id = str(task_id or "").strip()
+    if not goal_id or not task_id:
+        raise ValueError("delivery_projection_binding_required")
+    row = conn.execute("SELECT metadata_json FROM goals WHERE id=?", (goal_id,)).fetchone()
+    if not row:
+        raise ValueError("delivery_projection_goal_not_found")
+    try:
+        metadata = json.loads(str(row[0] or "{}"))
+    except json.JSONDecodeError:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    bucket = metadata.get(DELIVERY_PROJECTION_KEY)
+    if not isinstance(bucket, dict):
+        bucket = {}
+    normalized = {**_delivery_projection(projection), "stored_at": utc_now()}
+    bucket[task_id] = normalized
+    if len(bucket) > DELIVERY_PROJECTION_LIMIT:
+        ordered = sorted(
+            bucket.items(),
+            key=lambda item: str((item[1] if isinstance(item[1], dict) else {}).get("stored_at") or ""),
+            reverse=True,
+        )[:DELIVERY_PROJECTION_LIMIT]
+        bucket = dict(ordered)
+    metadata[DELIVERY_PROJECTION_KEY] = bucket
+    conn.execute(
+        "UPDATE goals SET metadata_json=?,version=version+1 WHERE id=?",
+        (json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":")), goal_id),
+    )
+    return dict(normalized)
+
+
+def load_task_delivery_projection(
+    conn: sqlite3.Connection,
+    goal_id: str,
+    task_id: str,
+) -> dict:
+    goal_id = str(goal_id or "").strip()
+    task_id = str(task_id or "").strip()
+    if not goal_id or not task_id:
+        return {}
+    row = conn.execute("SELECT metadata_json FROM goals WHERE id=?", (goal_id,)).fetchone()
+    if not row:
+        return {}
+    try:
+        metadata = json.loads(str(row[0] or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    bucket = metadata.get(DELIVERY_PROJECTION_KEY) if isinstance(metadata, dict) else None
+    value = bucket.get(task_id) if isinstance(bucket, dict) else None
+    if not isinstance(value, dict):
+        return {}
+    try:
+        normalized = _delivery_projection(value)
+    except ValueError:
+        return {}
+    stored_at = str(value.get("stored_at") or "")
+    return {**normalized, "stored_at": stored_at}
 
 
 def _public(row: Mapping[str, object]) -> dict:
@@ -239,10 +345,13 @@ def set_interaction_plan_feature(
 
 
 __all__ = [
+    "DELIVERY_PROJECTION_KEY",
     "bind_plan_to_message",
     "create_interaction_plan",
     "interaction_plan_cutover_plan",
     "interaction_plan_feature_enabled",
     "list_interaction_plans",
+    "load_task_delivery_projection",
     "set_interaction_plan_feature",
+    "store_task_delivery_projection",
 ]

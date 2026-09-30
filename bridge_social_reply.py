@@ -39,7 +39,6 @@ _GROUP_ABSTRACT_TERMS = (
     "让人佩服",
     "效果确实",
 )
-_GROUP_PARENTHETICAL_RE = re.compile(r"[\(（][^()（）\r\n]{0,32}[\)）]")
 _GROUP_STOCK_OPENERS = (
     "好家伙",
     "笑死",
@@ -62,7 +61,6 @@ _INTERNAL_DIAGNOSTIC_RE = re.compile(
     r"(?:本次请求没有成功完成|并在\s*Web\s*控制台查看|assistant_chat_group_style_initial|ActionReceipt)",
     re.IGNORECASE,
 )
-_GROUP_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])")
 _ANCHOR_STOP_TERMS = {"这个", "那个", "这里", "那里", "什么", "怎么", "可以", "已经", "终于"}
 
 
@@ -117,8 +115,6 @@ def group_reply_style_issues(
     issues: list[str] = []
     if len(text) > 64:
         issues.append("too_long_for_group")
-    if _GROUP_PARENTHETICAL_RE.search(text):
-        issues.append("parenthetical_stage_direction")
     if _GROUP_FORMULA_RE.search(text):
         issues.append("summary_formula")
     abstract_hits = sum(term in text for term in _GROUP_ABSTRACT_TERMS)
@@ -189,14 +185,7 @@ def normalize_social_reply(
     ).strip()
     if group:
         text = re.sub(r"(?m)^#{1,6}\s+", "", text)
-        text = _GROUP_PARENTHETICAL_RE.sub("", text)
         text = re.sub(r"[ \t]{2,}", " ", text).strip()
-        if max_sentences is not None:
-            sentence_limit = max(1, min(int(max_sentences), 3))
-            units = []
-            for paragraph in (part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()):
-                units.extend(part.strip() for part in _GROUP_SENTENCE_SPLIT_RE.split(paragraph) if part.strip())
-            text = "".join(units[:sentence_limit])
         limit = min(limit, 240 if (max_sentences or 0) >= 2 else 180)
         if _INTERNAL_DIAGNOSTIC_RE.search(text):
             return "这次没接好，先不把后台提示刷出来。"

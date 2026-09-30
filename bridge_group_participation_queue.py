@@ -46,6 +46,17 @@ def enqueue_group_candidate(
     existing = conn.execute(
         f"SELECT * FROM {GROUP_PARTICIPATION_QUEUE_TABLE} WHERE group_id=?", (group,)
     ).fetchone()
+    if existing and str(existing["state"] or "") == "claimed":
+        lease_value = str(existing["lease_expires_at"] or "")
+        lease = _parse(lease_value) if lease_value else None
+        if lease is not None and lease > now:
+            preserved = dict(existing)
+            preserved["replaced_message_id"] = 0
+            preserved["joined_active_topic"] = True
+            preserved["candidate_due_reason"] = "active_topic_window"
+            preserved["preserved_claimed_candidate"] = True
+            return preserved
+
     topic_window = max(max(0, gap_seconds), min(int(active_topic_window_seconds or 45), 600))
     terminal_states = {"completed", "failed", "cancelled"}
     existing_state = str(existing["state"] or "") if existing else ""
@@ -53,7 +64,7 @@ def enqueue_group_candidate(
     starts_fresh = bool(
         not existing
         or existing_state in terminal_states
-        or now > existing_first + timedelta(seconds=topic_window)
+        or now - existing_first > timedelta(minutes=5)
     )
     first = now if starts_fresh else existing_first
     due = min(quiet_due, first + timedelta(seconds=topic_window))
@@ -127,7 +138,7 @@ def enqueue_group_candidate(
             int(current.get("id") or 0), str(sender_id or ""), str(sender_name or ""),
             str(session or ""), str(external_message_id or ""), initial_anchor_id,
             initial_anchor_external_id, initial_anchor_sender_id, initial_latest_text_id,
-            utc_now(), bool(starts_fresh), bool(starts_fresh), bool(starts_fresh),
+            utc_now(), bool(starts_fresh or is_text_anchor), bool(starts_fresh or is_text_anchor), bool(starts_fresh or is_text_anchor),
             bool(starts_fresh), bool(is_text_anchor),
         ),
     )
@@ -136,6 +147,7 @@ def enqueue_group_candidate(
     ).fetchone()
     result = dict(row)
     result["replaced_message_id"] = replaced_message_id
+    result["preserved_claimed_candidate"] = False
     result["joined_active_topic"] = bool(
         existing and existing_state in {"pending", "claimed"} and not starts_fresh
     )
@@ -164,6 +176,14 @@ def claim_due_group_candidates(
     lease = (current + timedelta(seconds=max(30, int(lease_seconds)))).isoformat()
     for row in rows:
         group = str(row["group_id"])
+        # A claimed opportunity has one bounded lifetime even in a busy group.
+        if current - _parse(row["first_message_at"]) > timedelta(minutes=5):
+            conn.execute(
+                f"UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE} SET state='cancelled',lease_expires_at='',updated_at=? "
+                "WHERE group_id=? AND candidate_revision=? AND state=?",
+                (utc_now(), group, int(row["candidate_revision"] or 0), str(row["state"])),
+            )
+            continue
         cursor = conn.execute(
             f"""UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE}
                 SET state='claimed', attempt=attempt+1, candidate_revision=candidate_revision+1,
@@ -230,6 +250,89 @@ def group_candidate_is_current(
     )
 
 
+def requeue_stale_claimed_candidate(
+    conn: sqlite3.Connection,
+    *,
+    group_id: str,
+    expected_latest_message_id: int,
+    expected_candidate_revision: int,
+    replacement: dict,
+    session: str,
+    quiet_gap_seconds: int | None = None,
+    now: datetime | None = None,
+    allow_current_latest: bool = False,
+    active_topic_window_seconds: int | None = None,
+) -> bool:
+    """Atomically hand an obsolete claim to a textual group message.
+
+    A claimed candidate deliberately remains stable while the Worker is making
+    its decision.  If that decision later fails the freshness fence because a
+    newer message changed the topic, leaving the old row ``claimed`` creates a
+    retry loop: the Worker keeps reclaiming the obsolete anchor while every
+    later inbound is merely coalesced.  The default handoff preserves that
+    newer-message contract.  ``allow_current_latest`` is narrower: before a
+    plan starts, it may replace a stale old anchor with the candidate's already
+    queued latest textual message.  In both cases the old claim is dropped and
+    the Worker must make a fresh decision; this helper never sends a reply.
+    """
+
+    group = str(group_id or "").strip()
+    try:
+        expected_message = int(expected_latest_message_id)
+        expected_revision = int(expected_candidate_revision)
+        replacement_id = int(replacement.get("id") or 0)
+    except (TypeError, ValueError):
+        return False
+    if (
+        not group
+        or expected_message <= 0
+        or expected_revision <= 0
+        or replacement_id < expected_message
+        or (replacement_id == expected_message and not allow_current_latest)
+    ):
+        return False
+    event_time = _parse(replacement.get("created_at"))
+    current = now or datetime.now(timezone.utc)
+    current = current.replace(tzinfo=timezone.utc) if current.tzinfo is None else current.astimezone(timezone.utc)
+    gap = max(0, int(quiet_gap_seconds or 0))
+    original = conn.execute(
+        f"SELECT first_message_at FROM {GROUP_PARTICIPATION_QUEUE_TABLE} "
+        "WHERE group_id=? AND state='claimed' AND latest_message_id=? AND candidate_revision=?",
+        (group, expected_message, expected_revision),
+    ).fetchone()
+    if not original:
+        return False
+    first = _parse(original["first_message_at"])
+    if current - first > timedelta(minutes=5):
+        return False
+    window = max(gap, min(int(active_topic_window_seconds or 45), 600))
+    due = max(current, min(event_time + timedelta(seconds=gap), first + timedelta(seconds=window)))
+    sender_id = str(replacement.get("sender_id") or "").strip()
+    external_message_id = str(replacement.get("external_message_id") or "").strip()
+    if not sender_id:
+        return False
+    cursor = conn.execute(
+        f"""UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE}
+            SET state='pending',
+                first_message_at=?,last_message_at=?,due_at=?,
+                latest_message_id=?,latest_sender_id=?,latest_sender_name=?,
+                latest_session=?,latest_external_message_id=?,
+                anchor_message_id=?,anchor_external_message_id=?,anchor_sender_id=?,
+                latest_text_message_id=?,candidate_revision=candidate_revision+1,
+                attempt=0,lease_expires_at='',updated_at=?
+            WHERE group_id=? AND state='claimed'
+              AND latest_message_id=? AND candidate_revision=?""",
+        (
+            first.isoformat(), event_time.isoformat(), due.isoformat(),
+            replacement_id, sender_id, str(replacement.get("sender_name") or ""),
+            str(session or ""), external_message_id,
+            replacement_id, external_message_id, sender_id, replacement_id,
+            utc_now(), group, expected_message, expected_revision,
+        ),
+    )
+    return bool(cursor.rowcount)
+
+
 def reschedule_group_candidate(
     conn: sqlite3.Connection,
     group_id: str,
@@ -254,10 +357,43 @@ def reschedule_group_candidate(
     return bool(cursor.rowcount)
 
 
+def renew_group_candidate_lease(
+    conn: sqlite3.Connection,
+    group_id: str,
+    *,
+    expected_candidate_revision: int,
+    lease_seconds: int = 300,
+    now: datetime | None = None,
+) -> bool:
+    """Atomically renew the lease of a claim this worker still owns.
+
+    The model-approved contribution still needs the reply generation and the
+    Outbox path, which together can outlive the original claim lease in busy
+    groups.  Renewing ownership (state='claimed' plus the optimistic revision)
+    keeps the row stable against inbound traffic and prevents a second worker
+    from reviving the same work, without weakening the optimistic-revision
+    fence.  A failed renewal means another worker or an inbound UPSERT already
+    owns a newer revision and this worker must not deliver.
+    """
+
+    current = now or datetime.now(timezone.utc)
+    current = current.replace(tzinfo=timezone.utc) if current.tzinfo is None else current.astimezone(timezone.utc)
+    lease = current + timedelta(seconds=max(30, int(lease_seconds)))
+    cursor = conn.execute(
+        f"""UPDATE {GROUP_PARTICIPATION_QUEUE_TABLE}
+            SET lease_expires_at=?, updated_at=?
+            WHERE group_id=? AND state='claimed' AND candidate_revision=?""",
+        (lease.isoformat(), utc_now(), str(group_id or "").strip(), int(expected_candidate_revision)),
+    )
+    return bool(cursor.rowcount)
+
+
 __all__ = [
     "claim_due_group_candidates",
     "enqueue_group_candidate",
     "finish_group_candidate",
     "group_candidate_is_current",
+    "renew_group_candidate_lease",
+    "requeue_stale_claimed_candidate",
     "reschedule_group_candidate",
 ]

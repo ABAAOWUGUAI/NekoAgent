@@ -515,11 +515,24 @@ class DeliveryOutbox:
                 raise
         return [self._row_to_delivery(row, now=current) for row in claimed]
 
-    def begin_send(self, delivery_id: str, lease_token: str) -> dict | None:
+    def begin_send(
+        self,
+        delivery_id: str,
+        lease_token: str,
+        *,
+        now=None,
+        send_lease_seconds: float | None = None,
+    ) -> dict | None:
         """Mark the narrow external-side-effect window before calling QQ."""
-        from bridge_delivery_attempts import begin_send
+        from bridge_delivery_attempts import SEND_LEASE_SECONDS, begin_send
 
-        return begin_send(self, delivery_id, lease_token)
+        return begin_send(
+            self,
+            delivery_id,
+            lease_token,
+            now=now,
+            send_lease_seconds=SEND_LEASE_SECONDS if send_lease_seconds is None else send_lease_seconds,
+        )
 
     def get_delivery(self, delivery_id: str) -> dict | None:
         """Read one delivery without changing its lease."""
@@ -529,6 +542,34 @@ class DeliveryOutbox:
             raise ValueError("delivery_id_required")
         with closing(self._connect()) as conn:
             row = conn.execute("SELECT * FROM delivery_outbox WHERE id=?", (delivery_id,)).fetchone()
+        return self._row_to_delivery(row) if row is not None else None
+
+    def get_delivery_by_logical_response_id(
+        self, logical_response_id: str,
+    ) -> dict | None:
+        """Read one logical response without reserving or enqueueing it."""
+
+        logical_response_id = _clip(logical_response_id, 120)
+        if not logical_response_id:
+            raise ValueError("delivery_logical_response_id_required")
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM delivery_outbox WHERE logical_response_id=? LIMIT 1",
+                (logical_response_id,),
+            ).fetchone()
+        return self._row_to_delivery(row) if row is not None else None
+
+    def get_delivery_by_dedupe_key(self, dedupe_key: str) -> dict | None:
+        """Read one durable business delivery without changing its lease."""
+
+        dedupe_key = _clip(dedupe_key, 300)
+        if not dedupe_key:
+            raise ValueError("delivery_dedupe_key_required")
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM delivery_outbox WHERE dedupe_key=? LIMIT 1",
+                (dedupe_key,),
+            ).fetchone()
         return self._row_to_delivery(row) if row is not None else None
 
     def bind_engagement_decision(
@@ -681,6 +722,7 @@ class DeliveryOutbox:
         state: str = "all",
         channel: str | None = None,
         limit: int = 100,
+        offset: int = 0,
         now: datetime | str | None = None,
     ) -> list[dict]:
         """Read deliveries without changing leases or attempts."""
@@ -702,6 +744,12 @@ class DeliveryOutbox:
             limit = max(1, min(int(limit), 500))
         except (TypeError, ValueError) as exc:
             raise ValueError("delivery_list_limit_invalid") from exc
+        try:
+            offset = int(offset)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("delivery_list_offset_invalid") from exc
+        if offset < 0:
+            raise ValueError("delivery_list_offset_invalid")
         current = _as_utc(now)
         current_ts = _timestamp(current)
         clauses: list[str] = []
@@ -732,14 +780,14 @@ class DeliveryOutbox:
             clauses.append("channel = ?")
             params.append(_clip(channel, 80))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        params.extend((limit, offset))
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 f"""
                 SELECT * FROM delivery_outbox
                 {where}
                 ORDER BY created_at DESC, id DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
                 params,
             ).fetchall()

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from bridge_automation import attach_proactive_delivery
+from bridge_automation import attach_proactive_delivery, record_proactive_failure
 from bridge_reliability_service import (
     mark_action_linked,
     mark_action_retry,
@@ -40,7 +40,33 @@ def drain_action_outbox(connect, delivery_outbox, *, limit: int = 10) -> dict:
             linked += 1
         except Exception as exc:
             with connect() as conn:
-                mark_action_retry(conn, str(action["id"]), str(exc))
+                saved = mark_action_retry(conn, str(action["id"]), str(exc))
+                if (
+                    str(saved.get("status") or "") == "failed"
+                    and str(action.get("kind") or "") == "proactive_delivery"
+                    and str(action.get("aggregate_type") or "") == "proactive_event"
+                ):
+                    event = conn.execute(
+                        "SELECT * FROM proactive_events WHERE id=?",
+                        (str(action.get("aggregate_id") or ""),),
+                    ).fetchone()
+                    if event:
+                        event = dict(event)
+                        policy = conn.execute(
+                            "SELECT * FROM proactive_policies WHERE user_id=?",
+                            (str(event.get("user_id") or ""),),
+                        ).fetchone()
+                        record_proactive_failure(
+                            conn,
+                            dict(policy) if policy else {
+                                "user_id": str(event.get("user_id") or ""),
+                                "assistant_id": str(event.get("assistant_id") or ""),
+                                "policy_kind": str(event.get("policy_kind") or ""),
+                                "policy_version": int(event.get("policy_version") or 0),
+                            },
+                            str(exc),
+                            event_id=str(event.get("id") or ""),
+                        )
             failed += 1
     return {"enabled": True, "linked": linked, "failed": failed}
 

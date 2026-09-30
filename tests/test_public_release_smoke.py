@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -11,14 +14,29 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_bridge_imports_without_runtime_bootstrap() -> None:
-    sys.dont_write_bytecode = True
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-
-    bridge = importlib.import_module("codex_qq_bridge")
-
-    assert bridge.LISTEN_HOST == "127.0.0.1"
-    assert bridge.LISTEN_PORT == 18777
+    # Import currently initializes an outbox schema.  Keep the public smoke
+    # test independent of any deployer's filesystem and persistent DB state.
+    with tempfile.TemporaryDirectory(prefix="public-bridge-import-") as directory:
+        root = Path(directory)
+        env = os.environ.copy()
+        env.update({
+            "TASK_DB_PATH": str(root / "tasks.sqlite3"),
+            "ASSISTANT_DB_PATH": str(root / "assistant.sqlite3"),
+            "TASK_HISTORY_PATH": str(root / "tasks.jsonl"),
+            "GATEWAY_STATE_DB": str(root / "gateway.sqlite3"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        })
+        result = subprocess.run(
+            [sys.executable, "-c", "import codex_qq_bridge as b; "
+             "assert b.LISTEN_HOST == '127.0.0.1'; assert b.LISTEN_PORT == 18777"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr[-2000:]
 
 
 def test_deployment_and_protection_documents_are_present() -> None:

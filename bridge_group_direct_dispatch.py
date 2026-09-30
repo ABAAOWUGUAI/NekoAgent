@@ -11,6 +11,38 @@ from bridge_group_context_frame import DEFAULT_GROUP_CONTEXT_LIMIT, group_model_
 from bridge_inbound_media import inbound_media_notice
 from bridge_qq_admin_actions import parse_qq_admin_action
 from bridge_qq_participation_shadow import complete_group_dispatch
+from bridge_task_dispatch_policy import (
+    message_is_proven_daily_conversation,
+)
+
+
+def group_work_allowed(policy: Mapping | None, sender_id: object) -> bool | None:
+    """Return the explicit group-work permission, or None when it is unknown."""
+
+    if not isinstance(policy, Mapping) or not str(sender_id or "").strip():
+        return None
+    if "allow_work" not in policy or "allowed_work_senders" not in policy:
+        return None
+    try:
+        enabled = bool(int(policy.get("allow_work") or 0))
+    except (TypeError, ValueError):
+        return None
+    if not enabled:
+        return False
+    allowed = {
+        item.strip()
+        for item in re.split(r"[,，\s]+", str(policy.get("allowed_work_senders") or ""))
+        if item.strip()
+    }
+    return str(sender_id).strip() in allowed
+
+
+def group_single_plan_requires_work(candidate_plan: Mapping | None) -> bool:
+    """Use the parsed plan semantics without granting it execution authority."""
+
+    if not isinstance(candidate_plan, Mapping):
+        return False
+    return str(candidate_plan.get("mode") or "").strip().lower() in {"work", "mixed"}
 
 
 def _typed_media_state(payload: dict, attachments: object) -> tuple[str, str]:
@@ -60,6 +92,7 @@ def prepare_direct_group_turn(
     planner,
     agent_policy,
     conversation_frame: dict | None = None,
+    work_permission: bool | None = None,
 ) -> dict:
     assistant_name = str(fallback_settings.get("display_name") or "助手")
     attachments = payload.get("attachments")
@@ -107,6 +140,35 @@ def prepare_direct_group_turn(
         context_items[:-1],
         limit=int((conversation_frame or {}).get("context_limit") or DEFAULT_GROUP_CONTEXT_LIMIT),
     )
+    proven_daily = message_is_proven_daily_conversation(
+        message,
+        assistant_display_name=assistant_name,
+    )
+    recognized_control = parse_qq_admin_action(
+        message,
+        history,
+        current_group_id=group_id,
+    ) is not None
+    daily_single_plan = event.message_kind.value == "mention_only" or proven_daily or (
+        work_permission is False
+        and not recognized_control
+    )
+    if daily_single_plan:
+        return {
+            "result": None,
+            "mode_session": None,
+            "group_history": history,
+            "daily_single_plan": True,
+            "decision": {
+                **decision,
+                "mode": "daily",
+                "mode_label": "日常聊天",
+                "intent": "chat",
+                "intent_label": "聊天",
+                "need_tools": False,
+                "work_lifecycle": "none",
+            },
+        }
     planned, mode_session = planner.decide(
         user_id=f"group:{group_id}",
         message=message,
@@ -119,6 +181,7 @@ def prepare_direct_group_turn(
         "result": None,
         "mode_session": mode_session,
         "group_history": history,
+        "daily_single_plan": False,
         "decision": {
             **planned,
             "should_reply": True,
@@ -143,12 +206,7 @@ def apply_group_work_boundary(
 ) -> tuple[dict, str, str, bool]:
     mode = str(decision.get("mode") or "daily")
     intent = str(decision.get("intent") or "chat")
-    allowed = {
-        item.strip()
-        for item in re.split(r"[,，\s]+", str(policy.get("allowed_work_senders") or ""))
-        if item.strip()
-    }
-    work_allowed = bool(int(policy.get("allow_work") or 0)) and sender_id in allowed
+    work_allowed = group_work_allowed(policy, sender_id) is True
     if mode in {"work", "mixed"} and not work_allowed:
         mode, intent = "daily", "chat"
         decision.update({
@@ -292,6 +350,8 @@ def _complete(
 __all__ = [
     "apply_group_work_boundary",
     "dispatch_group_control_action",
+    "group_single_plan_requires_work",
+    "group_work_allowed",
     "prepare_direct_group_turn",
     "run_admitted_group_turn",
 ]

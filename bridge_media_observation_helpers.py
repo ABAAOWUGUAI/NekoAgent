@@ -6,6 +6,11 @@ import sqlite3
 from datetime import datetime, timezone
 
 from bridge_media_observation import DEFAULT_MEDIA_BURST_LIMIT
+from bridge_group_participation_schema import (
+    GROUP_DAILY_REPLY_BUDGET_DEFAULT,
+    GROUP_DAILY_REPLY_BUDGET_MAX,
+    GROUP_PARTICIPATION_DAY_TIMEZONE,
+)
 
 
 def has_visual_attachment(attachments: object) -> bool:
@@ -38,24 +43,34 @@ def media_budget_snapshot(
 
     try:
         row = conn.execute(
-            "SELECT day_key,daily_reply_count,burst_message_count "
+            "SELECT day_key,daily_reply_count,burst_message_count,last_reply_at "
             "FROM group_participation_budget WHERE group_id=?",
             (str(group_id or "").strip(),),
         ).fetchone()
         daily_budget_raw = policy.get("daily_reply_budget")
         daily_budget = max(
             0,
-            min(int(20 if daily_budget_raw in {None, ""} else daily_budget_raw), 200),
+            min(
+                int(GROUP_DAILY_REPLY_BUDGET_DEFAULT if daily_budget_raw in {None, ""} else daily_budget_raw),
+                GROUP_DAILY_REPLY_BUDGET_MAX,
+            ),
         )
     except (sqlite3.Error, TypeError, ValueError, OverflowError):
         return DEFAULT_MEDIA_BURST_LIMIT, 0
 
-    today = datetime.now(timezone.utc).date().isoformat()
-    daily_used = (
-        int(row["daily_reply_count"] or 0)
-        if row and str(row["day_key"] or "") == today
-        else 0
-    )
+    today = datetime.now(GROUP_PARTICIPATION_DAY_TIMEZONE).date().isoformat()
+    same_day = False
+    if row and str(row["day_key"] or "") == today:
+        previous_reply = str(row["last_reply_at"] or "")
+        if previous_reply:
+            try:
+                same_day = (
+                    datetime.fromisoformat(previous_reply.replace("Z", "+00:00"))
+                    .astimezone(timezone.utc).date().isoformat() == today
+                )
+            except ValueError:
+                same_day = False
+    daily_used = int(row["daily_reply_count"] or 0) if same_day else 0
     burst_count = int(row["burst_message_count"] or 0) if row else 0
     return burst_count, max(0, daily_budget - daily_used)
 

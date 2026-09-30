@@ -79,6 +79,7 @@ def consume_legacy_pending(
     message: str,
     *,
     now: str,
+    before_apply: Callable[[], object] | None = None,
 ) -> dict | None:
     match = re.match(
         r"^(?:确认执行|确认操作|我确认)\s*#?([a-f0-9]{8})?\s*$",
@@ -108,6 +109,8 @@ def consume_legacy_pending(
             ).fetchone()
         if not row:
             return None
+        if callable(before_apply):
+            before_apply()
         conn.execute(
             "UPDATE pending_approvals SET status='approved',decided_at=? WHERE id=?",
             (now, row["id"]),
@@ -187,6 +190,7 @@ def decide_formal_message(
     message: str,
     trace_id: str,
     decision_applied: Callable[[dict], None],
+    before_apply: Callable[[], object] | None = None,
 ) -> dict | None:
     """Apply a strict QQ decision command; ordinary messages return ``None``."""
 
@@ -195,6 +199,8 @@ def decide_formal_message(
         return None
     identifier = str(command["identifier"])
     try:
+        if callable(before_apply):
+            before_apply()
         with task_connect() as conn:
             repository = FormalApprovalRepository(conn)
             approval = repository.get(identifier, actor_id=user_id)

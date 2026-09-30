@@ -142,10 +142,20 @@ def relationship_context_lines(relationship: dict | None) -> list[str]:
     preferred = _clip(item.get("preferred_address"), 80)
     if preferred:
         lines.append(f"- 对当前对象自然使用称呼“{preferred}”；不需每轮重复。")
+    familiarity = _clip(item.get("familiarity_context") or "new", 30)
     lines.append(
         f"- 互动方式：{_clip(item.get('interaction_style') or 'natural', 30)}；"
-        f"熟悉程度：{_clip(item.get('familiarity_context') or 'new', 30)}。",
+        f"熟悉程度：{familiarity}。",
     )
+    # Expression guidance per familiarity: not a hard template, but
+    # Persona + relationship + recent context guidance for the model.
+    guidance_map = {
+        "new": "保持 Persona，但少假定共同历史；避免引用未提及的过去经历，保持自然克制。",
+        "familiar": "已有一定的熟悉度；可以自然承接之前的互动，减少重复介绍，在合适时简短引用共同经历。",
+        "long_term": "已相识较久；允许更自然的默契与对共同历史的引用，语气更放松，但仍保持克制，不越界亲密。",
+    }
+    guidance = guidance_map.get(familiarity, guidance_map["new"])
+    lines.append(f"- 表达指引：{guidance}")
     allowed = [_clip(value, 80) for value in item.get("allowed_topics") or [] if _clip(value, 80)]
     blocked = [_clip(value, 80) for value in item.get("blocked_topics") or [] if _clip(value, 80)]
     if allowed:
@@ -179,6 +189,8 @@ STRUCTURED_SOCIAL_DECISION_MAX_TOKENS = 700
 GROUP_SOCIAL_ACTIONS = {
     "silent",
     "ack",
+    "echo_reaction",
+    "meme_reaction",
     "ack_add",
     "follow_up",
     "reply",
@@ -188,6 +200,8 @@ GROUP_SOCIAL_ACTIONS = {
 }
 GROUP_SOCIAL_ACTION_APPROACH = {
     "ack": "light_join",
+    "echo_reaction": "light_join",
+    "meme_reaction": "light_join",
     "ack_add": "light_join",
     "follow_up": "ask",
     "reply": "inform",
@@ -246,7 +260,7 @@ def plan_expression(
     elif mode in {"work", "mixed"}:
         purpose, tone = "先交代结论或当前真实状态", "可靠、直接、保留人格但不表演"
     else:
-        purpose, tone = "回应这句话本身", "自然、熟悉、不端着"
+        purpose, tone = "回应这句话本身", "自然、不端着" if group else "自然、熟悉、不端着"
     contract = voice_contract or {}
     social_action = normalize_group_social_action(
         (mode_decision or {}).get("social_action")
@@ -289,6 +303,18 @@ def plan_expression(
                 1,
                 ["简短承接"],
                 "不追问，陈述结束",
+            ),
+            "echo_reaction": (
+                "只复读当前可见、非敏感的短梗或给出等长的即时反应；不是复述整段内容",
+                1,
+                ["不超过十二个汉字的短反应"],
+                "不解释、不扩写、不追问，说完停下",
+            ),
+            "meme_reaction": (
+                "用一张已审核表情包承接当前明确的情绪或梗，并配一条极短文字；不能把表情包当作插话理由",
+                1,
+                ["不超过八个汉字的短反应", "已审核表情包"],
+                "不扩写事实、不追问，说完停下",
             ),
             "ack_add": (
                 "先接住，再补充一个当前话题里没有重复过的小点",
@@ -423,6 +449,14 @@ def expression_plan_lines(plan: dict) -> list[str]:
         lines.insert(0, f"- 群聊动作：{plan.get('social_action')}。")
     if plan.get("reply_shape"):
         lines.insert(1, f"- 本轮表达形态：{plan.get('reply_shape')}；不要重复最近相同形态。")
+    affect = plan.get("assistant_affect")
+    if isinstance(affect, dict) and affect.get("active"):
+        lines.append(
+            "- Assistant 自身短时状态："
+            f"{affect.get('primary_affect') or 'grounded'}；"
+            f"{affect.get('expression_guidance') or '只做轻微表达调整'}。"
+            "这不是用户情绪判断，不得改变事实、权限、任务、模型路由或投递。"
+        )
     return lines
 
 
@@ -492,6 +526,7 @@ def build_daily_system_prompt(
     voice_contract: dict | None = None,
     expression_plan: dict | None = None,
     relationship_context: dict | None = None,
+    output_protocol: str | None = None,
 ) -> str:
     cues = normalize_social_cues(mode_decision)
     contract = voice_contract or build_voice_contract(
@@ -499,6 +534,11 @@ def build_daily_system_prompt(
         mode_decision=mode_decision,
         group_context=group_context,
     )
+    if group_context:
+        # Persona's Owner relationship is not evidence about each group member.
+        # Keep the caller's identity contract immutable; scoped state below
+        # remains the authority for familiarity and relationship preferences.
+        contract = {**contract, "relationship": "本群中的交谈对象；亲疏按当前成员的关系记录与可见互动判断"}
     turn_plan = expression_plan or plan_expression(
         "",
         social_cues=cues,
@@ -526,9 +566,15 @@ def build_daily_system_prompt(
             *expression_plan_lines(turn_plan),
             *( ["", *relationship_context_lines(relationship_context)] if relationship_context_lines(relationship_context) else [] ),
         ]
+        if group_context and not (relationship_context or {}).get("applied"):
+            expression_lines.append("- 未建立本群当前成员的关系记录；不预设亲密、熟悉或互相挖苦的默契，仍可自然接话。")
         habit_lines = ["", "可采用的表达习惯：", *_habit_lines(habits or [])]
     lines = [
-        f"你正在{location}中回复消息。只输出真正要发送的中文消息，不输出分析、模式标签或 JSON。",
+        (
+            str(output_protocol).strip()
+            if str(output_protocol or "").strip()
+            else f"你正在{location}中回复消息。只输出真正要发送的中文消息，不输出分析、模式标签或 JSON。"
+        ),
         f"当前服务器本地时间：{local_now}。涉及最新天气、新闻、价格或其他时效事实时，不得依赖记忆猜测，应转为实时核验。",
         *identity_lines,
         "",
@@ -580,8 +626,8 @@ def build_daily_system_prompt(
                 "- 只回应当前话题，不替群成员下结论，不暴露私聊记忆、服务器密钥或后台配置。",
                 "- 未被明确点名时，不评价群成员、不催促、不调侃对方能力；没有新增价值就保持沉默。",
                 "- 群聊回复比私聊更短；不要抢话、总结全群或把每条消息都变成任务。",
-                "- 默认只发一句；不要用括号补充动作、心理或旁白，也不要连续复用“好家伙、笑死、哈哈、懂了、草”等固定开场。",
-                "- 不为显得像群友而编造自己的经历、爱好、身体反应或群内身份；有态度即可，不需要表演人设。",
+                "- 按 Voice Contract 和当轮场景允许一两句短句；先接住当前具体内容，有上下文才延续玩笑，不要每句使用固定开头。轻微角色化动作可以作为表达，但虚构表达不能冒充真实发生。",
+                "- 可以使用已配置人格里的偏好、态度和轻微角色表达；仍不得编造真实经历、已经执行的动作、群聊历史或用户习惯。",
                 *rhythm_lines,
                 *GROUP_NATURAL_PROMPT_LINES,
             ],
@@ -672,8 +718,15 @@ def apply_group_turn_policy(
     result = dict(decision or {})
     message = str(current.get("content") or "").strip()
     is_mention = bool(current.get("is_mention"))
+    reply_to_assistant = bool(current.get("reply_to_assistant"))
     recent = list((rhythm_history if rhythm_history is not None else history)[-8:])
     assistant_turns = sum(1 for item in recent if str(item.get("sender_id") or "") == "bot")
+    assistant_turns_tail = 0
+    for item in reversed(recent):
+        if str(item.get("sender_id") or "") == "bot":
+            assistant_turns_tail += 1
+        else:
+            break
     repeated = any(
         str(item.get("sender_id") or "") == str(current.get("sender_id") or "")
         and str(item.get("content") or "").strip() == message
@@ -683,13 +736,15 @@ def apply_group_turn_policy(
     frame = conversation_frame or {}
     signals = {
         "direct_mention": is_mention,
+        "reply_to_assistant": reply_to_assistant,
         "assistant_turns_last_8": assistant_turns,
+        "assistant_turns_tail": assistant_turns_tail,
         "acknowledgement_only": is_acknowledgement,
         "repeated_message": repeated,
         "active_continuation": bool(frame.get("active_continuation")),
         "continuation_assistant_turns": int(frame.get("continuation_assistant_turns") or 0),
     }
-    if is_mention:
+    if is_mention or reply_to_assistant:
         result.update({"should_reply": True, "turn_policy": signals})
         return result
     if repeated:
@@ -697,6 +752,14 @@ def apply_group_turn_policy(
         return result
     if is_acknowledgement:
         result.update({"should_reply": False, "reason": "acknowledgement_does_not_need_reply", "turn_policy": signals})
+        return result
+    if bool(frame.get("ambiguous_target")) and not bool(frame.get("active_continuation")):
+        result.update({
+            "should_reply": False,
+            "social_action": "silent",
+            "reason": "ambient_ambiguous_target",
+            "turn_policy": signals,
+        })
         return result
     if frame.get("active_continuation"):
         try:
@@ -713,8 +776,12 @@ def apply_group_turn_policy(
         strength = max(0.0, min(float(policy.get("reply_probability") or 0.2), 1.0))
     except (TypeError, ValueError):
         strength = 0.2
-    density_floor = max(0.70, min(0.95, 0.95 - 0.20 * strength))
-    if assistant_turns >= 2 and float(result.get("confidence") or 0) < density_floor:
+    density_floor = max(0.68, min(0.92, 0.92 - 0.20 * strength))
+    # Density guards assistant dominance: the assistant must not pile on when
+    # it already closed the recent turns.  Once a member has spoken after the
+    # assistant, participation is welcome again (that would otherwise be the
+    # bridge blocking itself after every reply).
+    if assistant_turns >= 2 and assistant_turns_tail >= 1 and float(result.get("confidence") or 0) < density_floor:
         result.update({"should_reply": False, "reason": "assistant_turn_density", "turn_policy": signals})
         return result
     result["turn_policy"] = signals
@@ -750,7 +817,10 @@ def mark_group_decision(
     conn.execute(
         """
         UPDATE group_messages
-        SET decision = ?, decision_reason = ?, replied = ? WHERE id = ?
+        SET decision = CASE WHEN replied = 1 THEN decision ELSE ? END,
+            decision_reason = CASE WHEN replied = 1 THEN decision_reason ELSE ? END,
+            replied = CASE WHEN replied = 1 THEN 1 ELSE ? END
+        WHERE id = ?
         """,
         (
             "reply" if decision.get("should_reply") else "silent",

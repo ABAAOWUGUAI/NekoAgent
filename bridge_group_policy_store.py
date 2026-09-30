@@ -15,7 +15,12 @@ from bridge_conversation_participation_contract import (
 )
 from bridge_group_context_frame import DEFAULT_GROUP_CONTEXT_LIMIT, normalize_group_context_limit
 from bridge_group_participation_policy import bounded_media_observation_probability
-from bridge_group_participation_schema import MEDIA_OBSERVATION_POLICY_DEFAULT, MEDIA_OBSERVATION_POLICY_FIELD
+from bridge_group_participation_schema import (
+    GROUP_DAILY_REPLY_BUDGET_DEFAULT,
+    GROUP_DAILY_REPLY_BUDGET_MAX,
+    MEDIA_OBSERVATION_POLICY_DEFAULT,
+    MEDIA_OBSERVATION_POLICY_FIELD,
+)
 
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
@@ -92,14 +97,22 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
         burst_window = max(5, min(int(payload.get("burst_window_seconds") or 12), 300))
         burst_max = max(2, min(int(payload.get("burst_max_messages") or 6), 30))
         daily_budget_raw = payload.get("daily_reply_budget")
-        daily_budget = max(0, min(int(20 if daily_budget_raw in {None, ""} else daily_budget_raw), 200))
+        daily_budget = max(
+            0,
+            min(
+                int(GROUP_DAILY_REPLY_BUDGET_DEFAULT if daily_budget_raw in {None, ""} else daily_budget_raw),
+                GROUP_DAILY_REPLY_BUDGET_MAX,
+            ),
+        )
         continuation_window_raw = payload.get("continuation_window_seconds")
         continuation_window = max(15, min(int(120 if continuation_window_raw in {None, ""} else continuation_window_raw), 600))
         max_auto_raw = payload.get("max_auto_continuations")
         max_auto_continuations = max(1, min(int(2 if max_auto_raw in {None, ""} else max_auto_raw), 3))
     except (TypeError, ValueError):
         cooldown, max_context = 180, DEFAULT_GROUP_CONTEXT_LIMIT
-        quiet_gap, burst_window, burst_max, daily_budget = 8, 12, 6, 20
+        quiet_gap, burst_window, burst_max, daily_budget = (
+            8, 12, 6, GROUP_DAILY_REPLY_BUDGET_DEFAULT,
+        )
         continuation_window, max_auto_continuations = 120, 2
     requested_mode = str(payload.get("participation_mode") or "").strip()
     if requested_mode:
@@ -112,6 +125,15 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
             "active_reply": 1 if _truthy(payload.get("active_reply")) else 0,
         }
         mode = group_mode_from_legacy(legacy_flags)
+    # A newly admitted group can still opt out explicitly.  On an existing
+    # group, an unrelated partial policy update must not erase that choice.
+    if "meme_enabled" in payload:
+        meme_enabled = 1 if _truthy(payload.get("meme_enabled")) else 0
+    else:
+        existing_meme = conn.execute(
+            "SELECT meme_enabled FROM group_policies WHERE group_id=?", (group_id,),
+        ).fetchone()
+        meme_enabled = int(existing_meme[0]) if existing_meme is not None else 1
     values = {
         "group_name": _clip(payload.get("group_name") or payload.get("name"), 120),
         "session": _clip(payload.get("session"), 300),
@@ -125,7 +147,7 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
         "max_context": max_context,
         "allow_work": 1 if _truthy(payload.get("allow_work")) else 0,
         "allowed_work_senders": _clip(payload.get("allowed_work_senders"), 500),
-        "meme_enabled": 1 if _truthy(payload.get("meme_enabled")) else 0,
+        "meme_enabled": meme_enabled,
         "quiet_gap_seconds": quiet_gap,
         "burst_window_seconds": burst_window,
         "burst_max_messages": burst_max,
@@ -133,6 +155,9 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
         "continuation_window_seconds": continuation_window,
         "max_auto_continuations": max_auto_continuations,
         "media_observation_probability": media_observation_probability,
+        "attachment_participation": 1 if _truthy(payload.get("attachment_participation", "1")) else 0,
+        "short_turn_participation": 1 if _truthy(payload.get("short_turn_participation", "1")) else 0,
+        "addressed_reply": 1 if _truthy(payload.get("addressed_reply", "1")) else 0,
     }
     now = _utc_now()
     conn.execute(
@@ -144,8 +169,9 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
             quiet_gap_seconds, burst_window_seconds, burst_max_messages, daily_reply_budget,
             continuation_window_seconds, max_auto_continuations,
             media_observation_probability,
+            attachment_participation, short_turn_participation, addressed_reply,
             last_reply_at, message_count, reply_count, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, ?, ?)
         ON CONFLICT(group_id) DO UPDATE SET
             group_name = excluded.group_name,
             session = CASE WHEN excluded.session <> '' THEN excluded.session ELSE group_policies.session END,
@@ -169,6 +195,9 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
             continuation_window_seconds = excluded.continuation_window_seconds,
             max_auto_continuations = excluded.max_auto_continuations,
             media_observation_probability = excluded.media_observation_probability,
+            attachment_participation = excluded.attachment_participation,
+            short_turn_participation = excluded.short_turn_participation,
+            addressed_reply = excluded.addressed_reply,
             updated_at = excluded.updated_at
         """,
         (
@@ -179,7 +208,9 @@ def upsert_group_policy(conn: sqlite3.Connection, payload: dict) -> dict:
             values["allowed_work_senders"], values["meme_enabled"], values["quiet_gap_seconds"],
             values["burst_window_seconds"], values["burst_max_messages"], values["daily_reply_budget"],
             values["continuation_window_seconds"], values["max_auto_continuations"],
-            values["media_observation_probability"], now, now,
+            values["media_observation_probability"],
+            values["attachment_participation"], values["short_turn_participation"], values["addressed_reply"],
+            now, now,
         ),
     )
     return _present_group_policy(

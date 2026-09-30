@@ -148,4 +148,4 @@ main-targeted public-source Gate must pass.
   be guaranteed at rollout.
 - Restorable conversation history, project/task context selection and rich
   approval handoff — each needs its own API/behavior contract.
-- QQ, Work, Memory, XiaoFei and Console slices.
+- QQ, Work, Memory, Assistant and Console slices.

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from bridge_provider_errors import is_hard_quota_response
+
 
 def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", str(text or ""))
@@ -41,6 +43,11 @@ def codex_failure_diagnosis(
         return "", ""
     raw = (output or "").strip()
     lowered = raw.lower()
+    if is_hard_quota_response(raw):
+        message = "Codex failed: execution capacity is unavailable because the hard usage quota is exhausted."
+        if raw:
+            message += "\n\nRaw Codex output:\n" + raw
+        return "hard_quota", trim_output_fn(message)
     markers = {
         "quota": ("insufficient_quota", "usage limit", "rate_limit_exceeded", "rate limit", "too many requests", "quota", "billing", "credit balance", "429"),
         "auth": ("not logged in", "unauthorized", "authentication", "authenticate", "login required", "device auth", "401", "403", "forbidden"),

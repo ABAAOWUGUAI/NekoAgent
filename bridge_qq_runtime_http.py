@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from bridge_auth import PrincipalKind
+from bridge_group_state import receive_group_observation, list_group_states
 from bridge_qq_runtime_service import channel_runtime_config, record_channel_heartbeat
 from bridge_voice_transport_probe_http import VoiceTransportProbeHttpApi
 from bridge_voice_input_http import VoiceInputHttpApi
@@ -37,6 +38,18 @@ class QqRuntimeHttpApi:
             )
 
     def handle_get(self, request, path: str, principal) -> bool:
+        if path == "/qq/groups/state":
+            if principal not in {PrincipalKind.ADMIN_SESSION, PrincipalKind.ADMIN_TOKEN, PrincipalKind.ADMIN_GATEWAY}:
+                self._json_response(request, 403, {"ok": False, "error": "forbidden"})
+                return True
+            try:
+                with self._assistant_connect() as conn:
+                    result = list_group_states(conn)
+            except Exception as exc:
+                self._error(request, exc)
+                return True
+            self._json_response(request, 200, {"ok": True, "result": result})
+            return True
         if path == self._voice_probe.PATH:
             return self._voice_probe.handle_get(request, path, principal)
         if path != self.CONFIG_PATH:
@@ -59,6 +72,18 @@ class QqRuntimeHttpApi:
         return True
 
     def handle_post(self, request, path: str, payload: dict, principal) -> bool:
+        if path == "/qq/channel/groups":
+            if principal is not PrincipalKind.QQ_CHANNEL:
+                self._json_response(request, 403, {"ok": False, "error": "forbidden"})
+                return True
+            try:
+                with self._assistant_connect() as conn:
+                    result = receive_group_observation(conn, payload)
+            except Exception as exc:
+                self._error(request, exc)
+                return True
+            self._json_response(request, 200, {"ok": True, **result})
+            return True
         if path in {self._voice_input.PATH, self._voice_input.INPUT_PATH}:
             return self._voice_input.handle_post(request, path, payload, principal)
         if path == self._voice_probe.PATH:
