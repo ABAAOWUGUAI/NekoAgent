@@ -38,7 +38,7 @@ Inbound → Identity/Access → Continuity Turn → Interaction Plan → Skill P
 git clone https://github.com/ABAAOWUGUAI/NekoAgent.git
 Set-Location NekoAgent
 py -3.10 -m venv .venv
-.\.venv\Scripts\python -m pip install --require-hashes -r requirements.lock
+.\.venv\Scripts\python -m pip install --only-binary=:all: --require-hashes -r requirements.lock
 New-Item -ItemType Directory -Force .\var\secrets | Out-Null
 [guid]::NewGuid().ToString('N') | Set-Content -NoNewline -Encoding ascii .\var\secrets\admin-token
 [guid]::NewGuid().ToString('N') | Set-Content -NoNewline -Encoding ascii .\var\secrets\channel-token
@@ -47,6 +47,10 @@ Copy-Item .\deploy\bridge.env.example .\deploy\bridge.env.local
 ```
 
 启动脚本只把 `bridge.env.local` 中的本地路径和值导入当前 PowerShell 进程，并将 Bridge 绑定到 `127.0.0.1`；不会上传文件、启用渠道或创建模型连接。
+
+无需激活虚拟环境：启动器固定使用仓库内 `.venv\Scripts\python.exe`，不从 PATH 选择 `python`。解释器缺失或 Bridge 非零退出会明确失败；使用其他环境时，通过 `-PythonPath` 指定已按该锁文件安装依赖的解释器路径。
+
+锁文件覆盖同一固定版本已逐文件核验的官方 wheel，不允许未经核验的源码构建，也不代表所有 Python／平台组合都已完成端到端测试。上述命令使用 CPython 3.10。
 
 启动后：
 

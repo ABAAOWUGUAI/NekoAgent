@@ -69,7 +69,7 @@ do not add the generated `var/` directory or token files to Git.
 git clone https://github.com/ABAAOWUGUAI/NekoAgent.git
 Set-Location NekoAgent
 py -3.10 -m venv .venv
-.\.venv\Scripts\python -m pip install --require-hashes -r requirements.lock
+.\.venv\Scripts\python -m pip install --only-binary=:all: --require-hashes -r requirements.lock
 New-Item -ItemType Directory -Force .\var\secrets | Out-Null
 [guid]::NewGuid().ToString('N') | Set-Content -NoNewline -Encoding ascii .\var\secrets\admin-token
 [guid]::NewGuid().ToString('N') | Set-Content -NoNewline -Encoding ascii .\var\secrets\channel-token
@@ -80,6 +80,14 @@ Copy-Item .\deploy\bridge.env.example .\deploy\bridge.env.local
 The script imports only the key/value paths in `bridge.env.local` into the
 current PowerShell process and then starts the Bridge on `127.0.0.1`. It does
 not upload the files, enable a channel, or create a model connection.
+
+No virtual-environment activation is required: the launcher uses the repository's
+`.venv\Scripts\python.exe`, not `python` from PATH. A missing interpreter or a
+non-zero Bridge exit is an explicit failure. For a different environment, pass
+`-PythonPath` with the path to the interpreter where you installed this lock.
+The lock includes verified official wheels for the same pinned version; it does
+not permit an unchecked source build or imply every Python/platform combination
+has passed end-to-end testing. The provided commands use CPython 3.10.
 
 After local startup:
 
