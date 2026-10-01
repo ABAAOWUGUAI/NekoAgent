@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$ConfigPath = (Join-Path $PSScriptRoot "bridge.env.local")
+    [string]$ConfigPath = (Join-Path $PSScriptRoot "bridge.env.local"),
+    [string]$PythonPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +24,16 @@ foreach ($raw in Get-Content -LiteralPath $ConfigPath -Encoding utf8) {
     Set-Item -Path "Env:$name" -Value $value
 }
 
+# Resolve a file, never an executable discovered from PATH. Environment
+# imports above do not alter the interpreter selected for this repository.
+if (-not $PythonPath) {
+    $PythonPath = Join-Path $root ".venv\Scripts\python.exe"
+}
+if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
+    throw "Virtual environment interpreter not found: $PythonPath. Create .venv and install requirements.lock using that interpreter, or pass -PythonPath explicitly."
+}
+$PythonPath = (Resolve-Path -LiteralPath $PythonPath).ProviderPath
+
 foreach ($tokenSetting in @("TOKEN_PATH", "CHANNEL_TOKEN_PATH")) {
     $tokenPath = $values[$tokenSetting]
     if (-not $tokenPath -or -not (Test-Path -LiteralPath (Join-Path $root $tokenPath) -PathType Leaf)) {
@@ -30,9 +41,12 @@ foreach ($tokenSetting in @("TOKEN_PATH", "CHANNEL_TOKEN_PATH")) {
     }
 }
 
-Push-Location $root
+Push-Location -LiteralPath $root
 try {
-    & python .\codex_qq_bridge.py
+    & $PythonPath .\codex_qq_bridge.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bridge exited with status $LASTEXITCODE."
+    }
 } finally {
     Pop-Location
 }
